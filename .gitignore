@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+node_modules/
+web/node_modules/
+web/dist/
+dist/
+coverage/
+*.log

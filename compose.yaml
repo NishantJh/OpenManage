@@ -1,0 +1,42 @@
+services:
+  app:
+    build: .
+    image: openmanage:local
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: ":8080"
+      DATABASE_URL: "postgres://openmanage:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/openmanage?sslmode=disable"
+    ports:
+      - "${OPENMANAGE_PORT:-127.0.0.1:8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+    cpus: 1.0
+    # Authentication is not implemented: bind only to localhost or a trusted LAN.
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: openmanage
+      POSTGRES_USER: openmanage
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+    volumes:
+      - openmanage_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openmanage -d openmanage"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 256m
+    cpus: 1.0
+    security_opt: [no-new-privileges:true]
+
+volumes:
+  openmanage_db:
