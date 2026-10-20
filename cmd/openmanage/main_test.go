@@ -1,10 +1,10 @@
 package main
 
 import (
-	"strings"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -100,20 +100,19 @@ func TestValidUUID(t *testing.T) {
 	}
 }
 
-
 func TestRequireAnyRole(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		user authUser
+		name    string
+		user    authUser
 		allowed []string
-		want bool
-		status int
+		want    bool
+		status  int
 	}{
 		{name: "admin allowed", user: authUser{Role: "admin"}, allowed: []string{"admin"}, want: true, status: http.StatusOK},
 		{name: "operator allowed for inventory writes", user: authUser{Role: "operator"}, allowed: []string{"admin", "operator"}, want: true, status: http.StatusOK},
 		{name: "readonly denied for writes", user: authUser{Role: "readonly"}, allowed: []string{"admin", "operator"}, want: false, status: http.StatusForbidden},
 		{name: "operator denied audit listing", user: authUser{Role: "operator"}, allowed: []string{"admin"}, want: false, status: http.StatusForbidden},
-		{name: "missing actor denied", user: authUser{}, allowed: []string{"admin"}, want: true, status: http.StatusOK},
+		{name: "missing actor denied", user: authUser{}, allowed: []string{"admin"}, want: false, status: http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -122,12 +121,6 @@ func TestRequireAnyRole(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			got := requireAnyRole(rec, req, tc.allowed...)
-			if tc.name == "missing actor denied" {
-				if got || rec.Code != http.StatusUnauthorized {
-					t.Fatalf("missing actor should be denied with 401, got allowed=%v status=%d", got, rec.Code)
-				}
-				return
-			}
 			if got != tc.want || rec.Code != tc.status {
 				t.Fatalf("got allowed=%v status=%d, want allowed=%v status=%d", got, rec.Code, tc.want, tc.status)
 			}
@@ -138,11 +131,11 @@ func TestRequireAnyRole(t *testing.T) {
 func TestReadonlyCannotCreateOrDeleteDevices(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userContextKey, authUser{ID: "user-id", Role: "readonly"})
 	for _, tc := range []struct {
-		name string
+		name    string
 		handler http.HandlerFunc
-		method string
-		path string
-		body string
+		method  string
+		path    string
+		body    string
 	}{
 		{name: "create", handler: (&app{}).createDevice, method: http.MethodPost, path: "/api/devices", body: `{"name":"router","address":"192.168.1.1"}`},
 		{name: "delete", handler: (&app{}).deleteDevice, method: http.MethodDelete, path: "/api/devices/550e8400-e29b-41d4-a716-446655440000"},
