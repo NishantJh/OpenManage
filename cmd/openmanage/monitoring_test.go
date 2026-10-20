@@ -48,3 +48,23 @@ func TestMonitoringSettingsRejectUnknownFieldsAndTrailingJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestMonitoringWorkerCountIsBounded(t *testing.T) {
+	for _, tc := range []struct {
+		batchSize int
+		want      int
+	}{
+		{batchSize: -1, want: 0},
+		{batchSize: 0, want: 0},
+		{batchSize: 1, want: 1},
+		{batchSize: 2, want: 2},
+		{batchSize: 3, want: 3},
+		{batchSize: 4, want: 3},
+		{batchSize: 5, want: 3},
+		{batchSize: 100, want: 3},
+	} {
+		if got := monitoringWorkerCount(tc.batchSize); got != tc.want {
+			t.Errorf("monitoringWorkerCount(%d) = %d, want %d", tc.batchSize, got, tc.want)
+		}
+	}
+}
