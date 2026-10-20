@@ -6,7 +6,7 @@ OpenManage now has an opt-in server-side monitoring scheduler. It runs inside th
 
 - Monitoring is disabled by default. An administrator enables or disables it from the dashboard; the setting is stored in PostgreSQL and survives browser closure and application-container restarts.
 - The configured interval is between 60 seconds and 60 minutes; the dashboard currently uses a five-minute default.
-- The scheduler polls settings every 15 seconds and processes at most five due, enrolled devices per batch, sequentially. Each device check has a 20-second SSH/command deadline. Large fleets will therefore take multiple batches to cycle through all devices.
+- The scheduler polls settings every 15 seconds and processes at most five due, enrolled devices per batch, with up to three checks running concurrently. Each device check has a 20-second SSH/command deadline. A PostgreSQL advisory lock prevents duplicate batches if multiple app instances overlap. Large fleets will therefore take multiple batches to cycle through all devices.
 - Checks use the stored SSH credential and pinned host-key fingerprint and run only the existing server-defined, read-only OpenWrt health commands. No arbitrary command is accepted from the UI.
 - Results are stored in PostgreSQL with device, status, sanitized reason, start/end timestamps, and duration. History is retained for 30 days.
 - TCP/22 connection failures mark the device offline. Successful SSH with one or more failed diagnostics marks it degraded. Credential decryption, SSH authentication, or pinned host-key failures are recorded as errors and do not falsely mark the device offline.
@@ -22,7 +22,8 @@ The migration `999_persistent_monitoring.sql` creates the settings and history t
 
 ## Resource and safety limits
 
-- One scheduler goroutine in the existing Go process; checks are sequential, capped at five devices per batch.
+- One scheduler in the existing Go process; at most five devices are selected per batch and up to three checks run concurrently. PostgreSQL advisory locking prevents two instances from running the same batch.
+- The PostgreSQL connection pool is explicitly sized to leave capacity for API requests while monitoring workers run.
 - The application checks only enrolled devices with stored credentials and only private IP addresses on TCP/22.
 - No automatic configuration changes, alerts, or arbitrary shell commands.
 - History is pruned after 30 days. Database backups now also preserve monitoring settings and history.
