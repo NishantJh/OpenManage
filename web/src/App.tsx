@@ -12,7 +12,8 @@ function Dashboard({username,role,onLogout}:{username:string;role:string;onLogou
  const [enrollingDevice,setEnrollingDevice]=useState<Device|null>(null),[enrollForm,setEnrollForm]=useState({username:"root",private_key:"",expected_fingerprint:""}),[enrollSaving,setEnrollSaving]=useState(false);
  const [healthDevice,setHealthDevice]=useState<Device|null>(null),[healthResult,setHealthResult]=useState<HealthResponse|null>(null),[healthBusy,setHealthBusy]=useState(false);
  const [monitoring,setMonitoring]=useState(false),[monitorRunning,setMonitorRunning]=useState(false),[monitorLastRun,setMonitorLastRun]=useState(""),[monitorMessage,setMonitorMessage]=useState("");
- const monitorLock=useRef(false);
+ const monitorLock=useRef(false),devicesRef=useRef<Device[]>(devices);
+ useEffect(()=>{devicesRef.current=devices},[devices]);
  async function load(){setLoading(true);setError("");try{const r=await fetch("/api/devices");if(!r.ok)throw Error();setDevices(await r.json())}catch{setError("Could not reach the API. Check that OpenManage and PostgreSQL are running.")}finally{setLoading(false)}}
  async function loadAudit(){setAuditLoading(true);setAuditError("");try{const r=await fetch("/api/audit");if(!r.ok)throw Error();setAudit(await r.json())}catch{setAuditError("Could not load audit events.")}finally{setAuditLoading(false)}}
  useEffect(()=>{void load();void loadAudit()},[]);
@@ -22,7 +23,7 @@ function Dashboard({username,role,onLogout}:{username:string;role:string;onLogou
   let checked=0,failed=0,skipped=0,authFailure=false;
   try{
    // Browser-session MVP: bound each cycle to five previously enrolled devices and run sequentially.
-   const targets=devices.filter(d=>d.status!=="unknown").slice(0,5);
+   const targets=devicesRef.current.filter(d=>d.status!=="unknown").slice(0,5);
    for(const d of targets){
     try{
      const r=await fetch("/api/devices/"+d.id+"/health-check",{method:"POST",headers:{"X-CSRF-Token":csrfToken()}});
@@ -51,7 +52,7 @@ function Dashboard({username,role,onLogout}:{username:string;role:string;onLogou
   if(!monitoring)return;
   const timer=window.setInterval(()=>{void runMonitorCycle()},300000);
   return ()=>window.clearInterval(timer);
- },[monitoring,devices]);
+ },[monitoring]);
  const filtered=devices.filter(d=>[d.name,d.address,d.model,d.firmware].join(" ").toLowerCase().includes(query.toLowerCase()));
  async function add(e:FormEvent){e.preventDefault();setSaving(true);setNotice("");try{const r=await fetch("/api/devices",{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken()},body:JSON.stringify(form)});const data=await r.json();if(!r.ok)throw Error(data.error||"Could not add device");setDevices(prev=>[data,...prev]);setForm({name:"",address:"",model:"",firmware:""});setShowAdd(false);setNotice("Device added to inventory.");void loadAudit()}catch(e){setNotice(e instanceof Error?e.message:"Could not add device")}finally{setSaving(false)}}
  function openEnrollment(d:Device){setEnrollForm({username:"root",private_key:"",expected_fingerprint:""});setEnrollingDevice(d);setNotice("")}
