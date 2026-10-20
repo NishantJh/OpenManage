@@ -1,20 +1,27 @@
 package main
 
 import (
- "context"
- "embed"
- "encoding/json"
- "errors"
- "io/fs"
- "log"
- "net/http"
- "os"
- "os/signal"
- "strings"
- "syscall"
- "time"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"embed"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"sort"
+	"strings"
+	"syscall"
+	"time"
 
- "github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed migrations/*.sql
@@ -23,67 +30,467 @@ var migrationFS embed.FS
 //go:embed all:web/dist
 var webFS embed.FS
 
-type app struct { db *pgxpool.Pool }
+type app struct {
+	db           *pgxpool.Pool
+	secureCookie bool
+}
+
+type contextKey string
+
+const userContextKey contextKey = "openmanage-user"
+
+type authUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
 type device struct {
- ID string `json:"id"`
- Name string `json:"name"`
- Address string `json:"address"`
- Model string `json:"model"`
- Firmware string `json:"firmware"`
- Status string `json:"status"`
- LastSeenAt time.Time `json:"last_seen_at"`
- CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Address    string    `json:"address"`
+	Model      string    `json:"model"`
+	Firmware   string    `json:"firmware"`
+	Status     string    `json:"status"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type auditEvent struct {
+	ID           int64           `json:"id"`
+	Username     string          `json:"username"`
+	Action       string          `json:"action"`
+	ResourceType string          `json:"resource_type"`
+	ResourceID   string          `json:"resource_id"`
+	Details      json.RawMessage `json:"details"`
+	CreatedAt    time.Time       `json:"created_at"`
 }
 
 func main() {
- ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
- defer stop()
- dsn := env("DATABASE_URL", "postgres://openmanage:openmanage@localhost:5432/openmanage?sslmode=disable")
- var pool *pgxpool.Pool
- var err error
- for i := 1; i <= 30; i++ {
-  pool, err = pgxpool.New(ctx, dsn)
-  if err == nil { err = pool.Ping(ctx); if err == nil { break }; pool.Close() }
-  log.Printf("database not ready (%d/30): %v", i, err)
-  select { case <-ctx.Done(): return; case <-time.After(2*time.Second): }
- }
- if err != nil { log.Fatalf("connect to database: %v", err) }
- defer pool.Close()
- migration, err := migrationFS.ReadFile("migrations/001_initial.sql")
- if err != nil { log.Fatal(err) }
- if _, err = pool.Exec(ctx, string(migration)); err != nil { log.Fatalf("database migration: %v", err) }
- a := &app{db:pool}
- mux := http.NewServeMux()
- mux.HandleFunc("GET /api/healthz", a.health)
- mux.HandleFunc("GET /api/devices", a.listDevices)
- mux.HandleFunc("POST /api/devices", a.createDevice)
- mux.HandleFunc("GET /api/devices/{id}", a.getDevice)
- mux.HandleFunc("DELETE /api/devices/{id}", a.deleteDevice)
- mux.Handle("/", frontendHandler())
- srv := &http.Server{Addr:env("LISTEN_ADDR", ":8080"), Handler:securityHeaders(mux), ReadHeaderTimeout:5*time.Second, ReadTimeout:15*time.Second, WriteTimeout:30*time.Second, IdleTimeout:60*time.Second}
- go func(){ log.Printf("OpenManage listening on %s", srv.Addr); if e:=srv.ListenAndServe(); e!=nil && !errors.Is(e,http.ErrServerClosed) { log.Fatalf("HTTP server: %v",e) } }()
- <-ctx.Done()
- shutdown, cancel := context.WithTimeout(context.Background(),10*time.Second); defer cancel()
- if err:=srv.Shutdown(shutdown); err!=nil { log.Printf("shutdown: %v",err) }
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	dsn := env("DATABASE_URL", "postgres://openmanage:openmanage@localhost:5432/openmanage?sslmode=disable")
+	var pool *pgxpool.Pool
+	var err error
+	for i := 1; i <= 30; i++ {
+		pool, err = pgxpool.New(ctx, dsn)
+		if err == nil {
+			err = pool.Ping(ctx)
+			if err == nil {
+				break
+			}
+			pool.Close()
+		}
+		log.Printf("database not ready (%d/30): %v", i, err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+	if err != nil {
+		log.Fatalf("connect to database: %v", err)
+	}
+	defer pool.Close()
+
+	migrations, err := fs.Glob(migrationFS, "migrations/*.sql")
+	if err != nil {
+		log.Fatal(err)
+	}
+	sort.Strings(migrations)
+	for _, name := range migrations {
+		sql, readErr := migrationFS.ReadFile(name)
+		if readErr != nil {
+			log.Fatalf("read migration %s: %v", name, readErr)
+		}
+		if _, err = pool.Exec(ctx, string(sql)); err != nil {
+			log.Fatalf("database migration %s: %v", name, err)
+		}
+	}
+	if err = bootstrapAdmin(ctx, pool); err != nil {
+		log.Fatalf("admin bootstrap: %v", err)
+	}
+
+	a := &app{db: pool, secureCookie: strings.EqualFold(env("OPENMANAGE_COOKIE_SECURE", "false"), "true")}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/healthz", a.health)
+	mux.HandleFunc("POST /api/auth/login", a.login)
+	mux.HandleFunc("GET /api/auth/me", a.me)
+	mux.HandleFunc("POST /api/auth/logout", a.logout)
+	mux.HandleFunc("GET /api/audit", a.listAudit)
+	mux.HandleFunc("GET /api/devices", a.listDevices)
+	mux.HandleFunc("POST /api/devices", a.createDevice)
+	mux.HandleFunc("GET /api/devices/{id}", a.getDevice)
+	mux.HandleFunc("DELETE /api/devices/{id}", a.deleteDevice)
+
+	handler := securityHeaders(a.authMiddleware(mux))
+	handler = frontendFallback(handler)
+	srv := &http.Server{
+		Addr:              env("LISTEN_ADDR", ":8080"),
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	go func() {
+		log.Printf("OpenManage listening on %s", srv.Addr)
+		if e := srv.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
+			log.Fatalf("HTTP server: %v", e)
+		}
+	}()
+	<-ctx.Done()
+	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdown); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
 }
 
-func (a *app) health(w http.ResponseWriter,r *http.Request) { if err:=a.db.Ping(r.Context()); err!=nil { writeJSON(w,503,map[string]string{"status":"degraded","database":"unavailable"}); return }; writeJSON(w,200,map[string]string{"status":"ok","database":"ok"}) }
-func (a *app) listDevices(w http.ResponseWriter,r *http.Request) {
- rows,err:=a.db.Query(r.Context(),`SELECT id::text,name,address,model,firmware,status,last_seen_at,created_at FROM devices ORDER BY created_at DESC LIMIT 500`); if err!=nil { writeError(w,500,"could not query devices"); return }; defer rows.Close()
- out:=make([]device,0); for rows.Next(){ var d device; if err:=rows.Scan(&d.ID,&d.Name,&d.Address,&d.Model,&d.Firmware,&d.Status,&d.LastSeenAt,&d.CreatedAt); err!=nil { writeError(w,500,"could not read devices"); return }; out=append(out,d) }; if rows.Err()!=nil { writeError(w,500,"could not read devices"); return }; writeJSON(w,200,out)
+func bootstrapAdmin(ctx context.Context, db *pgxpool.Pool) error {
+	var count int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM users").Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	username := strings.TrimSpace(os.Getenv("OPENMANAGE_ADMIN_USERNAME"))
+	password := os.Getenv("OPENMANAGE_ADMIN_PASSWORD")
+	if username == "" || len(password) < 12 {
+		return errors.New("no users exist: set OPENMANAGE_ADMIN_USERNAME and OPENMANAGE_ADMIN_PASSWORD (at least 12 characters) for first startup")
+	}
+	if len(password) > 72 {
+		return errors.New("OPENMANAGE_ADMIN_PASSWORD must be no more than 72 bytes")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(ctx, "INSERT INTO users(username,password_hash,role) VALUES($1,$2,'admin') ON CONFLICT (username) DO NOTHING", username, string(hash))
+	if err != nil {
+		return err
+	}
+	log.Printf("created initial OpenManage administrator %q", username)
+	return nil
 }
-func (a *app) createDevice(w http.ResponseWriter,r *http.Request) {
- r.Body=http.MaxBytesReader(w,r.Body,1<<20); var in struct { Name string `json:"name"`; Address string `json:"address"`; Model string `json:"model"`; Firmware string `json:"firmware"` }
- dec:=json.NewDecoder(r.Body); dec.DisallowUnknownFields(); if err:=dec.Decode(&in); err!=nil { writeError(w,400,"invalid JSON body"); return }
- in.Name=strings.TrimSpace(in.Name); in.Address=strings.TrimSpace(in.Address); in.Model=strings.TrimSpace(in.Model); in.Firmware=strings.TrimSpace(in.Firmware)
- if in.Name=="" || in.Address=="" { writeError(w,400,"name and address are required"); return }
- var d device; err:=a.db.QueryRow(r.Context(),`INSERT INTO devices(name,address,model,firmware,status) VALUES($1,$2,$3,$4,'unknown') RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at`,in.Name,in.Address,in.Model,in.Firmware).Scan(&d.ID,&d.Name,&d.Address,&d.Model,&d.Firmware,&d.Status,&d.LastSeenAt,&d.CreatedAt)
- if err!=nil { writeError(w,500,"could not create device"); return }; writeJSON(w,201,d)
+
+func (a *app) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/healthz" || r.URL.Path == "/api/auth/login" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		cookie, err := r.Cookie("om_session")
+		if err != nil || cookie.Value == "" {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		hash := tokenHash(cookie.Value)
+		var user authUser
+		err = a.db.QueryRow(r.Context(), `
+			SELECT u.id::text,u.username,u.role
+			FROM sessions s JOIN users u ON u.id=s.user_id
+			WHERE s.token_hash=$1 AND s.expires_at > NOW()`, hash).Scan(&user.ID, &user.Username, &user.Role)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "session expired or invalid")
+			return
+		}
+		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete {
+			csrfCookie, cookieErr := r.Cookie("om_csrf")
+			csrfHeader := r.Header.Get("X-CSRF-Token")
+			if cookieErr != nil || csrfCookie.Value == "" || csrfHeader == "" ||
+				subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(csrfHeader)) != 1 {
+				writeError(w, http.StatusForbidden, "CSRF validation failed")
+				return
+			}
+		}
+		ctx := context.WithValue(r.Context(), userContextKey, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
-func (a *app) getDevice(w http.ResponseWriter,r *http.Request) { var d device; err:=a.db.QueryRow(r.Context(),`SELECT id::text,name,address,model,firmware,status,last_seen_at,created_at FROM devices WHERE id=$1`,r.PathValue("id")).Scan(&d.ID,&d.Name,&d.Address,&d.Model,&d.Firmware,&d.Status,&d.LastSeenAt,&d.CreatedAt); if err!=nil { writeError(w,404,"device not found"); return }; writeJSON(w,200,d) }
-func (a *app) deleteDevice(w http.ResponseWriter,r *http.Request) { tag,err:=a.db.Exec(r.Context(),`DELETE FROM devices WHERE id=$1`,r.PathValue("id")); if err!=nil { writeError(w,500,"could not delete device"); return }; if tag.RowsAffected()==0 { writeError(w,404,"device not found"); return }; w.WriteHeader(http.StatusNoContent) }
-func frontendHandler() http.Handler { sub,err:=fs.Sub(webFS,"web/dist"); if err!=nil { return http.NotFoundHandler() }; return http.FileServer(http.FS(sub)) }
-func securityHeaders(next http.Handler) http.Handler { return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){ w.Header().Set("X-Content-Type-Options","nosniff"); w.Header().Set("X-Frame-Options","DENY"); w.Header().Set("Referrer-Policy","strict-origin-when-cross-origin"); if strings.HasPrefix(r.URL.Path,"/api/") { w.Header().Set("Cache-Control","no-store") }; next.ServeHTTP(w,r) }) }
-func writeJSON(w http.ResponseWriter,status int,v any){ w.Header().Set("Content-Type","application/json; charset=utf-8"); w.WriteHeader(status); _=json.NewEncoder(w).Encode(v) }
-func writeError(w http.ResponseWriter,status int,message string){ writeJSON(w,status,map[string]string{"error":message}) }
-func env(k, fallback string) string { if v:=os.Getenv(k); v!="" { return v }; return fallback }
+
+func (a *app) login(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var in struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	in.Username = strings.TrimSpace(in.Username)
+	var user authUser
+	var passwordHash string
+	err := a.db.QueryRow(r.Context(), "SELECT id::text,username,role,password_hash FROM users WHERE username=$1", in.Username).
+		Scan(&user.ID, &user.Username, &user.Role, &passwordHash)
+	if err != nil || bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(in.Password)) != nil {
+		time.Sleep(300 * time.Millisecond)
+		writeError(w, http.StatusUnauthorized, "invalid username or password")
+		return
+	}
+
+	sessionToken, err := randomToken(32)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create session")
+		return
+	}
+	csrfToken, err := randomToken(32)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create session")
+		return
+	}
+	_, err = a.db.Exec(r.Context(), "DELETE FROM sessions WHERE expires_at <= NOW()")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create session")
+		return
+	}
+	_, err = a.db.Exec(r.Context(), "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '12 hours')", tokenHash(sessionToken), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create session")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "om_session", Value: sessionToken, Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
+	http.SetCookie(w, &http.Cookie{Name: "om_csrf", Value: csrfToken, Path: "/", HttpOnly: false, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
+	writeJSON(w, http.StatusOK, map[string]any{"user": user, "csrf_token": csrfToken})
+}
+
+func (a *app) me(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(userContextKey).(authUser)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	cookie, err := r.Cookie("om_csrf")
+	if err != nil || cookie.Value == "" {
+		writeError(w, http.StatusUnauthorized, "session requires login")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": user, "csrf_token": cookie.Value})
+}
+
+func (a *app) logout(w http.ResponseWriter, r *http.Request) {
+	cookie, _ := r.Cookie("om_session")
+	if cookie != nil && cookie.Value != "" {
+		if _, err := a.db.Exec(r.Context(), "DELETE FROM sessions WHERE token_hash=$1", tokenHash(cookie.Value)); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not end session")
+			return
+		}
+	}
+	http.SetCookie(w, &http.Cookie{Name: "om_session", Value: "", Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: "om_csrf", Value: "", Path: "/", HttpOnly: false, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *app) health(w http.ResponseWriter, r *http.Request) {
+	if err := a.db.Ping(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "database": "unavailable"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "database": "ok"})
+}
+
+func (a *app) listDevices(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.db.Query(r.Context(), `SELECT id::text,name,address,model,firmware,status,last_seen_at,created_at FROM devices ORDER BY created_at DESC LIMIT 500`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not query devices")
+		return
+	}
+	defer rows.Close()
+	out := make([]device, 0)
+	for rows.Next() {
+		var d device
+		if err := rows.Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not read devices")
+			return
+		}
+		out = append(out, d)
+	}
+	if rows.Err() != nil {
+		writeError(w, http.StatusInternalServerError, "could not read devices")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var in struct {
+		Name     string `json:"name"`
+		Address  string `json:"address"`
+		Model    string `json:"model"`
+		Firmware string `json:"firmware"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	in.Address = strings.TrimSpace(in.Address)
+	in.Model = strings.TrimSpace(in.Model)
+	in.Firmware = strings.TrimSpace(in.Firmware)
+	if in.Name == "" || in.Address == "" {
+		writeError(w, http.StatusBadRequest, "name and address are required")
+		return
+	}
+	var d device
+	err := a.db.QueryRow(r.Context(), `INSERT INTO devices(name,address,model,firmware,status) VALUES($1,$2,$3,$4,'unknown') RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at`, in.Name, in.Address, in.Model, in.Firmware).
+		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create device")
+		return
+	}
+	a.recordAudit(r, "device.create", "device", d.ID, map[string]string{"name": d.Name, "address": d.Address})
+	writeJSON(w, http.StatusCreated, d)
+}
+
+func (a *app) getDevice(w http.ResponseWriter, r *http.Request) {
+	var d device
+	err := a.db.QueryRow(r.Context(), `SELECT id::text,name,address,model,firmware,status,last_seen_at,created_at FROM devices WHERE id=$1`, r.PathValue("id")).
+		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) || err != nil {
+		writeError(w, http.StatusNotFound, "device not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (a *app) deleteDevice(w http.ResponseWriter, r *http.Request) {
+	tag, err := a.db.Exec(r.Context(), "DELETE FROM devices WHERE id=$1", r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete device")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "device not found")
+		return
+	}
+	a.recordAudit(r, "device.delete", "device", r.PathValue("id"), map[string]string{"id": r.PathValue("id")})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *app) listAudit(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.db.Query(r.Context(), `
+		SELECT e.id, COALESCE(u.username,'system'),e.action,e.resource_type,e.resource_id::text,e.details,e.created_at
+		FROM audit_events e LEFT JOIN users u ON u.id=e.user_id
+		ORDER BY e.created_at DESC LIMIT 100`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not query audit events")
+		return
+	}
+	defer rows.Close()
+	out := make([]auditEvent, 0)
+	for rows.Next() {
+		var e auditEvent
+		if err := rows.Scan(&e.ID, &e.Username, &e.Action, &e.ResourceType, &e.ResourceID, &e.Details, &e.CreatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not read audit events")
+			return
+		}
+		out = append(out, e)
+	}
+	if rows.Err() != nil {
+		writeError(w, http.StatusInternalServerError, "could not read audit events")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *app) recordAudit(r *http.Request, action, resourceType, resourceID string, details any) {
+	user, ok := r.Context().Value(userContextKey).(authUser)
+	if !ok {
+		log.Printf("audit skipped: no authenticated actor for %s", action)
+		return
+	}
+	data, err := json.Marshal(details)
+	if err != nil {
+		log.Printf("audit encode failed for %s: %v", action, err)
+		return
+	}
+	if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, action, resourceType, resourceID, data); err != nil {
+		log.Printf("audit write failed for %s: %v", action, err)
+	}
+}
+
+func randomToken(bytes int) (string, error) {
+	b := make([]byte, bytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func tokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func frontendFallback(next http.Handler) http.Handler {
+	assets := frontendHandler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path != "/" {
+			// Serve real embedded assets when present; fall back to index.html for SPA routes.
+			sub, err := fs.Sub(webFS, "web/dist")
+			if err == nil {
+				if _, statErr := fs.Stat(sub, strings.TrimPrefix(r.URL.Path, "/")); statErr == nil {
+					assets.ServeHTTP(w, r)
+					return
+				}
+			}
+		}
+		index, err := webFS.ReadFile("web/dist/index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(index)
+	})
+}
+
+func frontendHandler() http.Handler {
+	sub, err := fs.Sub(webFS, "web/dist")
+	if err != nil {
+		return http.NotFoundHandler()
+	}
+	return http.FileServer(http.FS(sub))
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func env(k, fallback string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return fallback
+}
