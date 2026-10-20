@@ -50,19 +50,29 @@ func encryptionKey() ([]byte, error) {
 
 func encryptSecret(key []byte, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	gcm, err := cipher.NewGCM(block)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil { return nil, err }
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
 	return append(nonce, gcm.Seal(nil, nonce, plaintext, []byte("openmanage:ssh-private-key:v1"))...), nil
 }
 
 func decryptSecret(key, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	gcm, err := cipher.NewGCM(block)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	if len(ciphertext) < gcm.NonceSize()+gcm.Overhead() {
 		return nil, errors.New("encrypted credential is truncated")
 	}
@@ -79,7 +89,9 @@ func pinnedHostKeyCallback(expected string, observed *string) ssh.HostKeyCallbac
 	return func(_ string, _ net.Addr, hostKey ssh.PublicKey) error {
 		fingerprint := ssh.FingerprintSHA256(hostKey)
 		*observed = fingerprint
-		if fingerprint != expected { return errors.New("host key fingerprint mismatch") }
+		if fingerprint != expected {
+			return errors.New("host key fingerprint mismatch")
+		}
 		return nil
 	}
 }
@@ -162,6 +174,13 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Could not protect SSH credential")
 		return
 	}
+	auditDetails, err := json.Marshal(map[string]string{
+		"username": req.Username, "host_key_fingerprint": observedFingerprint,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not prepare enrollment audit event")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	tx, err := a.db.BeginTx(ctx, pgx.TxOptions{})
@@ -181,14 +200,18 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		_, err = tx.Exec(ctx, "UPDATE devices SET status='online', last_seen_at=NOW(), updated_at=NOW() WHERE id=$1", r.PathValue("id"))
 	}
-	if err == nil { err = tx.Commit(ctx) }
+	if err == nil {
+		_, err = tx.Exec(ctx,
+			"INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)",
+			user.ID, "device.enrolled", "device", r.PathValue("id"), string(auditDetails))
+	}
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "SSH connection succeeded but credential storage failed")
+		writeError(w, http.StatusInternalServerError, "Could not persist enrollment and audit event")
 		return
 	}
-	a.recordAudit(r, "device.enrolled", "device", r.PathValue("id"), map[string]string{
-		"username": req.Username, "host_key_fingerprint": observedFingerprint,
-	})
 	writeJSON(w, http.StatusOK, enrollResponse{
 		DeviceID: r.PathValue("id"), Username: req.Username,
 		Fingerprint: observedFingerprint, UpdatedAt: updated,
