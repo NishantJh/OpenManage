@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	healthCheckTimeout = 12 * time.Second
+	healthCheckTimeout = 20 * time.Second
 	healthOutputLimit  = 8 * 1024
 )
 
