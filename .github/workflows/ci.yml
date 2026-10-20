@@ -2,13 +2,15 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Register your WSL2 runner with the custom label "WSL2".
+    # Deliberately no pull_request trigger: this repository is public and
+    # self-hosted runners must not execute untrusted fork code.
+    runs-on: [self-hosted, Linux, X64, WSL2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
