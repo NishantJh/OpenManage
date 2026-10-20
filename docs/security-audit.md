@@ -13,11 +13,11 @@ It is still early-development software and should not be treated as a production
 
 ### OM-SAF-01 — Inconsistent API role enforcement
 
-**Severity: High — remediation PR opened**
+**Severity: High — remediated in PR #10; post-merge CI verification pending**
 
-The database defines `admin`, `operator`, and `readonly` roles, but the API had authenticated all roles for device creation/deletion and audit-log listing. UI-only restrictions would not protect these routes. Add explicit server-side authorization and tests; enrollment must remain admin-only.
+The database defines `admin`, `operator`, and `readonly` roles. The initial audit found that device create/delete and audit listing lacked route-level role checks. PR #10 added server-side checks: only admin/operator can create or delete inventory, only admin can list audit events, and enrollment remains admin-only. Tests cover denied roles before database access. Recheck the post-merge CI and retain regression tests.
 
-Tracking: [PR #10](https://github.com/NishantJh/OpenManage/pull/10). Reassess after its CI passes and it is merged.
+Tracking: [PR #10](https://github.com/NishantJh/OpenManage/pull/10) is merged; post-merge CI is being verified.
 
 ### OM-SAF-02 — Direct HTTP does not protect credentials or session cookies in transit
 
@@ -74,7 +74,7 @@ Enrollment restricts targets to private IP literals, TCP/22, independently pinne
 
 ## Required order of work
 
-1. Enforce API role permissions (PR #10).
+1. [In progress verification] Enforce API role permissions (merged in PR #10; confirm post-merge CI).
 2. Enable trusted-LAN access and document HTTPS/firewall deployment choices without implying that HTTP is encrypted.
 3. Make inventory and authentication audit events atomic with their state changes.
 4. Add login abuse controls and finish enrollment failure-path tests.
