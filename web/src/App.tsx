@@ -19,7 +19,7 @@ function Dashboard({username,role,onLogout}:{username:string;role:string;onLogou
  async function runMonitorCycle(){
   if(monitorLock.current)return;
   monitorLock.current=true;setMonitorRunning(true);setMonitorMessage("");
-  let checked=0,failed=0,skipped=0;
+  let checked=0,failed=0,skipped=0,authFailure=false;
   try{
    // Browser-session MVP: bound each cycle to five previously enrolled devices and run sequentially.
    const targets=devices.filter(d=>d.status!=="unknown").slice(0,5);
@@ -35,7 +35,7 @@ function Dashboard({username,role,onLogout}:{username:string;role:string;onLogou
       failed++;
      }else if(r.status===401||r.status===403){
       setMonitorMessage("Monitoring paused: session expired or permission denied. Sign in again.");
-      setMonitoring(false);break;
+      authFailure=true;setMonitoring(false);break;
      }else{
       // A missing credential or configuration problem is not proof that the device is offline.
       skipped++;
@@ -43,7 +43,7 @@ function Dashboard({username,role,onLogout}:{username:string;role:string;onLogou
     }catch{failed++}
    }
    setMonitorLastRun(new Date().toLocaleString());
-   if(!monitorMessage)setMonitorMessage("Cycle complete: "+checked+" checked, "+failed+" unreachable/error, "+skipped+" skipped. Maximum five devices per cycle.");
+   if(!authFailure)setMonitorMessage("Cycle complete: "+checked+" checked, "+failed+" unreachable/error, "+skipped+" skipped. Maximum five devices per cycle.");
    void loadAudit();
   }finally{monitorLock.current=false;setMonitorRunning(false)}
  }
