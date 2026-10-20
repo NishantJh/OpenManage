@@ -25,7 +25,7 @@ A lightweight, self-hosted control plane for OpenWrt devices. OpenManage uses a 
 
 6. Open http://127.0.0.1:8080.
 
-The app runs its SQL migration at startup. PostgreSQL data is persisted in the openmanage_db volume. Back up that volume before upgrades.
+The app runs its SQL migration at startup. PostgreSQL data is persisted in the openmanage_db volume. Back up the database and securely preserve OPENMANAGE_ENCRYPTION_KEY together; see [Backup and recovery](docs/backup-recovery.md) before upgrades or enrolling devices.
 
 ## API
 

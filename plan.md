@@ -25,7 +25,7 @@ Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful O
 - [x] Format Go sources and make CI reject unformatted Go files.
 - [x] Reject malformed device IDs before database queries. [ ] Verify request-size/timeout behavior.
 - [ ] Improve dependency reproducibility where practical; prefer npm ci when a valid lockfile is present.
-- [ ] Document backup/restore for PostgreSQL and OPENMANAGE_ENCRYPTION_KEY; test the recovery path.
+- [x] Document the PostgreSQL and OPENMANAGE_ENCRYPTION_KEY backup/restore procedure; recovery testing remains an operator task.
 - Keep this phase narrowly scoped and do not add remote command execution.
 
 Exit criteria: tests cover critical enrollment failure paths; credential changes cannot commit without their audit event; CI passes on the PR head and after merge.
