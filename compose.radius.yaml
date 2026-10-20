@@ -1,0 +1,18 @@
+# Optional lab RADIUS service. This is separate from the default OpenManage stack.
+# Start with: docker compose -f compose.radius.yaml up -d
+# Default binding is loopback only. Set RADIUS_BIND_IP to a specific trusted LAN IP
+# only after replacing the lab client secret and reviewing radius/clients.conf.
+services:
+  radius:
+    image: freeradius/freeradius-server:3.2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "${RADIUS_BIND_IP:-127.0.0.1}:${RADIUS_AUTH_PORT:-1812}:1812/udp"
+      - "${RADIUS_BIND_IP:-127.0.0.1}:${RADIUS_ACCT_PORT:-1813}:1813/udp"
+    volumes:
+      - ./radius/clients.conf:/etc/raddb/clients.conf:ro
+      - ./radius/authorize:/etc/raddb/mods-config/files/authorize:ro
+    mem_limit: 128m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
