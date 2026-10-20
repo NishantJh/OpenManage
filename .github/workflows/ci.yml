@@ -10,8 +10,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   build:
-    # This privileged self-hosted runner only builds trusted main commits.
+    # workflow_dispatch can target arbitrary refs; never execute a non-main ref here.
     # Pull-request code is validated on GitHub-hosted runners in pr-validation.yml.
+    if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, X64, WSL2]
     steps:
       - uses: actions/checkout@v4
