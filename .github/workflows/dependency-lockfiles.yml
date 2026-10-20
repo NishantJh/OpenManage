@@ -11,7 +11,7 @@ on:
       - ".github/workflows/dependency-lockfiles.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: openmanage-dependency-lockfiles
@@ -20,15 +20,17 @@ concurrency:
 jobs:
   generate:
     # Generate only from trusted main commits, on a GitHub-hosted runner.
-    # Never execute pull-request code with a write-capable token.
+    # This job has no write token and never runs pull-request code.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
-          persist-credentials: true
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-go@v5
         with:
@@ -38,9 +40,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-
-      - name: Create an isolated branch
-        run: git checkout -b "chore/dependency-lockfiles-${GITHUB_RUN_ID}"
 
       - name: Generate Go dependency metadata
         run: go mod tidy
@@ -61,18 +60,65 @@ jobs:
           cp -a web/dist/. cmd/openmanage/web/dist/
           go test ./...
 
-      - name: Commit generated dependency metadata to the branch
+      - name: Upload generated dependency metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-metadata
+          path: |
+            go.mod
+            go.sum
+            web/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    # Only this isolated job receives contents:write, and only the push step
+    # receives the token as an environment variable.
+    needs: generate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dependency-metadata
+          path: generated
+
+      - name: Stage generated dependency metadata
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp generated/go.mod go.mod
+          cp generated/go.sum go.sum
+          mkdir -p web
+          cp generated/web/package-lock.json web/package-lock.json
           git add go.mod go.sum web/package-lock.json
           if git diff --cached --quiet; then
             echo "Dependency metadata is already current; no branch was pushed." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore: add reproducible dependency lockfiles"
-          branch="$(git branch --show-current)"
-          git push origin "$branch"
+
+      - name: Push generated branch
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if git diff HEAD^ --quiet -- go.mod go.sum web/package-lock.json; then
+            echo "No dependency metadata changes to publish."
+            exit 0
+          fi
+          branch="chore/dependency-lockfiles-${GITHUB_RUN_ID}"
+          git branch "$branch"
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push origin "$branch"
           {
             echo "Generated dependency metadata and pushed `$branch`."
             echo "Review the branch and open a PR against `main`; CI should then switch to lockfile verification."
