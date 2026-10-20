@@ -4,7 +4,7 @@
 
 Browser -> same-origin HTTP(S), session cookie + CSRF header -> Go HTTP app -> policy/validation -> bounded device-operation engine -> OpenWrt device
 
-The Go app serves the React/TypeScript build and JSON API. PostgreSQL stores device inventory, users/sessions, audit events, and encrypted device credentials. Compose is the initial deployment model. The default host binding is localhost; remote access should use HTTPS and network access controls. Keep the single app + PostgreSQL deployment as the baseline; add a queue or Redis only when measured operational requirements justify it.
+The Go app serves the React/TypeScript build and JSON API. PostgreSQL stores device inventory, users/sessions, audit events, and encrypted device credentials. Compose is the initial deployment model. The app can be bound to a specific host LAN IP or all interfaces; prefer a specific LAN IP and firewall restrictions. Direct HTTP is supported only for a trusted, isolated LAN and does not encrypt passwords or session cookies in transit. Prefer HTTPS through a trusted reverse proxy and set OPENMANAGE_COOKIE_SECURE=true. Never port-forward the app to the public internet. Keep the single app + PostgreSQL deployment as the baseline; add a queue or Redis only when measured operational requirements justify it.
 
 ## Main code locations
 
@@ -38,7 +38,8 @@ Audit security-sensitive operations with initiator, device, operation type, life
 
 ## Security invariants
 
-- API routes other than health and login require an authenticated session; state-changing requests require CSRF validation.
+- API routes other than health and login require an authenticated session; state-changing requests require CSRF validation. Every route that changes data or exposes audit information must enforce its role policy server-side; UI visibility is not authorization.
+- Direct HTTP leaves login credentials and session cookies observable to anyone able to capture traffic on the path. Use HTTPS for normal operation and restrict any temporary direct-HTTP mode to a trusted isolated LAN.
 - Session tokens are random; only token hashes are stored in the database. Cookies are HttpOnly for the session, SameSite Strict, and Secure when OPENMANAGE_COOKIE_SECURE=true.
 - Administrator bootstrap credentials come from environment configuration. Use a strong, unique password and do not commit a real .env.
 - Enrollment is admin-only. It accepts private IP literals only, uses TCP/22, verifies an independently sourced SHA-256 host-key fingerprint, and proves that the supplied SSH key authenticates before storing it.
