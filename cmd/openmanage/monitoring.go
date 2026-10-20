@@ -269,6 +269,15 @@ func (a *app) monitorDevice(ctx context.Context, deviceID string) (string, strin
 		return "offline", "SSH port unreachable"
 	}
 	defer conn.Close()
+	watchDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-watchDone:
+		}
+	}()
+	defer close(watchDone)
 	deadline := time.Now().Add(monitorCheckTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
