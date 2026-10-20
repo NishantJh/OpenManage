@@ -1,36 +1,37 @@
-# MVP monitoring preview
+# Persistent monitoring (MVP)
 
-This branch adds an opt-in browser-session monitoring preview to the dashboard.
+OpenManage now has an opt-in server-side monitoring scheduler. It runs inside the existing Go application process; PostgreSQL stores the settings and per-device check history. No Redis, extra container, or browser timer is required.
 
 ## Behaviour
 
-- Monitoring is off by default and must be enabled by an authenticated user.
-- The browser schedules a read-only health-check cycle every five minutes while the dashboard remains open.
-- Each cycle checks at most five devices that are not marked `unknown`, sequentially. It does not run concurrent SSH checks.
-- The existing authenticated, CSRF-protected health-check endpoint and server-defined command allowlist are used.
-- `Check now` runs one cycle immediately. The UI reports the cycle summary and local last-run time.
-- A failed HTTP 502 health-check response marks that device offline in the current UI session. Other non-success responses are counted as skipped rather than treated as proof that the device is offline.
-- The browser stops the timer when the user disables monitoring or leaves the page. Device list refreshes do not reset the five-minute schedule, and an in-progress cycle blocks overlapping cycles.
+- Monitoring is disabled by default. An administrator enables or disables it from the dashboard; the setting is stored in PostgreSQL and survives browser closure and application-container restarts.
+- The configured interval is between 60 seconds and 60 minutes; the dashboard currently uses a five-minute default.
+- The scheduler polls settings every 15 seconds and processes at most five due, enrolled devices per batch, sequentially. Each device check has a 20-second SSH/command deadline. Large fleets will therefore take multiple batches to cycle through all devices.
+- Checks use the stored SSH credential and pinned host-key fingerprint and run only the existing server-defined, read-only OpenWrt health commands. No arbitrary command is accepted from the UI.
+- Results are stored in PostgreSQL with device, status, sanitized reason, start/end timestamps, and duration. History is retained for 30 days.
+- TCP/22 connection failures mark the device offline. Successful SSH with one or more failed diagnostics marks it degraded. Credential decryption, SSH authentication, or pinned host-key failures are recorded as errors and do not falsely mark the device offline.
+- Monitoring is independent of an authenticated browser session. Configuration changes are admin-only; authenticated users can view settings/history.
 
-## Known limitations — not production monitoring
+## API
 
-- This is a first-run UI slice, not durable monitoring. There is no server-side scheduler, persisted check history, alert delivery, or monitoring configuration stored in PostgreSQL.
-- The monitor only considers the first five eligible devices in the inventory per cycle. Devices marked `unknown` are skipped; a device with missing credentials may be skipped by the endpoint.
-- Results for failed checks are not persisted as a monitoring record. The offline status produced by a 502 response is a UI-session state and may be overwritten on refresh.
-- Monitoring depends on the authenticated browser session staying active. Closing the tab stops monitoring.
-- The health endpoint has its own timeout and audit behaviour. Do not enable this against a large fleet or treat this preview as a substitute for persistent availability monitoring.
+- `GET /api/monitoring/settings` — read the persisted enabled flag and interval.
+- `PUT /api/monitoring/settings` — administrator-only; accepts `{"enabled":true,"interval_seconds":300}`. Interval must be 60–3600 seconds and requests require normal session and CSRF protection.
+- `GET /api/monitoring/history?limit=50` — latest persisted check outcomes, with a limit of 1–100.
 
-## Safe test checklist
+The migration `999_persistent_monitoring.sql` creates the settings and history tables and inserts the disabled-by-default settings row. Existing device inventory and credentials are unchanged.
 
-1. Start a disposable OpenManage stack using the repository's documented quick start or `bash scripts/smoke-test.sh`.
-2. Sign in and add an inventory-only device. Confirm it is shown as `Not enrolled` and is skipped by automatic monitoring.
-3. Use a disposable OpenWrt test VM/device to exercise SSH enrollment; independently verify the host-key fingerprint. Never use a live AP for negative credential tests.
-4. With the test device enrolled, select **Check now** and confirm the read-only diagnostics modal still works.
-5. Enable monitoring and confirm the UI indicates that the first automatic cycle will run after five minutes. Do not wait for a scheduled cycle as the only validation; use **Check now** for the immediate path.
-6. Test an unreachable disposable target and verify that it is reported as an error/offline only for a 502 response; verify that authentication/permission failures pause monitoring rather than silently marking devices offline.
-7. Disable monitoring and confirm no further automatic cycles occur. Close/reopen the page and verify monitoring is off by default.
-8. Run the full PR validation workflow and inspect the result for the exact PR head before considering the branch ready.
+## Resource and safety limits
+
+- One scheduler goroutine in the existing Go process; checks are sequential, capped at five devices per batch.
+- The application checks only enrolled devices with stored credentials and only private IP addresses on TCP/22.
+- No automatic configuration changes, alerts, or arbitrary shell commands.
+- History is pruned after 30 days. Database backups now also preserve monitoring settings and history.
+- Monitoring cannot run while the OpenManage application itself is stopped. On restart, persisted settings are loaded and due checks resume.
+
+## Validation
+
+The disposable-stack smoke test verifies the disabled-by-default setting, interval validation, enabling/disabling, history endpoint, and persistence across an application-container restart. CI must pass on the exact PR head. A disposable OpenWrt VM/device is still required to validate real SSH reachability, pinned host-key handling, and health command outcomes before enabling this against any production AP.
 
 ## Rollback
 
-Disable monitoring in the UI. To remove the feature from the code, revert this PR. No database migration, extra service, or router configuration change is required.
+Disable monitoring in the UI. Reverting the feature code does not delete monitoring history automatically. Do not drop the new tables unless you intentionally want to remove persisted monitoring settings and check history.
