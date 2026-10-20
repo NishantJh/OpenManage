@@ -73,7 +73,16 @@ func decryptSecret(key, ciphertext []byte) ([]byte, error) {
 
 func isPrivateDeviceIP(address string) bool {
 	ip := net.ParseIP(strings.TrimSpace(address))
-	return ip != nil && (ip.IsPrivate() || ip.IsLinkLocalUnicast())
+	return ip != nil && ip.IsPrivate()
+}
+
+func pinnedHostKeyCallback(expected string, observed *string) ssh.HostKeyCallback {
+	return func(_ string, _ net.Addr, hostKey ssh.PublicKey) error {
+		fingerprint := ssh.FingerprintSHA256(hostKey)
+		*observed = fingerprint
+		if fingerprint != expected { return errors.New("host key fingerprint mismatch") }
+		return nil
+	}
 }
 
 func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +121,7 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isPrivateDeviceIP(address) {
-		writeError(w, http.StatusUnprocessableEntity, "Enrollment only permits private or link-local IP addresses; DNS names and public addresses are rejected")
+		writeError(w, http.StatusUnprocessableEntity, "Enrollment only permits private IP addresses; DNS names, link-local, and public addresses are rejected")
 		return
 	}
 
@@ -122,15 +131,10 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var observedFingerprint string
-	hostKeyCallback := func(_ string, _ net.Addr, hostKey ssh.PublicKey) error {
-		observedFingerprint = ssh.FingerprintSHA256(hostKey)
-		if observedFingerprint != req.ExpectedFingerprint { return errors.New("host key fingerprint mismatch") }
-		return nil
-	}
 	config := &ssh.ClientConfig{
 		User: req.Username,
 		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: hostKeyCallback,
+		HostKeyCallback: pinnedHostKeyCallback(req.ExpectedFingerprint, &observedFingerprint),
 		Timeout: enrollmentTimeout,
 	}
 	dialer := net.Dialer{Timeout: enrollmentTimeout}
