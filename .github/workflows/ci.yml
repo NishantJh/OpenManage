@@ -1,10 +1,8 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: ['**']
   workflow_dispatch:
-  pull_request:
-    branches: [main]
 permissions:
   contents: read
 concurrency:
@@ -12,9 +10,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    # Register your WSL2 runner with the custom label "WSL2".
-    # Fork PRs are skipped on this self-hosted runner; only same-repository PRs execute.
+    # Branch pushes originate from repository writers. No pull_request trigger is used
+    # because this is a public repository and the runner is self-hosted.
     runs-on: [self-hosted, Linux, X64, WSL2]
     steps:
       - uses: actions/checkout@v4
