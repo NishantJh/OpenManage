@@ -35,7 +35,7 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the o
 - GET /api/devices/{id} — fetches one record.
 - DELETE /api/devices/{id} — deletes one record.
 
-All API routes except /api/healthz and /api/auth/login require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. GET /api/audit returns the latest 100 events. The address field is still metadata; OpenManage does not connect to devices yet. Set OPENMANAGE_COOKIE_SECURE=true when serving through HTTPS.
+All API routes except /api/healthz and /api/auth/login require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. GET /api/audit returns the latest 100 events. The address field is inventory metadata until enrollment is explicitly completed. SSH enrollment verifies a host key fingerprint supplied from a trusted source and authenticates with a private key before storing it encrypted at rest. Enrollment accepts private/link-local IP literals only and uses TCP/22. Set OPENMANAGE_COOKIE_SECURE=true when serving through HTTPS. Configure OPENMANAGE_ENCRYPTION_KEY using a securely backed-up base64-encoded 32-byte random key before enrollment; losing it makes stored SSH credentials unrecoverable. The private key is never returned by the API. Re-enrollment replaces the stored credential only after the new key successfully authenticates; it does not install or rotate authorized_keys on the router itself.
 
 ## Resource profile
 
