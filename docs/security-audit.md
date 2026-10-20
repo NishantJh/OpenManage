@@ -29,9 +29,9 @@ The LAN-access PR changes the Compose binding default to make LAN use possible a
 
 ### OM-SAF-03 — Audit writes are not atomic with several state changes
 
-**Severity: High for audit integrity — remediation pending**
+**Severity: High for audit integrity — remediation implemented in PR (post-merge verification pending)**
 
-SSH enrollment already writes credentials, device status, and its audit event in one transaction. However, device create/delete and login/logout audit writes are best-effort and occur separately from the state change. A database error can therefore leave a successful action without a durable corresponding audit record. Move each relevant state mutation and audit insert into one transaction; define which events are mandatory and fail the operation if the audit write fails.
+SSH enrollment, device create/delete, and login/logout now place the state mutation and mandatory audit insert in the same database transaction. If the audit insert or commit fails, the transaction rolls back and the request returns an error rather than reporting success without a durable audit record. Verify the merged code and exercise failure paths in integration tests.
 
 ### OM-SAF-04 — No login rate limiting or lockout control
 

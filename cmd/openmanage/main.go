@@ -260,18 +260,24 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
 	}
-	_, err = a.db.Exec(r.Context(), "DELETE FROM sessions WHERE expires_at <= NOW()")
+	tx, err := a.db.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
 	}
-	_, err = a.db.Exec(r.Context(), "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '12 hours')", tokenHash(sessionToken), user.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not create session")
-		return
+	defer tx.Rollback(r.Context())
+	if _, err = tx.Exec(r.Context(), "DELETE FROM sessions WHERE expires_at <= NOW()"); err == nil {
+		_, err = tx.Exec(r.Context(), "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '12 hours')", tokenHash(sessionToken), user.ID)
 	}
-	if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, "auth.login", "session", user.ID, `{}`); err != nil {
-		log.Printf("audit login write failed: %v", err)
+	if err == nil {
+		err = insertAuditEvent(r.Context(), tx, user.ID, "auth.login", "session", user.ID, map[string]string{})
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create session and audit event")
+		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "om_session", Value: sessionToken, Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	http.SetCookie(w, &http.Cookie{Name: "om_csrf", Value: csrfToken, Path: "/", HttpOnly: false, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
@@ -294,16 +300,29 @@ func (a *app) me(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	cookie, _ := r.Cookie("om_session")
+	user, ok := r.Context().Value(userContextKey).(authUser)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	tx, err := a.db.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not end session")
+		return
+	}
+	defer tx.Rollback(r.Context())
 	if cookie != nil && cookie.Value != "" {
-		if _, err := a.db.Exec(r.Context(), "DELETE FROM sessions WHERE token_hash=$1", tokenHash(cookie.Value)); err != nil {
+		if _, err = tx.Exec(r.Context(), "DELETE FROM sessions WHERE token_hash=$1", tokenHash(cookie.Value)); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not end session")
 			return
 		}
 	}
-	if user, ok := r.Context().Value(userContextKey).(authUser); ok {
-		if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, "auth.logout", "session", user.ID, `{}`); err != nil {
-			log.Printf("audit logout write failed: %v", err)
-		}
+	if err = insertAuditEvent(r.Context(), tx, user.ID, "auth.logout", "session", user.ID, map[string]string{}); err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not end session and record audit event")
+		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "om_session", Value: "", Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	http.SetCookie(w, &http.Cookie{Name: "om_csrf", Value: "", Path: "/", HttpOnly: false, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
@@ -366,14 +385,26 @@ func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and address are required")
 		return
 	}
-	var d device
-	err := a.db.QueryRow(r.Context(), `INSERT INTO devices(name,address,model,firmware,status) VALUES($1,$2,$3,$4,'unknown') RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at`, in.Name, in.Address, in.Model, in.Firmware).
-		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt)
+	user := r.Context().Value(userContextKey).(authUser)
+	tx, err := a.db.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create device")
 		return
 	}
-	a.recordAudit(r, "device.create", "device", d.ID, map[string]string{"name": d.Name, "address": d.Address})
+	defer tx.Rollback(r.Context())
+	var d device
+	err = tx.QueryRow(r.Context(), `INSERT INTO devices(name,address,model,firmware,status) VALUES($1,$2,$3,$4,'unknown') RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at`, in.Name, in.Address, in.Model, in.Firmware).
+		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt)
+	if err == nil {
+		err = insertAuditEvent(r.Context(), tx, user.ID, "device.create", "device", d.ID, map[string]string{"name": d.Name, "address": d.Address})
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create device and record audit event")
+		return
+	}
 	writeJSON(w, http.StatusCreated, d)
 }
 
@@ -400,7 +431,14 @@ func (a *app) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid device ID")
 		return
 	}
-	tag, err := a.db.Exec(r.Context(), "DELETE FROM devices WHERE id=$1", r.PathValue("id"))
+	user := r.Context().Value(userContextKey).(authUser)
+	tx, err := a.db.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete device")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	tag, err := tx.Exec(r.Context(), "DELETE FROM devices WHERE id=$1", r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not delete device")
 		return
@@ -409,7 +447,13 @@ func (a *app) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "device not found")
 		return
 	}
-	a.recordAudit(r, "device.delete", "device", r.PathValue("id"), map[string]string{"id": r.PathValue("id")})
+	if err = insertAuditEvent(r.Context(), tx, user.ID, "device.delete", "device", r.PathValue("id"), map[string]string{"id": r.PathValue("id")}); err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete device and record audit event")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -442,20 +486,15 @@ func (a *app) listAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (a *app) recordAudit(r *http.Request, action, resourceType, resourceID string, details any) {
-	user, ok := r.Context().Value(userContextKey).(authUser)
-	if !ok {
-		log.Printf("audit skipped: no authenticated actor for %s", action)
-		return
-	}
+func insertAuditEvent(ctx context.Context, tx pgx.Tx, userID, action, resourceType, resourceID string, details any) error {
 	data, err := json.Marshal(details)
 	if err != nil {
-		log.Printf("audit encode failed for %s: %v", action, err)
-		return
+		return err
 	}
-	if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, action, resourceType, resourceID, string(data)); err != nil {
-		log.Printf("audit write failed for %s: %v", action, err)
-	}
+	_, err = tx.Exec(ctx,
+		"INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)",
+		userID, action, resourceType, resourceID, string(data))
+	return err
 }
 
 func validUUID(value string) bool {
