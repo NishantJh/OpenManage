@@ -1,15 +1,17 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: ['**']
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: openmanage-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
-    # Register your WSL2 runner with the custom label "WSL2".
-    # Deliberately no pull_request trigger: this repository is public and
-    # self-hosted runners must not execute untrusted fork code.
+    # Branch pushes originate from repository writers. No pull_request trigger is used
+    # because this is a public repository and the runner is self-hosted.
     runs-on: [self-hosted, Linux, X64, WSL2]
     steps:
       - uses: actions/checkout@v4
