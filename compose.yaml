@@ -9,6 +9,7 @@ services:
       OPENMANAGE_ADMIN_USERNAME: "${OPENMANAGE_ADMIN_USERNAME:-admin}"
       OPENMANAGE_ADMIN_PASSWORD: "${OPENMANAGE_ADMIN_PASSWORD:-}"
       OPENMANAGE_COOKIE_SECURE: "${OPENMANAGE_COOKIE_SECURE:-false}"
+      OPENMANAGE_ENCRYPTION_KEY: "${OPENMANAGE_ENCRYPTION_KEY:-}"
     ports:
       - "${OPENMANAGE_PORT:-127.0.0.1:8080}:8080"
     depends_on:
@@ -21,7 +22,7 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 192m
     cpus: 1.0
-    # Authentication is not implemented: bind only to localhost or a trusted LAN.
+    # Keep localhost binding unless HTTPS and network access controls are configured.
 
   db:
     image: postgres:17-alpine
