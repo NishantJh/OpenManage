@@ -18,25 +18,25 @@ Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful O
 
 ## Roadmap
 
-### 0. Security and engineering hardening — next
+### 0. Security and engineering hardening — in progress
 
-- Make credential persistence, device status update, and the enrollment audit event atomic in one database transaction.
-- Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures.
-- Run gofmt consistently and make CI check formatting rather than silently modifying source.
-- Improve malformed device-ID handling and verify request-size/timeout behavior.
-- Improve dependency reproducibility where practical; prefer npm ci when a valid lockfile is present.
-- Document backup/restore for PostgreSQL and OPENMANAGE_ENCRYPTION_KEY; test the recovery path.
+- [x] Make credential persistence, device status update, and the enrollment audit event atomic in one database transaction.
+- [ ] Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures.
+- [x] Format Go sources and make CI reject unformatted Go files.
+- [x] Reject malformed device IDs before database queries. [ ] Verify request-size/timeout behavior.
+- [ ] Improve dependency reproducibility where practical; prefer npm ci when a valid lockfile is present.
+- [ ] Document backup/restore for PostgreSQL and OPENMANAGE_ENCRYPTION_KEY; test the recovery path.
 - Keep this phase narrowly scoped and do not add remote command execution.
 
 Exit criteria: tests cover critical enrollment failure paths; credential changes cannot commit without their audit event; CI passes on the PR head and after merge.
 
-### 1. Enrollment UX and device lifecycle
+### 1. Enrollment UX and device lifecycle — in progress
 
-- Add an admin-only enrollment form to the UI with clear instructions for obtaining and verifying a router host-key fingerprint.
-- Never store private-key material in browser local storage, logs, audit details, analytics, or API responses. Clear key input state after submission and on navigation.
-- Show enrollment status and last-seen data honestly; distinguish inventory metadata from a verified connection.
-- Add a safe credential status/re-enrollment workflow without exposing stored secrets.
-- Provide clear errors for missing encryption-key configuration, invalid key formats, unreachable devices, and fingerprint mismatch.
+- [x] Add an admin-only enrollment form with independent host-key fingerprint verification guidance.
+- [x] Keep private-key material out of local storage, logs, audit details, analytics, and API responses; clear form state after submission and on close.
+- [x] Refresh device status and last-seen data after successful SSH authentication.
+- [x] Allow admins to re-enroll from the inventory without exposing stored secrets.
+- [ ] Verify UI error handling for missing encryption-key configuration, invalid key formats, unreachable devices, and fingerprint mismatch.
 
 Exit criteria: the user can enroll a device through the UI, see a safe outcome, and cannot retrieve the stored private key.
 
