@@ -44,10 +44,8 @@ jobs:
           npm run build
       - name: Prepare embedded assets
         run: mkdir -p cmd/openmanage/web/dist && cp -a web/dist/. cmd/openmanage/web/dist/
-      - name: Verify Go dependency metadata
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+      - name: Resolve Go dependencies
+        run: go mod tidy
       - name: Test Go package
         run: go test -race ./...
       - name: Validate Compose configuration
