@@ -13,8 +13,10 @@ Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful O
 - Device inventory CRUD and the audit activity UI are implemented.
 - SSH enrollment API verifies an independently verified SHA-256 host-key fingerprint and SSH public-key authentication before storing the private key encrypted with AES-256-GCM.
 - Enrollment is admin-only, limited to private IP literals on TCP/22, and requires OPENMANAGE_ENCRYPTION_KEY.
-- Enrollment does not install or rotate router-side authorized keys, run remote commands, or push configuration.
-- CI on trusted branch pushes runs frontend build, Go tests, and Docker image build on the WSL2 self-hosted runner. There is intentionally no pull_request trigger because the repository is public and untrusted fork code must not run on that runner.
+- Read-only device health checks are implemented: server-defined SSH operations report board details, uptime, memory, and overlay storage with bounded output/time and sanitized audit outcomes.
+- An opt-in FreeRADIUS 3.2 lab service is being added separately from the default app stack. It currently targets local PAP smoke testing; WPA-Enterprise EAP/certificate deployment and UI/DB integration are not yet implemented.
+- Enrollment does not install or rotate router-side authorized keys or push configuration.
+- PR validation runs on GitHub-hosted runners and now includes a disposable RADIUS smoke test. Trusted branch CI remains separate from untrusted PR validation.
 
 ## Roadmap
 
@@ -45,7 +47,12 @@ Exit criteria: tests cover critical enrollment failure paths; credential changes
 
 Exit criteria: the user can enroll a device through the UI, see a safe outcome, and cannot retrieve the stored private key.
 
-### 2. Shared device-operations engine and health — next
+### 2. Shared device-operations engine and health — first slice merged
+
+- [x] Add a bounded, server-defined read-only health-check endpoint and inventory diagnostics modal (PR #19 merged; post-merge checks still need final confirmation).
+- [ ] Extend diagnostics into scheduled monitoring and alerting only after the manual health-check path is proven reliable.
+
+Design one reusable, bounded SSH operation engine that can support both read-only and future write-capable operations. Begin by implementing only read-only health and diagnostics; the shared engine must not imply that arbitrary commands are allowed.
 
 Design one reusable, bounded SSH operation engine that can support both read-only and future write-capable operations. Begin by implementing only read-only health and diagnostics; the shared engine must not imply that arbitrary commands are allowed.
 
@@ -58,7 +65,7 @@ Design one reusable, bounded SSH operation engine that can support both read-onl
 
 Exit criteria: health checks are reliable, resource-bounded, auditable, and use the same policy/execution boundary intended for later controlled writes.
 
-### 3. Versioned configuration workflows
+### 3. Versioned configuration workflows — next product milestone
 
 - Model templates and revisions in PostgreSQL with explicit validation and immutable revision history.
 - Render a preview and diff before applying; validate target compatibility and require explicit operator confirmation.
@@ -91,10 +98,17 @@ Treat firmware upgrades as a separate high-risk operation type, not as a routine
 
 Exit criteria: supported upgrade paths are validated, staged, observable, and have honest recovery guidance for failures outside the control plane's reach.
 
-### 6. Monitoring and later integrations
+### 6. MVP monitoring and RADIUS
 
-- Add bounded reachability monitoring, alerts, and firmware inventory.
-- Consider topology, IPAM, PKI/VPN, RADIUS, multi-user roles, and larger-fleet features only when a concrete use case warrants them.
+- [x] Manual read-only device health checks and diagnostics (PR #19).
+- [ ] Add scheduled reachability/health polling with bounded concurrency and clear last-success/error timestamps.
+- [ ] Provide an opt-in FreeRADIUS lab profile with a disposable PAP authentication smoke test.
+- [ ] Add trusted AP client management, per-AP shared secrets, and certificate-backed WPA-Enterprise EAP/PEAP support before treating RADIUS as production-ready.
+- [ ] Decide whether user identities should live in OpenManage's PostgreSQL schema or an external identity provider before wiring the RADIUS service to the application.
+
+### 7. Later integrations
+
+- Add firmware inventory, alerts, topology, IPAM, PKI/VPN, multi-user roles, and larger-fleet features when a concrete use case warrants them.
 
 ## Delivery rules
 
