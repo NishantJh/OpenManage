@@ -74,6 +74,20 @@ status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
 [[ "$status" == "200" ]] || { echo "ERROR: admin audit request returned HTTP $status" >&2; exit 1; }
 echo "PASS: admin audit API authorization"
 
+# Force an audit insert failure and prove that device creation is rolled back.
+docker compose --project-name "$project" --env-file "$env_file" exec -T db psql -U openmanage -d openmanage -v ON_ERROR_STOP=1 \
+  -c "CREATE FUNCTION smoke_fail_audit() RETURNS trigger LANGUAGE plpgsql AS \\$\\$ BEGIN RAISE EXCEPTION 'intentional smoke-test audit failure'; END; \\$\\$; CREATE TRIGGER smoke_fail_audit_trigger BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION smoke_fail_audit();"
+status="$(curl --silent --show-error -o "$device_body" -w '%{http_code}' \
+  -b "$cookie_jar" -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' \
+  --data '{"name":"audit-failure-router","address":"192.0.2.11","model":"test-model","firmware":"test"}' \
+  "$base_url/api/devices")"
+[[ "$status" == "500" ]] || { echo "ERROR: device creation with failed audit returned HTTP $status (expected 500)" >&2; exit 1; }
+docker compose --project-name "$project" --env-file "$env_file" exec -T db psql -U openmanage -d openmanage -v ON_ERROR_STOP=1 \
+  -c "DROP TRIGGER smoke_fail_audit_trigger ON audit_events; DROP FUNCTION smoke_fail_audit();"
+devices="$(curl --silent --show-error --fail -b "$cookie_jar" "$base_url/api/devices")"
+python3 -c 'import json,sys; ds=json.load(sys.stdin); assert not any(d.get("name")=="audit-failure-router" for d in ds), ds' <<< "$devices"
+echo "PASS: failed audit insert rolls back device creation"
+
 status="$(curl --silent --show-error -o "$device_body" -w '%{http_code}' \
   -b "$cookie_jar" -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' \
   --data '{"name":"smoke-test-router","address":"192.0.2.10","model":"test-model","firmware":"test"}' \
@@ -86,6 +100,18 @@ echo "PASS: authenticated device creation with CSRF protection"
 devices="$(curl --silent --show-error --fail -b "$cookie_jar" "$base_url/api/devices")"
 python3 -c 'import json,sys; ds=json.load(sys.stdin); assert any(d.get("id")==sys.argv[1] for d in ds), ds' "$device_id" <<< "$devices"
 echo "PASS: device inventory read-after-write"
+
+# A failed delete audit must restore the deleted inventory row.
+docker compose --project-name "$project" --env-file "$env_file" exec -T db psql -U openmanage -d openmanage -v ON_ERROR_STOP=1 \
+  -c "CREATE FUNCTION smoke_fail_audit() RETURNS trigger LANGUAGE plpgsql AS \\$\\$ BEGIN RAISE EXCEPTION 'intentional smoke-test audit failure'; END; \\$\\$; CREATE TRIGGER smoke_fail_audit_trigger BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION smoke_fail_audit();"
+status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
+  -X DELETE -b "$cookie_jar" -H "X-CSRF-Token: $csrf" "$base_url/api/devices/$device_id")"
+[[ "$status" == "500" ]] || { echo "ERROR: device deletion with failed audit returned HTTP $status (expected 500)" >&2; exit 1; }
+docker compose --project-name "$project" --env-file "$env_file" exec -T db psql -U openmanage -d openmanage -v ON_ERROR_STOP=1 \
+  -c "DROP TRIGGER smoke_fail_audit_trigger ON audit_events; DROP FUNCTION smoke_fail_audit();"
+status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' -b "$cookie_jar" "$base_url/api/devices/$device_id")"
+[[ "$status" == "200" ]] || { echo "ERROR: device row was not preserved after audit failure (HTTP $status)" >&2; exit 1; }
+echo "PASS: failed audit insert rolls back device deletion"
 
 status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
   -X DELETE -b "$cookie_jar" -H "X-CSRF-Token: $csrf" "$base_url/api/devices/$device_id")"
