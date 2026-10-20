@@ -152,10 +152,10 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	var observedFingerprint string
 	config := &ssh.ClientConfig{
-		User: req.Username,
-		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		User:            req.Username,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: pinnedHostKeyCallback(req.ExpectedFingerprint, &observedFingerprint),
-		Timeout: enrollmentTimeout,
+		Timeout:         enrollmentTimeout,
 	}
 	dialer := net.Dialer{Timeout: enrollmentTimeout}
 	conn, err := dialer.DialContext(r.Context(), "tcp", net.JoinHostPort(address, "22"))
