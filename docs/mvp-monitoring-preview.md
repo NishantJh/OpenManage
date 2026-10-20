@@ -2,6 +2,12 @@
 
 OpenManage now has an opt-in server-side monitoring scheduler. It runs inside the existing Go application process; PostgreSQL stores the settings and per-device check history. No Redis, extra container, or browser timer is required. PostgreSQL remains the source of truth; monitoring settings are a single small row and are cheap to read, so a Redis cache would add invalidation and operational failure modes without a demonstrated performance benefit.
 
+## Why Redis is not included yet
+
+Redis is not currently used as a cache or queue. Monitoring settings are one small PostgreSQL row, device credentials are security-sensitive and should not be copied into a cache, and recent history is durable product data that belongs in PostgreSQL. A cache would introduce invalidation rules and another failure dependency without evidence that these reads are a bottleneck.
+
+The current design instead uses a small bounded worker pool, a modestly tuned PostgreSQL connection pool, indexed history queries, and a PostgreSQL advisory lock for scheduler coordination. Reconsider Redis only after measurements show a concrete need—for example, a distributed job queue for a large fleet or sustained scheduling throughput that cannot be met by the current bounded workers.
+
 ## Behaviour
 
 - Monitoring is disabled by default. An administrator enables or disables it from the dashboard; the setting is stored in PostgreSQL and survives browser closure and application-container restarts.
