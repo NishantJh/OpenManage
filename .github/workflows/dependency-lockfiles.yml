@@ -1,0 +1,81 @@
+name: Prepare dependency lockfile branch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - ".github/workflows/dependency-lockfiles.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: openmanage-dependency-lockfiles
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    # Generate only from trusted main commits, on a GitHub-hosted runner.
+    # Never execute pull-request code with a write-capable token.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Create an isolated branch
+        run: git checkout -b "chore/dependency-lockfiles-${GITHUB_RUN_ID}"
+
+      - name: Generate Go dependency metadata
+        run: go mod tidy
+
+      - name: Generate and verify frontend lockfile
+        working-directory: web
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+
+      - name: Verify Go build and tests
+        run: |
+          git diff --exit-code -- web/package.json
+          test -s go.sum
+          test -s web/package-lock.json
+          mkdir -p cmd/openmanage/web/dist
+          cp -a web/dist/. cmd/openmanage/web/dist/
+          go test ./...
+
+      - name: Commit generated dependency metadata to the branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add go.mod go.sum web/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Dependency metadata is already current; no branch was pushed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git commit -m "chore: add reproducible dependency lockfiles"
+          branch="$(git branch --show-current)"
+          git push origin "$branch"
+          {
+            echo "Generated dependency metadata and pushed `$branch`."
+            echo "Review the branch and open a PR against `main`; CI should then switch to lockfile verification."
+          } >> "$GITHUB_STEP_SUMMARY"
