@@ -5,7 +5,7 @@ RUN npm install --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.24-alpine AS backend
+FROM golang:1.26-alpine AS backend
 WORKDIR /src
 COPY go.mod ./
 RUN go mod download
