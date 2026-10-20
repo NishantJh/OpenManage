@@ -36,6 +36,9 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the o
 - GET /api/devices/{id} — fetches one record.
 - DELETE /api/devices/{id} — deletes one record.
 - POST /api/devices/{id}/enroll — verifies a pinned SSH host key and public-key login, then stores the management private key encrypted at rest. Request JSON: `username`, `private_key`, and `expected_fingerprint` (the `SHA256:...` fingerprint must be verified independently).
+- GET /api/monitoring/settings — reads persistent server-side monitoring settings.
+- PUT /api/monitoring/settings — administrator-only; enables/disables monitoring and sets an interval from 60 to 3600 seconds.
+- GET /api/monitoring/history?limit=50 — returns recent persisted monitoring outcomes (limit 1–100).
 
 All API routes except /api/healthz and /api/auth/login require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. GET /api/audit returns the latest 100 events and is intended for administrators. The address field is inventory metadata until enrollment is explicitly completed. SSH enrollment verifies a host key fingerprint supplied from a trusted source and authenticates with a private key before storing it encrypted at rest. Enrollment accepts private IP literals only (no DNS names, public addresses, or link-local addresses) and uses TCP/22. Configure OPENMANAGE_ENCRYPTION_KEY using a securely backed-up base64-encoded 32-byte random key before enrollment; losing it makes stored SSH credentials unrecoverable. The private key is never returned by the API. Re-enrollment replaces the stored credential only after the new key successfully authenticates; it does not install or rotate authorized_keys on the router itself.
 
@@ -45,7 +48,7 @@ Compose starts with memory limits of 192 MiB for the app and 256 MiB for Postgre
 
 ## Roadmap
 
-See [plan.md](plan.md) for the current implementation plan, security hardening gates, and controlled device-operation sequence.
+See [plan.md](plan.md) for the current implementation plan, security hardening gates, and controlled device-operation sequence. Persistent monitoring behavior, limits, and validation are documented in [docs/mvp-monitoring-preview.md](docs/mvp-monitoring-preview.md).
 
 ## Development
 
