@@ -41,10 +41,10 @@ func TestDecryptSecretRejectsTampering(t *testing.T) {
 }
 
 func TestPrivateDeviceIP(t *testing.T) {
-	for _, address := range []string{"192.168.1.1", "10.0.0.2", "172.16.0.1", "fd00::1", "169.254.1.1"} {
+	for _, address := range []string{"192.168.1.1", "10.0.0.2", "172.16.0.1", "fd00::1"} {
 		if !isPrivateDeviceIP(address) { t.Errorf("expected %q to be permitted", address) }
 	}
-	for _, address := range []string{"example.com", "8.8.8.8", "1.1.1.1", "2001:4860:4860::8888", "192.168.1.1:22"} {
+	for _, address := range []string{"example.com", "8.8.8.8", "1.1.1.1", "2001:4860:4860::8888", "192.168.1.1:22", "169.254.1.1"} {
 		if isPrivateDeviceIP(address) { t.Errorf("expected %q to be rejected", address) }
 	}
 }
