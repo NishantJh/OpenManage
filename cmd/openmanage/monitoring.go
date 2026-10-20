@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -56,8 +59,14 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 		Enabled         bool `json:"enabled"`
 		IntervalSeconds int  `json:"interval_seconds"`
 	}
-	if err := decodeSingleJSON(r, &in); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid monitoring settings")
+		return
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "request must contain a single JSON object")
 		return
 	}
 	if in.IntervalSeconds < 60 || in.IntervalSeconds > 3600 {
@@ -116,11 +125,11 @@ func (a *app) listMonitoringHistory(w http.ResponseWriter, r *http.Request) {
 func (a *app) monitorLoop(ctx context.Context) {
 	ticker := time.NewTicker(monitorPollInterval)
 	defer ticker.Stop()
-	logMonitor("persistent monitoring scheduler started")
+	log.Printf("persistent monitoring scheduler started")
 	for {
 		select {
 		case <-ctx.Done():
-			logMonitor("persistent monitoring scheduler stopped")
+			log.Printf("persistent monitoring scheduler stopped")
 			return
 		case <-ticker.C:
 			a.runDueMonitoringChecks(ctx)
@@ -128,11 +137,6 @@ func (a *app) monitorLoop(ctx context.Context) {
 	}
 }
 
-func logMonitor(message string) {
-	// Deliberately keep scheduler logs free of device addresses, credentials, and command output.
-	// The durable per-device outcome is stored in monitoring_checks.
-	_ = message
-}
 
 func (a *app) runDueMonitoringChecks(ctx context.Context) {
 	var settings monitoringSettings
