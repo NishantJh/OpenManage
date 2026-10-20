@@ -229,10 +229,7 @@ func (a *app) runDueMonitoringChecks(ctx context.Context) {
 
 	// Run a small bounded worker pool so one slow router does not delay every
 	// other router in the batch, without opening an unbounded number of SSH sessions.
-	workers := monitorWorkers
-	if len(ids) < workers {
-		workers = len(ids)
-	}
+	workers := monitoringWorkerCount(len(ids))
 	jobs := make(chan string)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -257,6 +254,16 @@ dispatch:
 	}
 	close(jobs)
 	wg.Wait()
+}
+
+func monitoringWorkerCount(batchSize int) int {
+	if batchSize <= 0 {
+		return 0
+	}
+	if batchSize < monitorWorkers {
+		return batchSize
+	}
+	return monitorWorkers
 }
 
 func (a *app) runPersistentCheck(parent context.Context, deviceID string) {
@@ -285,7 +292,10 @@ func (a *app) runPersistentCheck(parent context.Context, deviceID string) {
 			VALUES($1,$2,$3,$4,$5,$6)`, deviceID, status, reason, started, finished, duration)
 	}
 	if err == nil {
-		_ = tx.Commit(ctx)
+		err = tx.Commit(ctx)
+	}
+	if err != nil {
+		log.Printf("monitoring result persistence failed")
 	}
 }
 
