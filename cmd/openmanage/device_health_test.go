@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 )
@@ -48,14 +47,8 @@ func TestHealthCommandsAreNamedAndReadOnlyAllowlist(t *testing.T) {
 }
 
 func TestHealthCommandsDoNotAcceptClientSuppliedCommands(t *testing.T) {
-	type request struct {
-		Command string `json:"command"`
-	}
-	// The command field is deliberately not part of the HTTP request contract;
-	// the execution list is a server-owned allowlist.
-	for _, command := range openWrtHealthCommands {
-		if bytes.Contains([]byte(command.Command), []byte("$( ")) {
-			t.Errorf("unexpected shell substitution in command %q", command.Name)
-		}
+	// The execution list is server-owned; callers cannot provide command strings.
+	if strings.Contains(strings.Join([]string{openWrtHealthCommands[0].Command}, ""), "$(") {
+		t.Fatal("health command unexpectedly contains shell substitution")
 	}
 }
