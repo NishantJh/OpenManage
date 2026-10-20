@@ -240,15 +240,22 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Username = strings.TrimSpace(in.Username)
+	clientIP := loginClientIP(r.RemoteAddr)
+	if blocked, retryAfter := loginAttempts.isBlocked(clientIP, time.Now()); blocked {
+		writeLoginRateLimited(w, retryAfter)
+		return
+	}
 	var user authUser
 	var passwordHash string
 	err := a.db.QueryRow(r.Context(), "SELECT id::text,username,role,password_hash FROM users WHERE username=$1", in.Username).
 		Scan(&user.ID, &user.Username, &user.Role, &passwordHash)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(in.Password)) != nil {
+		loginAttempts.recordFailure(clientIP, time.Now())
 		time.Sleep(300 * time.Millisecond)
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
+	loginAttempts.clear(clientIP)
 
 	sessionToken, err := randomToken(32)
 	if err != nil {
