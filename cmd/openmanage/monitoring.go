@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,6 +20,8 @@ import (
 const (
 	monitorPollInterval = 15 * time.Second
 	monitorBatchLimit   = 5
+	monitorWorkers      = 3
+	monitorAdvisoryLock int64 = 0x4f50454e4d4f4e
 	monitorCheckTimeout = 20 * time.Second
 )
 
@@ -164,16 +167,39 @@ func (a *app) pruneMonitoringHistory(parent context.Context) {
 }
 
 func (a *app) runDueMonitoringChecks(ctx context.Context) {
+	// A PostgreSQL session-level advisory lock prevents duplicate polling if a
+	// second OpenManage instance is started during an upgrade or recovery.
+	lockCtx, lockCancel := context.WithTimeout(ctx, 3*time.Second)
+	lockConn, err := a.db.Acquire(lockCtx)
+	lockCancel()
+	if err != nil {
+		return
+	}
+	defer lockConn.Release()
+	var locked bool
+	if err := lockConn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", monitorAdvisoryLock).Scan(&locked); err != nil || !locked {
+		return
+	}
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		var unlocked bool
+		if err := lockConn.QueryRow(unlockCtx, "SELECT pg_advisory_unlock($1)", monitorAdvisoryLock).Scan(&unlocked); err != nil || !unlocked {
+			log.Printf("monitoring advisory lock release failed")
+		}
+	}()
+
 	var settings monitoringSettings
 	settingsCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	err := a.db.QueryRow(settingsCtx, `SELECT enabled, interval_seconds, updated_at
+	err = lockConn.QueryRow(settingsCtx, `SELECT enabled, interval_seconds, updated_at
 		FROM monitoring_settings WHERE id=TRUE`).Scan(&settings.Enabled, &settings.IntervalSeconds, &settings.UpdatedAt)
 	cancel()
 	if err != nil || !settings.Enabled {
 		return
 	}
+
 	queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
-	rows, err := a.db.Query(queryCtx, `SELECT d.id::text
+	rows, err := lockConn.Query(queryCtx, `SELECT d.id::text
 		FROM devices d
 		JOIN device_credentials dc ON dc.device_id=d.id
 		LEFT JOIN LATERAL (
@@ -197,12 +223,40 @@ func (a *app) runDueMonitoringChecks(ctx context.Context) {
 	}
 	rows.Close()
 	queryCancel()
-	for _, id := range ids {
-		if ctx.Err() != nil {
-			return
-		}
-		a.runPersistentCheck(ctx, id)
+	if len(ids) == 0 {
+		return
 	}
+
+	// Run a small bounded worker pool so one slow router does not delay every
+	// other router in the batch, without opening an unbounded number of SSH sessions.
+	workers := monitorWorkers
+	if len(ids) < workers {
+		workers = len(ids)
+	}
+	jobs := make(chan string)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
+				a.runPersistentCheck(ctx, id)
+			}
+		}()
+	}
+dispatch:
+	for _, id := range ids {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case jobs <- id:
+		}
+	}
+	close(jobs)
+	wg.Wait()
 }
 
 func (a *app) runPersistentCheck(parent context.Context, deviceID string) {
