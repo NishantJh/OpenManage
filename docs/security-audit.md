@@ -7,7 +7,7 @@
 
 OpenManage has useful foundations: session tokens are random and stored as hashes, passwords use bcrypt, state-changing API requests require a CSRF cookie/header match, SSH host keys are pinned to an independently supplied fingerprint, SSH private keys are encrypted at rest, enrollment is constrained to private IP literals/TCP 22, and the Compose app runs read-only with dropped Linux capabilities and no-new-privileges.
 
-It is still early-development software and should not be treated as a production management plane. LAN availability is a deployment requirement, but direct HTTP must be understood as an explicitly less-secure mode. The highest-priority gaps are server-side role enforcement, best-effort audit writes for several state changes, and lack of login rate limiting. Dependency lockfiles and actual restore testing are also outstanding.
+It is still early-development software and should not be treated as a production management plane. LAN availability is a deployment requirement, but direct HTTP must be understood as an explicitly less-secure mode. The highest-priority gaps are server-side role enforcement, best-effort audit writes for several state changes, and lack of login rate limiting. PR #13 also exposed and remediated known Go standard-library and dependency vulnerabilities by upgrading to Go 1.26.x and patched pgx, x/crypto, and x/text versions; the follow-up vulnerability scan passed. Dependency lockfiles and actual restore testing are still outstanding.
 
 ## Findings
 
