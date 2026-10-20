@@ -18,12 +18,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
       - name: Build frontend
         working-directory: web
         run: |
           npm install --no-audit --no-fund
           npm run build
+      - name: Prepare embedded assets
+        run: mkdir -p cmd/openmanage/web/dist && cp -a web/dist/. cmd/openmanage/web/dist/
       - name: Test Go package
         run: go test ./...
       - name: Build Docker image
