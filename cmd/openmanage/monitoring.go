@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	monitorPollInterval = 15 * time.Second
-	monitorBatchLimit   = 5
-	monitorWorkers      = 3
+	monitorPollInterval       = 15 * time.Second
+	monitorBatchLimit         = 5
+	monitorWorkers            = 3
 	monitorAdvisoryLock int64 = 0x4f50454e4d4f4e
-	monitorCheckTimeout = 20 * time.Second
+	monitorCheckTimeout       = 20 * time.Second
 )
 
 type monitoringSettings struct {
