@@ -2,7 +2,7 @@
 
 A lightweight, self-hosted control plane for OpenWrt devices. OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the same Go process. Docker Compose is the initial deployment target.
 
-> **Early development:** this milestone is inventory only. Authentication, device agent, SSH management, configuration push, firmware management, and rollback are not implemented. Do not expose the service to the internet or an untrusted network.
+> **Early development:** authentication and an audit trail are now implemented, but SSH enrollment, device connectivity, configuration push, firmware management, and rollback are not yet implemented. Do not expose the service to the internet or an untrusted network.
 
 ## Design principles
 
@@ -14,7 +14,7 @@ A lightweight, self-hosted control plane for OpenWrt devices. OpenManage uses a 
 
 1. Clone the repository and enter its directory.
 2. Copy .env.example to .env.
-3. Set POSTGRES_PASSWORD to a unique random password.
+3. Set POSTGRES_PASSWORD and OPENMANAGE_ADMIN_PASSWORD to unique random passwords. The administrator password must be at least 12 characters. The initial administrator is created only when the users table is empty; later changes to these environment variables do not reset an existing account.
 4. Keep OPENMANAGE_PORT at 127.0.0.1:8080 for local-only access, or explicitly bind it to a trusted LAN address.
 5. Start the stack:
 
@@ -35,7 +35,7 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the o
 - GET /api/devices/{id} — fetches one record.
 - DELETE /api/devices/{id} — deletes one record.
 
-These endpoints currently have no authentication or authorization. Keep them reachable only by trusted users. The address field is metadata; OpenManage does not connect to devices yet.
+All API routes except /api/healthz and /api/auth/login require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. GET /api/audit returns the latest 100 events. The address field is still metadata; OpenManage does not connect to devices yet. Set OPENMANAGE_COOKIE_SECURE=true when serving through HTTPS.
 
 ## Resource profile
 
@@ -57,4 +57,4 @@ For Go: go test ./... and go run ./cmd/openmanage. The embedded frontend must be
 
 ## Security
 
-Do not use this initial build as a production management plane. Authentication, secure enrollment, audit logging and guarded configuration deployment must come first.
+Do not use this initial build as a production management plane. Secure enrollment and guarded configuration deployment must be completed before using OpenManage to change router state. Use HTTPS for remote access and set OPENMANAGE_COOKIE_SECURE=true behind a TLS-terminating proxy.
