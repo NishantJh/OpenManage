@@ -2,6 +2,8 @@ package main
 
 import (
 	"net"
+	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +17,10 @@ const (
 )
 
 type loginAttempt struct {
-	failures    int
-	windowStart time.Time
+	failures     int
+	windowStart  time.Time
 	blockedUntil time.Time
-	lastSeen    time.Time
+	lastSeen     time.Time
 }
 
 // loginRateLimiter bounds memory usage and tracks failed logins by the network
@@ -136,3 +138,12 @@ func loginClientIP(remoteAddr string) string {
 var loginAttempts = newLoginRateLimiter(
 	loginFailureLimit, loginFailureWindow, loginBlockDuration, loginLimiterMaxEntries,
 )
+
+func writeLoginRateLimited(w http.ResponseWriter, retryAfter time.Duration) {
+	seconds := int((retryAfter + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	writeError(w, http.StatusTooManyRequests, "too many login attempts; try again later")
+}
