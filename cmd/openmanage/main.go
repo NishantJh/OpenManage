@@ -270,7 +270,9 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
 	}
-	if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, "auth.login", "session", user.ID, `{}`); err != nil { log.Printf("audit login write failed: %v", err) }
+	if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, "auth.login", "session", user.ID, `{}`); err != nil {
+		log.Printf("audit login write failed: %v", err)
+	}
 	http.SetCookie(w, &http.Cookie{Name: "om_session", Value: sessionToken, Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	http.SetCookie(w, &http.Cookie{Name: "om_csrf", Value: csrfToken, Path: "/", HttpOnly: false, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	writeJSON(w, http.StatusOK, map[string]any{"user": user, "csrf_token": csrfToken})
@@ -298,7 +300,11 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if user, ok := r.Context().Value(userContextKey).(authUser); ok { if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, "auth.logout", "session", user.ID, `{}`); err != nil { log.Printf("audit logout write failed: %v", err) } }
+	if user, ok := r.Context().Value(userContextKey).(authUser); ok {
+		if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, "auth.logout", "session", user.ID, `{}`); err != nil {
+			log.Printf("audit logout write failed: %v", err)
+		}
+	}
 	http.SetCookie(w, &http.Cookie{Name: "om_session", Value: "", Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	http.SetCookie(w, &http.Cookie{Name: "om_csrf", Value: "", Path: "/", HttpOnly: false, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	w.WriteHeader(http.StatusNoContent)
