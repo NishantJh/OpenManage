@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -108,5 +112,71 @@ func TestEncryptionKeyConfiguration(t *testing.T) {
 	t.Setenv("OPENMANAGE_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte("too short")))
 	if _, err := encryptionKey(); err == nil {
 		t.Fatal("short encryption key must fail closed")
+	}
+}
+
+func performEnrollmentRequest(t *testing.T, id, role, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/devices/"+id+"/enroll", strings.NewReader(body))
+	req.SetPathValue("id", id)
+	ctx := context.WithValue(req.Context(), userContextKey, authUser{ID: "user-id", Role: role})
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	(&app{}).enrollDevice(rec, req)
+	return rec
+}
+
+func TestEnrollDeviceRejectsMalformedIDBeforeOtherChecks(t *testing.T) {
+	rec := performEnrollmentRequest(t, "not-a-uuid", "admin", "{}")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed ID, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEnrollDeviceRequiresAdministrator(t *testing.T) {
+	t.Setenv("OPENMANAGE_ENCRYPTION_KEY", "")
+	rec := performEnrollmentRequest(t, "550e8400-e29b-41d4-a716-446655440000", "operator", "{}")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEnrollDeviceFailsClosedWithoutEncryptionKey(t *testing.T) {
+	t.Setenv("OPENMANAGE_ENCRYPTION_KEY", "")
+	rec := performEnrollmentRequest(t, "550e8400-e29b-41d4-a716-446655440000", "admin", "{}")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when encryption key is absent, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(strings.ToLower(rec.Body.String()), "private_key") {
+		t.Fatal("error response should not echo request fields")
+	}
+}
+
+func TestEnrollDeviceRejectsMalformedJSON(t *testing.T) {
+	t.Setenv("OPENMANAGE_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x37}, 32)))
+	for _, body := range []string{
+		"{",
+		`{"username":"u","private_key":"secret","expected_fingerprint":"SHA256:x","unexpected":true}`,
+		`{"username":"u","private_key":"secret","expected_fingerprint":"SHA256:x"} {}`,
+	} {
+		rec := performEnrollmentRequest(t, "550e8400-e29b-41d4-a716-446655440000", "admin", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 for malformed or unexpected JSON, got %d for body %q", rec.Code, body)
+		}
+		if strings.Contains(rec.Body.String(), "secret") {
+			t.Errorf("response must not echo request secret: %s", rec.Body.String())
+		}
+	}
+}
+
+func TestEnrollDeviceRejectsOversizedRequestBody(t *testing.T) {
+	t.Setenv("OPENMANAGE_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x37}, 32)))
+	body := `{"username":"u","private_key":"` + strings.Repeat("x", 33*1024) + `","expected_fingerprint":"SHA256:x"}`
+	rec := performEnrollmentRequest(t, "550e8400-e29b-41d4-a716-446655440000", "admin", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for oversized body, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), strings.Repeat("x", 64)) {
+		t.Fatal("oversized request content must not be echoed")
 	}
 }
