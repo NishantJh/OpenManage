@@ -29,15 +29,15 @@ The LAN-access PR changes the Compose binding default to make LAN use possible a
 
 ### OM-SAF-03 — Audit writes are not atomic with several state changes
 
-**Severity: High for audit integrity — remediation implemented in PR (post-merge verification pending)**
+**Severity: High for audit integrity — remediated in PR #15; post-merge CI, Security Checks, and CodeQL passed**
 
-SSH enrollment, device create/delete, and login/logout now place the state mutation and mandatory audit insert in the same database transaction. If the audit insert or commit fails, the transaction rolls back and the request returns an error rather than reporting success without a durable audit record. Verify the merged code and exercise failure paths in integration tests.
+SSH enrollment, device create/delete, and login/logout now place the state mutation and mandatory audit insert in the same database transaction. If the audit insert or commit fails, the transaction rolls back and the request returns an error rather than reporting success without a durable audit record. The disposable runtime smoke test now injects audit-insert failures and verifies device creation rolls back and device deletion preserves the row. PR validation and post-merge CI passed.
 
 ### OM-SAF-04 — No login rate limiting or lockout control
 
-**Severity: Medium**
+**Severity: Medium — remediation implemented in PR (post-merge verification pending)**
 
-Login has a fixed delay after invalid credentials, but no per-account or per-source rate limit. The delay alone does not prevent distributed or sustained password guessing and can tie up server resources. Add bounded rate limiting with safe proxy/IP handling and tests; avoid trusting arbitrary forwarded headers.
+Login now applies a bounded per-peer-IP failed-attempt limiter with a 10-failure window and a five-minute block, returns HTTP 429 with `Retry-After` when blocked, and clears that peer's failure state after successful authentication. Client identity is derived from the socket peer address; arbitrary forwarded headers are not trusted. Unit tests and the disposable runtime smoke test cover throttling behavior. Recheck these controls after merge; deployments behind a reverse proxy should also configure rate limiting at the proxy.
 
 ### OM-SAF-05 — Dependency resolution is not reproducible
 

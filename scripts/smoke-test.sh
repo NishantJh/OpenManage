@@ -125,4 +125,20 @@ status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' "$base_url/a
 [[ "$status" == "401" ]] || { echo "ERROR: device list after logout returned HTTP $status (expected 401)" >&2; exit 1; }
 echo "PASS: logout invalidates the session"
 
+# Ten failed attempts are permitted in the configured window; the next is throttled.
+for attempt in $(seq 1 10); do
+  status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    --data '{"username":"admin","password":"intentionally-wrong-password"}' \
+    "$base_url/api/auth/login")"
+  [[ "$status" == "401" ]] || { echo "ERROR: failed login attempt $attempt returned HTTP $status (expected 401)" >&2; exit 1; }
+done
+status="$(curl --silent --show-error -D "$login_body" -o /dev/null -w '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  --data '{"username":"admin","password":"intentionally-wrong-password"}' \
+  "$base_url/api/auth/login")"
+[[ "$status" == "429" ]] || { echo "ERROR: throttled login returned HTTP $status (expected 429)" >&2; exit 1; }
+grep -Eiq '^Retry-After: [1-9][0-9]*' "$login_body" || { echo "ERROR: throttled login omitted Retry-After" >&2; exit 1; }
+echo "PASS: repeated failed logins are rate-limited with Retry-After"
+
 echo "All OpenManage runtime smoke tests passed."
