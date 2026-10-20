@@ -25,12 +25,12 @@ type healthCommand struct {
 }
 
 type healthResult struct {
-	Name      string    `json:"name"`
-	Label     string    `json:"label"`
-	Status    string    `json:"status"`
-	Output    string    `json:"output,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	Duration  int64     `json:"duration_ms"`
+	Name     string `json:"name"`
+	Label    string `json:"label"`
+	Status   string `json:"status"`
+	Output   string `json:"output,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Duration int64  `json:"duration_ms"`
 }
 
 type healthCheckResponse struct {
@@ -250,4 +250,3 @@ func (a *app) recordHealthCheckOutcome(r *http.Request, action, deviceID, reason
 		_ = tx.Commit(ctx)
 	}
 }
-
