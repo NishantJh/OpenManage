@@ -10,7 +10,7 @@ This branch adds an opt-in browser-session monitoring preview to the dashboard.
 - The existing authenticated, CSRF-protected health-check endpoint and server-defined command allowlist are used.
 - `Check now` runs one cycle immediately. The UI reports the cycle summary and local last-run time.
 - A failed HTTP 502 health-check response marks that device offline in the current UI session. Other non-success responses are counted as skipped rather than treated as proof that the device is offline.
-- The browser stops the timer when the user disables monitoring or leaves the page.
+- The browser stops the timer when the user disables monitoring or leaves the page. Device list refreshes do not reset the five-minute schedule, and an in-progress cycle blocks overlapping cycles.
 
 ## Known limitations — not production monitoring
 
