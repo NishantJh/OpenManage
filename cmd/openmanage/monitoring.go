@@ -1,0 +1,281 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/ssh"
+)
+
+const (
+	monitorPollInterval = 15 * time.Second
+	monitorBatchLimit   = 5
+	monitorCheckTimeout = 20 * time.Second
+)
+
+type monitoringSettings struct {
+	Enabled         bool      `json:"enabled"`
+	IntervalSeconds int       `json:"interval_seconds"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type monitoringCheck struct {
+	ID         int64     `json:"id"`
+	DeviceID   string    `json:"device_id"`
+	DeviceName string    `json:"device_name"`
+	Status     string    `json:"status"`
+	Reason     string    `json:"reason"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
+	DurationMS int64     `json:"duration_ms"`
+}
+
+func (a *app) getMonitoringSettings(w http.ResponseWriter, r *http.Request) {
+	var settings monitoringSettings
+	err := a.db.QueryRow(r.Context(), `SELECT enabled, interval_seconds, updated_at
+		FROM monitoring_settings WHERE id=TRUE`).Scan(&settings.Enabled, &settings.IntervalSeconds, &settings.UpdatedAt)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load monitoring settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
+	if !requireAnyRole(w, r, "admin") {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	var in struct {
+		Enabled         bool `json:"enabled"`
+		IntervalSeconds int  `json:"interval_seconds"`
+	}
+	if err := decodeSingleJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid monitoring settings")
+		return
+	}
+	if in.IntervalSeconds < 60 || in.IntervalSeconds > 3600 {
+		writeError(w, http.StatusBadRequest, "monitoring interval must be between 60 and 3600 seconds")
+		return
+	}
+	var settings monitoringSettings
+	err := a.db.QueryRow(r.Context(), `UPDATE monitoring_settings
+		SET enabled=$1, interval_seconds=$2, updated_at=NOW()
+		WHERE id=TRUE
+		RETURNING enabled, interval_seconds, updated_at`, in.Enabled, in.IntervalSeconds).
+		Scan(&settings.Enabled, &settings.IntervalSeconds, &settings.UpdatedAt)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not save monitoring settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (a *app) listMonitoringHistory(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = n
+	}
+	rows, err := a.db.Query(r.Context(), `SELECT c.id, c.device_id::text, d.name, c.status,
+		c.reason, c.started_at, c.finished_at, c.duration_ms
+		FROM monitoring_checks c JOIN devices d ON d.id=c.device_id
+		ORDER BY c.finished_at DESC, c.id DESC LIMIT $1`, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load monitoring history")
+		return
+	}
+	defer rows.Close()
+	out := make([]monitoringCheck, 0, limit)
+	for rows.Next() {
+		var c monitoringCheck
+		if err := rows.Scan(&c.ID, &c.DeviceID, &c.DeviceName, &c.Status, &c.Reason,
+			&c.StartedAt, &c.FinishedAt, &c.DurationMS); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not read monitoring history")
+			return
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not read monitoring history")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *app) monitorLoop(ctx context.Context) {
+	ticker := time.NewTicker(monitorPollInterval)
+	defer ticker.Stop()
+	logMonitor("persistent monitoring scheduler started")
+	for {
+		select {
+		case <-ctx.Done():
+			logMonitor("persistent monitoring scheduler stopped")
+			return
+		case <-ticker.C:
+			a.runDueMonitoringChecks(ctx)
+		}
+	}
+}
+
+func logMonitor(message string) {
+	// Deliberately keep scheduler logs free of device addresses, credentials, and command output.
+	// The durable per-device outcome is stored in monitoring_checks.
+	_ = message
+}
+
+func (a *app) runDueMonitoringChecks(ctx context.Context) {
+	var settings monitoringSettings
+	settingsCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	err := a.db.QueryRow(settingsCtx, `SELECT enabled, interval_seconds, updated_at
+		FROM monitoring_settings WHERE id=TRUE`).Scan(&settings.Enabled, &settings.IntervalSeconds, &settings.UpdatedAt)
+	cancel()
+	if err != nil || !settings.Enabled {
+		return
+	}
+	queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
+	rows, err := a.db.Query(queryCtx, `SELECT d.id::text
+		FROM devices d
+		JOIN device_credentials dc ON dc.device_id=d.id
+		LEFT JOIN LATERAL (
+			SELECT finished_at FROM monitoring_checks mc
+			WHERE mc.device_id=d.id ORDER BY mc.finished_at DESC, mc.id DESC LIMIT 1
+		) last_check ON TRUE
+		WHERE last_check.finished_at IS NULL
+		   OR last_check.finished_at <= NOW() - ($1 * INTERVAL '1 second')
+		ORDER BY COALESCE(last_check.finished_at, TIMESTAMPTZ 'epoch'), d.created_at
+		LIMIT $2`, settings.IntervalSeconds, monitorBatchLimit)
+	if err != nil {
+		queryCancel()
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	queryCancel()
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return
+		}
+		a.runPersistentCheck(ctx, id)
+	}
+}
+
+func (a *app) runPersistentCheck(parent context.Context, deviceID string) {
+	started := time.Now().UTC()
+	ctx, cancel := context.WithTimeout(parent, monitorCheckTimeout+3*time.Second)
+	defer cancel()
+
+	status, reason := a.monitorDevice(ctx, deviceID)
+	finished := time.Now().UTC()
+	duration := finished.Sub(started).Milliseconds()
+
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	if status != "error" {
+		if status == "online" || status == "degraded" {
+			_, err = tx.Exec(ctx, `UPDATE devices SET status=$1,last_seen_at=$2,updated_at=NOW() WHERE id=$3`, status, finished, deviceID)
+		} else {
+			_, err = tx.Exec(ctx, `UPDATE devices SET status=$1,updated_at=NOW() WHERE id=$2`, status, deviceID)
+		}
+	}
+	if err == nil {
+		_, err = tx.Exec(ctx, `INSERT INTO monitoring_checks(device_id,status,reason,started_at,finished_at,duration_ms)
+			VALUES($1,$2,$3,$4,$5,$6)`, deviceID, status, reason, started, finished, duration)
+	}
+	if err == nil {
+		_ = tx.Commit(ctx)
+	}
+}
+
+func (a *app) monitorDevice(ctx context.Context, deviceID string) (string, string) {
+	var address, username, fingerprint string
+	var ciphertext []byte
+	err := a.db.QueryRow(ctx, `SELECT d.address, c.username, c.private_key_ciphertext, c.host_key_fingerprint
+		FROM devices d JOIN device_credentials c ON c.device_id=d.id WHERE d.id=$1`, deviceID).
+		Scan(&address, &username, &ciphertext, &fingerprint)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "error", "device is not enrolled"
+	}
+	if err != nil {
+		return "error", "could not load device credentials"
+	}
+	if !isPrivateDeviceIP(address) {
+		return "error", "device address is not an allowed private IP"
+	}
+	key, err := encryptionKey()
+	if err != nil {
+		return "error", "server encryption key is unavailable"
+	}
+	privateKey, err := decryptSecret(key, ciphertext)
+	if err != nil {
+		return "error", "stored credential could not be decrypted"
+	}
+	signer, err := ssh.ParsePrivateKey(privateKey)
+	if err != nil {
+		return "error", "stored credential is invalid"
+	}
+
+	dialer := net.Dialer{Timeout: monitorCheckTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(address, "22"))
+	if err != nil {
+		return "offline", "SSH port unreachable"
+	}
+	defer conn.Close()
+	deadline := time.Now().Add(monitorCheckTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = conn.SetDeadline(deadline)
+	config := &ssh.ClientConfig{
+		User: username,
+		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: func(_ string, _ net.Addr, hostKey ssh.PublicKey) error {
+			if ssh.FingerprintSHA256(hostKey) != fingerprint {
+				return errors.New("pinned host key mismatch")
+			}
+			return nil
+		},
+		Timeout: monitorCheckTimeout,
+	}
+	sshConn, channels, requests, err := ssh.NewClientConn(conn, net.JoinHostPort(address, "22"), config)
+	if err != nil {
+		// Do not label authentication or host-key verification failures as device outages.
+		return "error", "SSH authentication or pinned host-key verification failed"
+	}
+	client := ssh.NewClient(sshConn, channels, requests)
+	defer client.Close()
+
+	failures := 0
+	for _, command := range openWrtHealthCommands {
+		if ctx.Err() != nil {
+			return "degraded", "health check timed out"
+		}
+		result := runHealthCommand(client, command)
+		if result.Status != "ok" {
+			failures++
+		}
+	}
+	if failures > 0 {
+		return "degraded", strings.TrimSpace(strconv.Itoa(failures) + " read-only health command(s) failed")
+	}
+	return "online", "SSH and read-only health checks passed"
+}
