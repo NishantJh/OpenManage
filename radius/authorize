@@ -1,0 +1,3 @@
+# LAB ONLY test identity for radtest. Replace/remove before real Wi-Fi use.
+testuser Cleartext-Password := "testpass"
+    Reply-Message := "OpenManage RADIUS lab authentication accepted"
