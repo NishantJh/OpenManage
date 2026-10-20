@@ -3,7 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"crypto/ed25519"
+	"crypto/rand"
+	"net"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 )
 
 func TestEncryptSecretRoundTrip(t *testing.T) {
@@ -42,6 +47,20 @@ func TestPrivateDeviceIP(t *testing.T) {
 	for _, address := range []string{"example.com", "8.8.8.8", "1.1.1.1", "2001:4860:4860::8888", "192.168.1.1:22"} {
 		if isPrivateDeviceIP(address) { t.Errorf("expected %q to be rejected", address) }
 	}
+}
+
+func TestPinnedHostKeyCallback(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil { t.Fatal(err) }
+	publicKey, err := ssh.NewPublicKey(privateKey.Public())
+	if err != nil { t.Fatal(err) }
+	fingerprint := ssh.FingerprintSHA256(publicKey)
+	var observed string
+	callback := pinnedHostKeyCallback(fingerprint, &observed)
+	if err := callback("router", &net.TCPAddr{}, publicKey); err != nil { t.Fatalf("expected pinned key to pass: %v", err) }
+	if observed != fingerprint { t.Fatalf("observed fingerprint %q, want %q", observed, fingerprint) }
+	wrong := pinnedHostKeyCallback("SHA256:not-the-device-key", &observed)
+	if err := wrong("router", &net.TCPAddr{}, publicKey); err == nil { t.Fatal("mismatched host key must be rejected") }
 }
 
 func TestEncryptionKeyConfiguration(t *testing.T) {
