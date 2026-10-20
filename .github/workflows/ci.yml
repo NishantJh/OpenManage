@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24.x"
-          cache: true
+          cache: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -25,6 +25,8 @@ jobs:
           npm run build
       - name: Prepare embedded assets
         run: mkdir -p cmd/openmanage/web/dist && cp -a web/dist/. cmd/openmanage/web/dist/
+      - name: Resolve Go dependencies
+        run: go mod tidy
       - name: Test Go package
         run: go test ./...
       - name: Build Docker image
