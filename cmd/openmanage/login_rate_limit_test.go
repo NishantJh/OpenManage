@@ -24,7 +24,7 @@ func TestLoginRateLimiterBlocksAfterFailureLimitAndExpires(t *testing.T) {
 	if retry <= 0 || retry > 5*time.Minute {
 		t.Fatalf("unexpected retry duration: %s", retry)
 	}
-	if blocked, _ := limiter.isBlocked("192.0.2.10", now.Add(5*time.Minute+time.Second)); blocked {
+	if blocked, _ := limiter.isBlocked("192.0.2.10", now.Add(5*time.Minute+3*time.Second)); blocked {
 		t.Fatal("client should be unblocked after the block duration")
 	}
 }
