@@ -74,7 +74,19 @@ func main() {
 	var pool *pgxpool.Pool
 	var err error
 	for i := 1; i <= 30; i++ {
-		pool, err = pgxpool.New(ctx, dsn)
+		poolConfig, configErr := pgxpool.ParseConfig(dsn)
+		if configErr != nil {
+			log.Fatalf("parse database configuration: %v", configErr)
+		}
+		// Leave capacity for HTTP requests while the monitoring lock and bounded
+		// SSH workers are active. This remains modest for the single-container MVP.
+		poolConfig.MaxConns = 10
+		poolConfig.MinConns = 2
+		poolConfig.MaxConnLifetime = 30 * time.Minute
+		poolConfig.MaxConnIdleTime = 5 * time.Minute
+		poolConfig.HealthCheckPeriod = 30 * time.Second
+
+		pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
 		if err == nil {
 			err = pool.Ping(ctx)
 			if err == nil {
@@ -125,6 +137,14 @@ func main() {
 	mux.HandleFunc("DELETE /api/devices/{id}", a.deleteDevice)
 	mux.HandleFunc("POST /api/devices/{id}/enroll", a.enrollDevice)
 	mux.HandleFunc("POST /api/devices/{id}/health-check", a.runDeviceHealthCheck)
+	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
+	mux.HandleFunc("PUT /api/monitoring/settings", a.updateMonitoringSettings)
+	mux.HandleFunc("GET /api/monitoring/history", a.listMonitoringHistory)
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		a.monitorLoop(ctx)
+	}()
 
 	handler := securityHeaders(frontendFallback(a.authMiddleware(mux)))
 	srv := &http.Server{
@@ -146,6 +166,13 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdown); err != nil {
 		log.Printf("shutdown: %v", err)
+	}
+	monitorWait, cancelMonitor := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelMonitor()
+	select {
+	case <-monitorDone:
+	case <-monitorWait.Done():
+		log.Printf("monitoring scheduler did not stop before timeout")
 	}
 }
 

@@ -74,6 +74,40 @@ status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
 [[ "$status" == "200" ]] || { echo "ERROR: admin audit request returned HTTP $status" >&2; exit 1; }
 echo "PASS: admin audit API authorization"
 
+# Persistent monitoring settings survive an application-container restart.
+settings="$(curl --silent --show-error --fail -b "$cookie_jar" "$base_url/api/monitoring/settings")"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("enabled") is False and d.get("interval_seconds")==300, d' <<< "$settings"
+status="$(curl --silent --show-error -o "$device_body" -w '%{http_code}' \
+  -X PUT -b "$cookie_jar" -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' \
+  --data '{"enabled":true,"interval_seconds":60}' "$base_url/api/monitoring/settings")"
+[[ "$status" == "200" ]] || { cat "$device_body" >&2; echo "ERROR: enabling monitoring returned HTTP $status" >&2; exit 1; }
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("enabled") is True and d.get("interval_seconds")==60, d' < "$device_body"
+echo "PASS: monitoring settings can be enabled and validated"
+
+status="$(curl --silent --show-error -o "$device_body" -w '%{http_code}' \
+  -X PUT -b "$cookie_jar" -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' \
+  --data '{"enabled":true,"interval_seconds":59}' "$base_url/api/monitoring/settings")"
+[[ "$status" == "400" ]] || { echo "ERROR: invalid monitoring interval returned HTTP $status (expected 400)" >&2; exit 1; }
+
+docker compose --project-name "$project" --env-file "$env_file" restart app >/dev/null
+ready=0
+for attempt in $(seq 1 30); do
+  if curl --silent --show-error --fail "$base_url/api/healthz" >/dev/null 2>&1; then ready=1; break; fi
+  sleep 1
+done
+[[ "$ready" == 1 ]] || { echo "ERROR: app did not recover after restart" >&2; exit 1; }
+settings="$(curl --silent --show-error --fail -b "$cookie_jar" "$base_url/api/monitoring/settings")"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("enabled") is True and d.get("interval_seconds")==60, d' <<< "$settings"
+history="$(curl --silent --show-error --fail -b "$cookie_jar" "$base_url/api/monitoring/history?limit=10")"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert isinstance(d,list), d' <<< "$history"
+echo "PASS: monitoring configuration persists across app restart and history API is available"
+
+status="$(curl --silent --show-error -o "$device_body" -w '%{http_code}' \
+  -X PUT -b "$cookie_jar" -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' \
+  --data '{"enabled":false,"interval_seconds":300}' "$base_url/api/monitoring/settings")"
+[[ "$status" == "200" ]] || { cat "$device_body" >&2; echo "ERROR: disabling monitoring returned HTTP $status" >&2; exit 1; }
+echo "PASS: persistent monitoring can be disabled"
+
 # Force an audit insert failure and prove that device creation is rolled back.
 docker compose --project-name "$project" --env-file "$env_file" exec -T db psql -U openmanage -d openmanage -v ON_ERROR_STOP=1 \
   -c "CREATE FUNCTION smoke_fail_audit() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN RAISE EXCEPTION 'intentional smoke-test audit failure'; END; \$\$; CREATE TRIGGER smoke_fail_audit_trigger BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION smoke_fail_audit();"

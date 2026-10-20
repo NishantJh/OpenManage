@@ -21,6 +21,7 @@ Last updated: 2026-10-20. This section is the quick reminder of what works now a
 
 ### In progress
 
+- **Persistent monitoring — [PR #24](https://github.com/NishantJh/OpenManage/pull/24).** Adds opt-in server-side monitoring, PostgreSQL-backed check history, bounded concurrent SSH checks, and scheduler coordination. CI and disposable OpenWrt-device validation remain required before enabling it on live APs.
 - **FreeRADIUS lab — [PR #21](https://github.com/NishantJh/OpenManage/pull/21).** Adds an opt-in, loopback-bound FreeRADIUS container and a disposable PAP authentication smoke test. This is a lab-only first slice; AP management UI, production secrets, EAP/PEAP certificates, and database-backed identity integration are not included.
 - **Dependency lockfile workflow — [PR #18](https://github.com/NishantJh/OpenManage/pull/18).** Adds trusted generation of Go/npm dependency metadata. Reproducible dependency installation and CI verification still need to be completed.
 
@@ -73,6 +74,9 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 - `DELETE /api/devices/{id}` — deletes one record.
 - `POST /api/devices/{id}/enroll` — verifies a pinned SSH host key and public-key login, then stores the management private key encrypted at rest. Request JSON: `username`, `private_key`, and `expected_fingerprint` (the `SHA256:...` fingerprint must be verified independently).
 - `POST /api/devices/{id}/health-check` — runs a fixed set of read-only diagnostics for an enrolled device.
+- `GET /api/monitoring/settings` — reads persistent server-side monitoring settings.
+- `PUT /api/monitoring/settings` — administrator-only; enables/disables monitoring and sets an interval from 60 to 3600 seconds.
+- `GET /api/monitoring/history?limit=50` — returns recent persisted monitoring outcomes (limit 1–100).
 
 All API routes except `/api/healthz` and `/api/auth/login` require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. `GET /api/audit` returns the latest 100 events and is intended for administrators. The address field is inventory metadata until enrollment is explicitly completed. SSH enrollment verifies a host key fingerprint supplied from a trusted source and authenticates with a private key before storing it encrypted at rest. Enrollment accepts private IP literals only (no DNS names, public addresses, or link-local addresses) and uses TCP/22. Configure `OPENMANAGE_ENCRYPTION_KEY` using a securely backed-up base64-encoded 32-byte random key before enrollment; losing it makes stored SSH credentials unrecoverable. The private key is never returned by the API. Re-enrollment replaces the stored credential only after the new key successfully authenticates; it does not install or rotate `authorized_keys` on the router itself.
 
