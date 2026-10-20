@@ -353,6 +353,10 @@ func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) getDevice(w http.ResponseWriter, r *http.Request) {
+	if !validUUID(r.PathValue("id")) {
+		writeError(w, http.StatusBadRequest, "invalid device ID")
+		return
+	}
 	var d device
 	err := a.db.QueryRow(r.Context(), `SELECT id::text,name,address,model,firmware,status,last_seen_at,created_at FROM devices WHERE id=$1`, r.PathValue("id")).
 		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt)
@@ -364,6 +368,10 @@ func (a *app) getDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) deleteDevice(w http.ResponseWriter, r *http.Request) {
+	if !validUUID(r.PathValue("id")) {
+		writeError(w, http.StatusBadRequest, "invalid device ID")
+		return
+	}
 	tag, err := a.db.Exec(r.Context(), "DELETE FROM devices WHERE id=$1", r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not delete device")
@@ -417,6 +425,25 @@ func (a *app) recordAudit(r *http.Request, action, resourceType, resourceID stri
 	if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, action, resourceType, resourceID, string(data)); err != nil {
 		log.Printf("audit write failed for %s: %v", action, err)
 	}
+}
+
+func validUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if value[i] != '-' {
+				return false
+			}
+			continue
+		}
+		ch := value[i]
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func randomToken(bytes int) (string, error) {

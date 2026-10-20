@@ -97,6 +97,10 @@ func pinnedHostKeyCallback(expected string, observed *string) ssh.HostKeyCallbac
 }
 
 func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
+	if !validUUID(r.PathValue("id")) {
+		writeError(w, http.StatusBadRequest, "invalid device ID")
+		return
+	}
 	user, ok := r.Context().Value(userContextKey).(authUser)
 	if !ok || user.Role != "admin" {
 		writeError(w, http.StatusForbidden, "administrator role required for SSH enrollment")
