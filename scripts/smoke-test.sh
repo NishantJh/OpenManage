@@ -76,7 +76,7 @@ echo "PASS: admin audit API authorization"
 
 # Force an audit insert failure and prove that device creation is rolled back.
 docker compose --project-name "$project" --env-file "$env_file" exec -T db psql -U openmanage -d openmanage -v ON_ERROR_STOP=1 \
-  -c "CREATE FUNCTION smoke_fail_audit() RETURNS trigger LANGUAGE plpgsql AS \\$\\$ BEGIN RAISE EXCEPTION 'intentional smoke-test audit failure'; END; \\$\\$; CREATE TRIGGER smoke_fail_audit_trigger BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION smoke_fail_audit();"
+  -c "CREATE FUNCTION smoke_fail_audit() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN RAISE EXCEPTION 'intentional smoke-test audit failure'; END; \$\$; CREATE TRIGGER smoke_fail_audit_trigger BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION smoke_fail_audit();"
 status="$(curl --silent --show-error -o "$device_body" -w '%{http_code}' \
   -b "$cookie_jar" -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' \
   --data '{"name":"audit-failure-router","address":"192.0.2.11","model":"test-model","firmware":"test"}' \
@@ -103,7 +103,7 @@ echo "PASS: device inventory read-after-write"
 
 # A failed delete audit must restore the deleted inventory row.
 docker compose --project-name "$project" --env-file "$env_file" exec -T db psql -U openmanage -d openmanage -v ON_ERROR_STOP=1 \
-  -c "CREATE FUNCTION smoke_fail_audit() RETURNS trigger LANGUAGE plpgsql AS \\$\\$ BEGIN RAISE EXCEPTION 'intentional smoke-test audit failure'; END; \\$\\$; CREATE TRIGGER smoke_fail_audit_trigger BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION smoke_fail_audit();"
+  -c "CREATE FUNCTION smoke_fail_audit() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN RAISE EXCEPTION 'intentional smoke-test audit failure'; END; \$\$; CREATE TRIGGER smoke_fail_audit_trigger BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION smoke_fail_audit();"
 status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
   -X DELETE -b "$cookie_jar" -H "X-CSRF-Token: $csrf" "$base_url/api/devices/$device_id")"
 [[ "$status" == "500" ]] || { echo "ERROR: device deletion with failed audit returned HTTP $status (expected 500)" >&2; exit 1; }
