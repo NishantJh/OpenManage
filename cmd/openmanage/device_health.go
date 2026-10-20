@@ -3,10 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -210,6 +207,11 @@ func (a *app) runDeviceHealthCheck(w http.ResponseWriter, r *http.Request) {
 		outcome = "partial"
 	}
 	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "health check completed but its result could not be persisted")
+		return
+	}
+	defer tx.Rollback(ctx)
 	if err == nil {
 		_, err = tx.Exec(ctx, "UPDATE devices SET status=$1,last_seen_at=NOW(),updated_at=NOW() WHERE id=$2", deviceStatus, r.PathValue("id"))
 	}
@@ -220,8 +222,6 @@ func (a *app) runDeviceHealthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
-	} else if tx != nil {
-		_ = tx.Rollback(ctx)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "health check completed but its result could not be persisted")
@@ -251,26 +251,3 @@ func (a *app) recordHealthCheckOutcome(r *http.Request, action, deviceID, reason
 	}
 }
 
-var _ io.Writer = (*boundedBuffer)(nil)
-
-func validateHealthCommandDefinitions() error {
-	if len(openWrtHealthCommands) == 0 {
-		return errors.New("no health commands configured")
-	}
-	seen := make(map[string]bool, len(openWrtHealthCommands))
-	for _, command := range openWrtHealthCommands {
-		if command.Name == "" || command.Label == "" || command.Command == "" || seen[command.Name] {
-			return fmt.Errorf("invalid health command definition")
-		}
-		seen[command.Name] = true
-	}
-	return nil
-}
-
-func parseBoardOutput(output string) (map[string]any, error) {
-	var board map[string]any
-	if err := json.Unmarshal([]byte(output), &board); err != nil {
-		return nil, err
-	}
-	return board, nil
-}
