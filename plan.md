@@ -23,7 +23,7 @@ Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful O
 - [x] Make credential persistence, device status update, and the enrollment audit event atomic in one database transaction.
 - [ ] Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures.
 - [x] Make inventory create/delete and login/logout audit writes atomic with their corresponding state changes; mandatory audit failure must fail the action (PR in progress; verify after merge).
-- [ ] Add login rate limiting with safe client-address handling.
+- [x] Add bounded login rate limiting with safe peer-address parsing, no trust in forwarded headers, and Retry-After responses (PR in progress; verify after merge).
 - [ ] Complete the safety-audit findings in docs/security-audit.md before treating this as a routine LAN management plane.
 - [x] Format Go sources and make CI reject unformatted Go files.
 - [x] Reject malformed device IDs before database queries.
