@@ -1,0 +1,58 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openmanage-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    # Never run untrusted pull-request code on the self-hosted WSL2 runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check Go formatting
+        shell: bash
+        run: |
+          mapfile -t files < <(find cmd -name '*.go' -type f)
+          test "${#files[@]}" -gt 0
+          unformatted="$(gofmt -l "${files[@]}")"
+          if [ -n "$unformatted" ]; then
+            printf 'Go files need gofmt:\n%s\n' "$unformatted"
+            gofmt -d "${files[@]}"
+            exit 1
+          fi
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+      - name: Prepare embedded assets
+        run: mkdir -p cmd/openmanage/web/dist && cp -a web/dist/. cmd/openmanage/web/dist/
+      - name: Resolve Go dependencies
+        run: go mod tidy
+      - name: Test Go package
+        run: go test -race ./...
+      - name: Validate Compose configuration
+        env:
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          OPENMANAGE_ADMIN_PASSWORD: ci-only-not-a-secret-password
+        run: docker compose config --quiet
+      - name: Build Docker image
+        run: docker build -t openmanage:pr .

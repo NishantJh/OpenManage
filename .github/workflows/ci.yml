@@ -1,17 +1,17 @@
 name: CI
 on:
   push:
-    branches: ['**']
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: openmanage-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: openmanage-main-ci-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   build:
-    # Branch pushes originate from repository writers. No pull_request trigger is used
-    # because this is a public repository and the runner is self-hosted.
+    # This privileged self-hosted runner only builds trusted main commits.
+    # Pull-request code is validated on GitHub-hosted runners in pr-validation.yml.
     runs-on: [self-hosted, Linux, X64, WSL2]
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +19,7 @@ jobs:
         run: test -z "$(gofmt -l cmd/openmanage/*.go)"
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24.x"
+          go-version: "1.26.x"
           cache: false
       - uses: actions/setup-node@v4
         with:

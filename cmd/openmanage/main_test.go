@@ -1,10 +1,10 @@
 package main
 
 import (
-	"strings"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -100,14 +100,13 @@ func TestValidUUID(t *testing.T) {
 	}
 }
 
-
 func TestRequireAnyRole(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		user authUser
+		name    string
+		user    authUser
 		allowed []string
-		want bool
-		status int
+		want    bool
+		status  int
 	}{
 		{name: "admin allowed", user: authUser{Role: "admin"}, allowed: []string{"admin"}, want: true, status: http.StatusOK},
 		{name: "operator allowed for inventory writes", user: authUser{Role: "operator"}, allowed: []string{"admin", "operator"}, want: true, status: http.StatusOK},
@@ -138,11 +137,11 @@ func TestRequireAnyRole(t *testing.T) {
 func TestReadonlyCannotCreateOrDeleteDevices(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userContextKey, authUser{ID: "user-id", Role: "readonly"})
 	for _, tc := range []struct {
-		name string
+		name    string
 		handler http.HandlerFunc
-		method string
-		path string
-		body string
+		method  string
+		path    string
+		body    string
 	}{
 		{name: "create", handler: (&app{}).createDevice, method: http.MethodPost, path: "/api/devices", body: `{"name":"router","address":"192.168.1.1"}`},
 		{name: "delete", handler: (&app{}).deleteDevice, method: http.MethodDelete, path: "/api/devices/550e8400-e29b-41d4-a716-446655440000"},
