@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	loginFailureLimit = 10
-	loginFailureWindow = 5 * time.Minute
-	loginBlockDuration = 5 * time.Minute
+	loginFailureLimit      = 10
+	loginFailureWindow     = 5 * time.Minute
+	loginBlockDuration     = 5 * time.Minute
 	loginLimiterMaxEntries = 4096
 )
 
