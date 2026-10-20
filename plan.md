@@ -23,10 +23,10 @@ Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful O
 - [x] Make credential persistence, device status update, and the enrollment audit event atomic in one database transaction.
 - [ ] Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures.
 - [x] Format Go sources and make CI reject unformatted Go files.
-- [x] Reject malformed device IDs before database queries. [ ] Verify request-size/timeout behavior.
+- [x] Reject malformed device IDs before database queries.
+- [ ] Verify request-size and timeout behavior.
 - [ ] Improve dependency reproducibility where practical; prefer npm ci when a valid lockfile is present.
 - [x] Document the PostgreSQL and OPENMANAGE_ENCRYPTION_KEY backup/restore procedure; recovery testing remains an operator task.
-- Keep this phase narrowly scoped and do not add remote command execution.
 
 Exit criteria: tests cover critical enrollment failure paths; credential changes cannot commit without their audit event; CI passes on the PR head and after merge.
 
@@ -40,40 +40,56 @@ Exit criteria: tests cover critical enrollment failure paths; credential changes
 
 Exit criteria: the user can enroll a device through the UI, see a safe outcome, and cannot retrieve the stored private key.
 
-### 2. Read-only SSH connectivity and health
+### 2. Shared device-operations engine and health — next
 
-- Add bounded, time-limited SSH checks using stored credentials and pinned host keys.
-- Start with a small allowlist of read-only OpenWrt commands; parse structured output where possible and handle firmware/version differences.
-- Record result, timestamp, and sanitized error details; do not log secrets or full command output by default.
-- Define polling cadence and concurrency limits before implementing a worker. Avoid Redis until scale or queue requirements prove it necessary.
-- Audit privileged actions and enforce per-device timeouts and cancellation.
+Design one reusable, bounded SSH operation engine that can support both read-only and future write-capable operations. Begin by implementing only read-only health and diagnostics; the shared engine must not imply that arbitrary commands are allowed.
 
-Exit criteria: device reachability and basic system information are reliable, resource-bounded, and visible in the UI without arbitrary command execution.
+- Reuse stored credentials and pinned host keys; enforce per-device timeouts, cancellation, concurrency limits, output-size limits, and safe error handling.
+- Represent work as typed, named operations with explicit policies: allowed operation, read/write classification, validated parameters, privilege requirements, timeout, and audit requirements.
+- Keep command construction and validation server-side. Do not expose a generic shell/command field to the browser or accept arbitrary commands from API clients.
+- Start with a small allowlist of read-only OpenWrt health commands; parse structured output where possible and handle firmware/version differences.
+- Record operation identity, initiator, target, start/end status, and sanitized result metadata in the audit trail. Do not log credentials, secret-bearing arguments, or full command output by default.
+- Keep execution in the existing app initially. Add a queue or Redis only if measured fleet size or reliability needs justify the added service.
 
-### 3. Versioned configuration templates
+Exit criteria: health checks are reliable, resource-bounded, auditable, and use the same policy/execution boundary intended for later controlled writes.
+
+### 3. Versioned configuration workflows
 
 - Model templates and revisions in PostgreSQL with explicit validation and immutable revision history.
 - Render a preview and diff before applying; validate target compatibility and require explicit operator confirmation.
+- Apply structured, validated configuration changes (prefer UCI-aware operations) rather than arbitrary shell text.
+- Use a staged workflow: preflight, preview, approval/confirmation, apply, verify connectivity and intended state, then mark success.
+- Where feasible, arrange a timed rollback before applying network-affecting changes; verify rollback behavior on representative devices before relying on it.
 - Roll out to one device or a small canary group first, then expand in batches.
-- Store a recoverable last-known-good configuration and document rollback limits before enabling writes.
-- Audit who proposed, approved, applied, or rolled back each change.
+- Audit who proposed, approved, applied, verified, or rolled back each change.
 
-Exit criteria: changes are reviewable, staged, auditable, and have a tested recovery procedure.
+Exit criteria: changes are reviewable, staged, auditable, and have a tested recovery procedure with clearly documented limits.
 
-### 4. Guarded operations and key lifecycle
+### 4. Guarded maintenance operations and SSH key lifecycle
 
-- Design router-side key installation, rotation, and revocation as explicit workflows with preflight checks and recovery access.
-- Add write-capable SSH operations only after read-only operations, command allowlisting, audit coverage, and rollback behavior are established.
-- Never expose a generic arbitrary-command API to the browser.
-- Use least privilege on routers where feasible and make destructive actions require deliberate confirmation.
+- Add only named, server-defined maintenance operations with validated parameters (for example, collecting diagnostics or restarting a specific service); never accept arbitrary command strings.
+- Design router-side key installation, rotation, and revocation as explicit workflows with preflight checks, audit records, and recovery access.
+- Require explicit authorization, confirmation for disruptive actions, bounded execution, and post-operation verification.
+- Preserve least privilege on routers where feasible and ensure failures do not silently remove the only management path.
 
-Exit criteria: credential rotation and write operations have tested failure recovery and do not silently lock out management access.
+Exit criteria: maintenance and credential lifecycle operations have tested failure recovery and cannot silently lock out management access.
 
-### 5. Monitoring, rollout, and later integrations
+### 5. Firmware upgrades and fleet rollout
 
-- Add bounded reachability monitoring, alerts, and firmware inventory first.
-- Treat firmware upgrades as a separate high-risk workflow with compatibility checks, staged rollout, health verification, and rollback caveats.
-- Consider topology, IPAM, PKI/VPN, RADIUS, multi-user roles, and larger fleet features only when a concrete use case warrants them.
+Treat firmware upgrades as a separate high-risk operation type, not as a routine shell command.
+
+- Check exact device model/target, current version, supported upgrade path, image format, available storage, and required configuration backup before offering an upgrade.
+- Verify image provenance and integrity using trusted metadata/checksums; reject unknown or incompatible images.
+- Require explicit per-device confirmation, a staged canary rollout, concurrency limits, progress/status reporting, and post-reboot health verification.
+- Document that SSH cannot guarantee recovery from a failed flash. A failed upgrade may require device failsafe, physical reset, or serial access; do not claim automatic rollback unless that hardware/upgrade path actually supports it.
+- Do not begin fleet-wide firmware writes until single-device upgrade and recovery scenarios have been tested on supported hardware.
+
+Exit criteria: supported upgrade paths are validated, staged, observable, and have honest recovery guidance for failures outside the control plane's reach.
+
+### 6. Monitoring and later integrations
+
+- Add bounded reachability monitoring, alerts, and firmware inventory.
+- Consider topology, IPAM, PKI/VPN, RADIUS, multi-user roles, and larger-fleet features only when a concrete use case warrants them.
 
 ## Delivery rules
 
