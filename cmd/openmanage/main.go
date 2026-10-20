@@ -211,6 +211,22 @@ func (a *app) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// requireAnyRole enforces authorization at the API boundary; UI visibility is not a security control.
+func requireAnyRole(w http.ResponseWriter, r *http.Request, allowed ...string) bool {
+	user, ok := r.Context().Value(userContextKey).(authUser)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return false
+	}
+	for _, role := range allowed {
+		if user.Role == role {
+			return true
+		}
+	}
+	writeError(w, http.StatusForbidden, "insufficient role for this action")
+	return false
+}
+
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var in struct {
@@ -320,6 +336,9 @@ func (a *app) listDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
+	if !requireAnyRole(w, r, "admin", "operator") {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var in struct {
 		Name     string `json:"name"`
@@ -368,6 +387,9 @@ func (a *app) getDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) deleteDevice(w http.ResponseWriter, r *http.Request) {
+	if !requireAnyRole(w, r, "admin", "operator") {
+		return
+	}
 	if !validUUID(r.PathValue("id")) {
 		writeError(w, http.StatusBadRequest, "invalid device ID")
 		return
@@ -386,6 +408,9 @@ func (a *app) deleteDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) listAudit(w http.ResponseWriter, r *http.Request) {
+	if !requireAnyRole(w, r, "admin") {
+		return
+	}
 	rows, err := a.db.Query(r.Context(), `
 		SELECT e.id, COALESCE(u.username,'system'),e.action,e.resource_type,e.resource_id::text,e.details,e.created_at
 		FROM audit_events e LEFT JOIN users u ON u.id=e.user_id
