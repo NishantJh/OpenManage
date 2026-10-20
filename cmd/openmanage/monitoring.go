@@ -125,6 +125,7 @@ func (a *app) listMonitoringHistory(w http.ResponseWriter, r *http.Request) {
 func (a *app) monitorLoop(ctx context.Context) {
 	ticker := time.NewTicker(monitorPollInterval)
 	defer ticker.Stop()
+	lastPrune := time.Time{}
 	log.Printf("persistent monitoring scheduler started")
 	for {
 		select {
@@ -132,11 +133,22 @@ func (a *app) monitorLoop(ctx context.Context) {
 			log.Printf("persistent monitoring scheduler stopped")
 			return
 		case <-ticker.C:
+			if lastPrune.IsZero() || time.Since(lastPrune) >= 24*time.Hour {
+				a.pruneMonitoringHistory(ctx)
+				lastPrune = time.Now()
+			}
 			a.runDueMonitoringChecks(ctx)
 		}
 	}
 }
 
+
+func (a *app) pruneMonitoringHistory(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	// Keep a bounded, useful history without requiring a separate maintenance service.
+	_, _ = a.db.Exec(ctx, "DELETE FROM monitoring_checks WHERE finished_at < NOW() - INTERVAL '30 days'")
+}
 
 func (a *app) runDueMonitoringChecks(ctx context.Context) {
 	var settings monitoringSettings
