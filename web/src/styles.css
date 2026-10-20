@@ -13,3 +13,22 @@
 .enroll-modal textarea:focus,.enroll-modal input:focus{border-color:#8d78f5}
 .enroll-modal .warning{align-items:flex-start;line-height:1.5}
 @media(max-width:560px){.enroll-modal{padding:18px;max-height:calc(100vh - 20px)}.enroll-modal .form-row{grid-template-columns:1fr;gap:0}}
+
+.health-modal{width:min(720px,100%);max-height:calc(100vh - 32px);overflow:auto}
+.health-loading{display:flex;align-items:center;gap:12px;padding:28px 12px;color:#aeb3c1;font-size:12px}
+.health-summary{display:flex;align-items:center;gap:9px;padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:11px}
+.health-summary.healthy{background:#172a22;border:1px solid #2d5141;color:#91d8b5}
+.health-summary.degraded{background:#2b241a;border:1px solid #54442e;color:#d7b987}
+.health-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.health-summary small{margin-left:auto;color:#8e9a95;font-size:10px}
+.health-results{display:grid;gap:9px}
+.health-result{border:1px solid #292e3a;background:#10131b;border-radius:8px;padding:12px}
+.health-result-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.health-result-head b{display:block;font-size:11px;color:#e2e4ec}
+.health-result-head small{display:block;font-size:9px;color:#747b8d;margin-top:4px}
+.health-pill{white-space:nowrap;border-radius:20px;padding:4px 7px;font-size:9px}
+.health-pill.ok{color:#6bd7a4;background:#19372c}
+.health-pill.error{color:#efb38b;background:#3c3022}
+.health-result pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;margin:11px 0 0;background:#0b0e14;border-radius:6px;padding:10px;color:#bfc5d4;font:10px/1.6 ui-monospace,SFMono-Regular,monospace}
+.health-error{font-size:10px;color:#efb38b;margin:10px 0 0}
+@media(max-width:560px){.health-modal{padding:18px;max-height:calc(100vh - 20px)}.health-summary{align-items:flex-start;flex-wrap:wrap}.health-summary small{width:100%;margin-left:16px}.health-result-head{align-items:flex-start;flex-direction:column}}
