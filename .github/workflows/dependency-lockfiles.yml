@@ -28,7 +28,7 @@ concurrency:
 jobs:
   generate:
     # Generate only from trusted main commits, on a GitHub-hosted runner.
-    # This job has no write token and never runs pull-request code.
+    # This job has no write token; PR code runs only on a GitHub-hosted runner.
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
