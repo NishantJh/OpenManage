@@ -2,9 +2,9 @@
 
 ## Runtime shape
 
-Browser -> same-origin HTTP(S), session cookie + CSRF header -> Go HTTP app -> pgx connection pool -> PostgreSQL
+Browser -> same-origin HTTP(S), session cookie + CSRF header -> Go HTTP app -> policy/validation -> bounded device-operation engine -> OpenWrt device
 
-The Go process serves the React/TypeScript build and JSON API. PostgreSQL stores device inventory, users/sessions, audit events, and encrypted device credentials. Compose is the initial deployment model. The default host binding is localhost; remote access should use HTTPS and network access controls.
+The Go app serves the React/TypeScript build and JSON API. PostgreSQL stores device inventory, users/sessions, audit events, and encrypted device credentials. Compose is the initial deployment model. The default host binding is localhost; remote access should use HTTPS and network access controls. Keep the single app + PostgreSQL deployment as the baseline; add a queue or Redis only when measured operational requirements justify it.
 
 ## Main code locations
 
@@ -16,6 +16,26 @@ The Go process serves the React/TypeScript build and JSON API. PostgreSQL stores
 - compose.yaml and Dockerfile: runtime/deployment.
 - .github/workflows/ci.yml: trusted branch-push validation on the self-hosted WSL2 runner.
 
+## Device-operation model
+
+The system should use one reusable operation engine for read-only checks and future controlled writes. The engine is an execution and policy boundary, not a general-purpose shell proxy.
+
+Each operation should be a server-defined type with a stable name, read/write classification, validated parameters, target compatibility checks, privilege requirements, timeout/output limits, cancellation behavior, and audit policy. The browser may request a named operation and provide schema-validated parameters; it must never supply an arbitrary shell command or script. Build commands from validated operation definitions on the server.
+
+Start with read-only health and diagnostics. This first implementation should establish pinned-host-key verification, credential retrieval/decryption, bounded SSH sessions, concurrency control, cancellation, output sanitization, and audit lifecycle. Future operation types can reuse these safeguards while adding stricter preflight and confirmation requirements for writes.
+
+### Configuration operations
+
+Configuration changes should use structured, validated inputs and UCI-aware operations where practical. The workflow should expose a preview/diff, validate compatibility, require deliberate operator confirmation, apply in a bounded session, verify both connectivity and intended state, and record the outcome. For changes that can break access, establish a timed rollback before applying and test it on supported device classes. A rollback mechanism must not be described as guaranteed unless it has been verified for that operation and device.
+
+### Firmware operations
+
+Firmware upgrades are a distinct high-risk operation type with stricter checks than routine maintenance. Validate exact hardware/target compatibility, supported upgrade path, image provenance and integrity, storage, and configuration backup. Require explicit confirmation, staged canaries, concurrency limits, progress tracking, reboot/reconnect handling, and post-upgrade health verification. SSH cannot recover every failed flash; a device may require failsafe mode, physical reset, or serial access. Never imply that a universal rollback is available.
+
+### Audit and failure semantics
+
+Audit security-sensitive operations with initiator, device, operation type, lifecycle status, and sanitized outcome. Keep state changes and their audit writes in one transaction whenever feasible. Never store private keys, credentials, secret-bearing arguments, or unbounded command output in audit records. Distinguish operation failure from verification failure and from an unreachable device after a potentially disruptive change.
+
 ## Security invariants
 
 - API routes other than health and login require an authenticated session; state-changing requests require CSRF validation.
@@ -24,6 +44,7 @@ The Go process serves the React/TypeScript build and JSON API. PostgreSQL stores
 - Enrollment is admin-only. It accepts private IP literals only, uses TCP/22, verifies an independently sourced SHA-256 host-key fingerprint, and proves that the supplied SSH key authenticates before storing it.
 - Stored SSH private-key material is encrypted with AES-256-GCM using the 32-byte base64 key in OPENMANAGE_ENCRYPTION_KEY. The encryption key is separate from the database and must be backed up securely. A database backup without the matching key cannot recover credentials.
 - The enrollment endpoint does not install or rotate router-side authorized keys and does not run arbitrary commands.
+- The operation engine must revalidate device targets and credentials, enforce host-key pinning and resource bounds, and authorize every operation server-side. A successful SSH connection alone does not authorize a requested action.
 - Audit events should be durable for security-sensitive state changes. Keep the state mutation and audit write in one transaction whenever feasible.
 - Do not expose the app to untrusted networks without HTTPS, access controls, and an explicit deployment review.
 
@@ -31,5 +52,5 @@ The Go process serves the React/TypeScript build and JSON API. PostgreSQL stores
 
 - SQL migrations run at application startup. Prefer additive changes and ensure repeated startup is safe.
 - Before changing credential schema or encryption format, define a migration and recovery plan. Never silently replace the encryption key or discard existing ciphertext.
-- Keep SSH operations time-bounded and cancellation-aware. Validate device targets and never provide a generic browser-facing command execution endpoint.
+- Keep SSH operations time-bounded and cancellation-aware. Bound command output and concurrency, and ensure cancellations release sessions and connections.
 - Resource budgets in Compose are intentional; any background polling or concurrency feature must have explicit limits.
