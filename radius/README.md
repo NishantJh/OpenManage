@@ -7,8 +7,10 @@ This is an **opt-in lab integration**, separate from the default OpenManage appl
 From the repository root, with Docker Compose installed:
 
 ```sh
-docker compose -f compose.radius.yaml up -d
 bash scripts/test-radius.sh
+
+# To leave the lab server running after the smoke test:
+docker compose -f compose.radius.yaml up -d
 ```
 
 The test uses a disposable lab identity (`testuser` / `testpass`) and the loopback-only client secret `testing123`. These values are intentionally unsuitable for any network-facing deployment. The RADIUS service is not started by the normal `docker compose up` command.
