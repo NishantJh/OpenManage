@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
-	"os"
 	"testing"
 )
 
@@ -53,5 +52,4 @@ func TestEncryptionKeyConfiguration(t *testing.T) {
 	if _, err := encryptionKey(); err == nil { t.Fatal("invalid encryption key must fail closed") }
 	t.Setenv("OPENMANAGE_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte("too short")))
 	if _, err := encryptionKey(); err == nil { t.Fatal("short encryption key must fail closed") }
-	_ = os.Getenv("OPENMANAGE_ENCRYPTION_KEY")
 }
