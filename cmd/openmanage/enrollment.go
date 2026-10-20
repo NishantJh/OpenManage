@@ -50,19 +50,29 @@ func encryptionKey() ([]byte, error) {
 
 func encryptSecret(key []byte, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	gcm, err := cipher.NewGCM(block)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil { return nil, err }
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
 	return append(nonce, gcm.Seal(nil, nonce, plaintext, []byte("openmanage:ssh-private-key:v1"))...), nil
 }
 
 func decryptSecret(key, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	gcm, err := cipher.NewGCM(block)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	if len(ciphertext) < gcm.NonceSize()+gcm.Overhead() {
 		return nil, errors.New("encrypted credential is truncated")
 	}
@@ -79,7 +89,9 @@ func pinnedHostKeyCallback(expected string, observed *string) ssh.HostKeyCallbac
 	return func(_ string, _ net.Addr, hostKey ssh.PublicKey) error {
 		fingerprint := ssh.FingerprintSHA256(hostKey)
 		*observed = fingerprint
-		if fingerprint != expected { return errors.New("host key fingerprint mismatch") }
+		if fingerprint != expected {
+			return errors.New("host key fingerprint mismatch")
+		}
 		return nil
 	}
 }
