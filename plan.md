@@ -93,7 +93,7 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 
 ### 6. Monitoring and later integrations
 
-- [x] Add opt-in server-side monitoring in the existing Go process, persisted settings and per-device check history in PostgreSQL, bounded sequential batches, and 30-day history retention.
+- [x] Add opt-in server-side monitoring in the existing Go process, persisted settings and per-device check history in PostgreSQL, bounded three-worker batches, PostgreSQL advisory-lock coordination, and 30-day history retention.
 - [ ] Validate real SSH checks against a disposable OpenWrt VM/device and exercise outage, bad credential, pinned-host-key mismatch, and restart recovery scenarios.
 - [ ] Add alert delivery and firmware inventory after persistent monitoring is validated.
 - Consider topology, IPAM, PKI/VPN, RADIUS, multi-user roles, and larger-fleet features only when a concrete use case warrants them.
