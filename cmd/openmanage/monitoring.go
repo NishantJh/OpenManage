@@ -73,14 +73,28 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "monitoring interval must be between 60 and 3600 seconds")
 		return
 	}
+	user := r.Context().Value(userContextKey).(authUser)
+	tx, err := a.db.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not save monitoring settings")
+		return
+	}
+	defer tx.Rollback(r.Context())
 	var settings monitoringSettings
-	err := a.db.QueryRow(r.Context(), `UPDATE monitoring_settings
+	err = tx.QueryRow(r.Context(), `UPDATE monitoring_settings
 		SET enabled=$1, interval_seconds=$2, updated_at=NOW()
 		WHERE id=TRUE
 		RETURNING enabled, interval_seconds, updated_at`, in.Enabled, in.IntervalSeconds).
 		Scan(&settings.Enabled, &settings.IntervalSeconds, &settings.UpdatedAt)
+	if err == nil {
+		err = insertAuditEvent(r.Context(), tx, user.ID, "monitoring.settings.update", "monitoring", "settings",
+			map[string]any{"enabled": in.Enabled, "interval_seconds": in.IntervalSeconds})
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not save monitoring settings")
+		writeError(w, http.StatusInternalServerError, "could not save monitoring settings and audit event")
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
