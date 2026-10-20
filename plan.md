@@ -22,11 +22,16 @@ Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful O
 
 - [x] Make credential persistence, device status update, and the enrollment audit event atomic in one database transaction.
 - [ ] Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures.
+- [ ] Make inventory create/delete and login/logout audit writes atomic with their corresponding state changes; mandatory audit failure must fail the action.
+- [ ] Add login rate limiting with safe client-address handling.
+- [ ] Complete the safety-audit findings in docs/security-audit.md before treating this as a routine LAN management plane.
 - [x] Format Go sources and make CI reject unformatted Go files.
 - [x] Reject malformed device IDs before database queries.
-- [ ] Verify request-size and timeout behavior.
-- [ ] Improve dependency reproducibility where practical; prefer npm ci when a valid lockfile is present.
+- [x] Add an enrollment request body-size cap and test malformed/oversized enrollment payloads.
+- [ ] Verify request-size and timeout behavior across all API handlers.
+- [ ] Improve dependency reproducibility: generate and commit go.sum and package-lock.json from the real toolchains, use npm ci, and make CI verify rather than mutate dependency metadata.
 - [x] Document the PostgreSQL and OPENMANAGE_ENCRYPTION_KEY backup/restore procedure; recovery testing remains an operator task.
+- [ ] Run and record a disposable-stack restore exercise, including verification that an enrolled credential decrypts with the restored key.
 
 Exit criteria: tests cover critical enrollment failure paths; credential changes cannot commit without their audit event; CI passes on the PR head and after merge.
 

@@ -11,7 +11,7 @@ services:
       OPENMANAGE_COOKIE_SECURE: "${OPENMANAGE_COOKIE_SECURE:-false}"
       OPENMANAGE_ENCRYPTION_KEY: "${OPENMANAGE_ENCRYPTION_KEY:-}"
     ports:
-      - "${OPENMANAGE_PORT:-127.0.0.1:8080}:8080"
+      - "${OPENMANAGE_PORT:-0.0.0.0:8080}:8080"
     depends_on:
       db:
         condition: service_healthy
@@ -22,7 +22,8 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 192m
     cpus: 1.0
-    # Keep localhost binding unless HTTPS and network access controls are configured.
+    # LAN access is available by default. Bind OPENMANAGE_PORT to a specific LAN IP
+    # and restrict access with the host/router firewall. Use HTTPS for credentials/sessions.
 
   db:
     image: postgres:17-alpine
