@@ -101,6 +101,6 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 1. Work from a feature branch and open a PR for every logical change; never commit directly to main.
 2. Keep PRs small and reversible. Database changes should be additive where possible, with documented compatibility and rollback/data-loss implications.
 3. Validate frontend build, go test ./..., Docker image build, and relevant security tests in CI. Report the actual run URL and result; do not infer success from a previous commit.
-4. The self-hosted runner is trusted infrastructure. Do not add pull_request execution for untrusted fork code or run unreviewed external code on it.
+4. The self-hosted runner is trusted infrastructure. Do not add pull_request execution for untrusted fork code; gate the CI job to refs/heads/main so workflow_dispatch cannot execute a non-main ref on that runner.
 5. After each major merge, audit the merged diff and current project for security, correctness, migrations/rollback, dependencies, Compose hardening, tests/CI, and roadmap consistency.
 6. Update this file when scope, sequencing, or milestone status materially changes.
