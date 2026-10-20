@@ -217,12 +217,21 @@ func (a *app) runDueMonitoringChecks(ctx context.Context) {
 	var ids []string
 	for rows.Next() {
 		var id string
-		if rows.Scan(&id) == nil {
-			ids = append(ids, id)
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			queryCancel()
+			log.Printf("monitoring schedule query returned an invalid row")
+			return
 		}
+		ids = append(ids, id)
 	}
+	rowsErr := rows.Err()
 	rows.Close()
 	queryCancel()
+	if rowsErr != nil {
+		log.Printf("monitoring schedule query failed while reading rows")
+		return
+	}
 	if len(ids) == 0 {
 		return
 	}
@@ -277,6 +286,7 @@ func (a *app) runPersistentCheck(parent context.Context, deviceID string) {
 
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
+		log.Printf("monitoring result transaction could not start")
 		return
 	}
 	defer tx.Rollback(ctx)
