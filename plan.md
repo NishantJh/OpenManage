@@ -52,9 +52,7 @@ Exit criteria: the user can enroll a device through the UI, see a safe outcome, 
 - [x] Add a bounded, server-defined read-only health-check endpoint and inventory diagnostics modal (PR #19 merged; post-merge checks still need final confirmation).
 - [ ] Extend diagnostics into scheduled monitoring and alerting only after the manual health-check path is proven reliable.
 
-Design one reusable, bounded SSH operation engine that can support both read-only and future write-capable operations. Begin by implementing only read-only health and diagnostics; the shared engine must not imply that arbitrary commands are allowed.
-
-Design one reusable, bounded SSH operation engine that can support both read-only and future write-capable operations. Begin by implementing only read-only health and diagnostics; the shared engine must not imply that arbitrary commands are allowed.
+Design one reusable, bounded SSH operation engine that can support both read-only and future write-capable operations. The first read-only health slice is merged; keep the execution boundary typed and bounded so it cannot be used as an arbitrary command runner.
 
 - Reuse stored credentials and pinned host keys; enforce per-device timeouts, cancellation, concurrency limits, output-size limits, and safe error handling.
 - Represent work as typed, named operations with explicit policies: allowed operation, read/write classification, validated parameters, privilege requirements, timeout, and audit requirements.
