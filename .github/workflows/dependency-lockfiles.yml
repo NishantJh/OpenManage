@@ -1,6 +1,14 @@
 name: Prepare dependency lockfile branch
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - ".github/workflows/dependency-lockfiles.yml"
   push:
     branches: [main]
     paths:
@@ -21,7 +29,7 @@ jobs:
   generate:
     # Generate only from trusted main commits, on a GitHub-hosted runner.
     # This job has no write token and never runs pull-request code.
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -75,7 +83,7 @@ jobs:
     # Only this isolated job receives contents:write, and only the push step
     # receives the token as an environment variable.
     needs: generate
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
