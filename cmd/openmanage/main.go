@@ -125,6 +125,10 @@ func main() {
 	mux.HandleFunc("DELETE /api/devices/{id}", a.deleteDevice)
 	mux.HandleFunc("POST /api/devices/{id}/enroll", a.enrollDevice)
 	mux.HandleFunc("POST /api/devices/{id}/health-check", a.runDeviceHealthCheck)
+	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
+	mux.HandleFunc("PUT /api/monitoring/settings", a.updateMonitoringSettings)
+	mux.HandleFunc("GET /api/monitoring/history", a.listMonitoringHistory)
+	go a.monitorLoop(ctx)
 
 	handler := securityHeaders(frontendFallback(a.authMiddleware(mux)))
 	srv := &http.Server{
