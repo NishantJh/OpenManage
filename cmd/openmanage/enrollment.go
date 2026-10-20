@@ -86,6 +86,11 @@ func pinnedHostKeyCallback(expected string, observed *string) ssh.HostKeyCallbac
 }
 
 func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(userContextKey).(authUser)
+	if !ok || user.Role != "admin" {
+		writeError(w, http.StatusForbidden, "administrator role required for SSH enrollment")
+		return
+	}
 	key, err := encryptionKey()
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "SSH enrollment is disabled: server encryption key is not configured")
@@ -160,14 +165,24 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	tx, err := a.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not start credential transaction")
+		return
+	}
+	defer tx.Rollback(ctx)
 	var updated time.Time
-	err = a.db.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		"INSERT INTO device_credentials (device_id, username, private_key_ciphertext, host_key_fingerprint, updated_at) "+
 			"VALUES ($1, $2, $3, $4, NOW()) "+
 			"ON CONFLICT (device_id) DO UPDATE SET username=EXCLUDED.username, "+
 			"private_key_ciphertext=EXCLUDED.private_key_ciphertext, host_key_fingerprint=EXCLUDED.host_key_fingerprint, updated_at=NOW() "+
 			"RETURNING updated_at",
 		r.PathValue("id"), req.Username, ciphertext, observedFingerprint).Scan(&updated)
+	if err == nil {
+		_, err = tx.Exec(ctx, "UPDATE devices SET status='online', last_seen_at=NOW(), updated_at=NOW() WHERE id=$1", r.PathValue("id"))
+	}
+	if err == nil { err = tx.Commit(ctx) }
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "SSH connection succeeded but credential storage failed")
 		return
