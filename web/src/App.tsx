@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Router, Plus, RefreshCw, Search, Wifi, Activity, ShieldCheck, Trash2, CircleHelp, LayoutDashboard, Settings2, Database, AlertTriangle, LogOut, LockKeyhole, KeyRound } from "lucide-react";
 import type { FormEvent } from "react";
 type Device={id:string;name:string;address:string;model:string;firmware:string;status:"online"|"offline"|"unknown"|"degraded";last_seen_at:string};
