@@ -124,8 +124,7 @@ func main() {
 	mux.HandleFunc("GET /api/devices/{id}", a.getDevice)
 	mux.HandleFunc("DELETE /api/devices/{id}", a.deleteDevice)
 
-	handler := securityHeaders(a.authMiddleware(mux))
-	handler = frontendFallback(handler)
+	handler := securityHeaders(frontendFallback(a.authMiddleware(mux)))
 	srv := &http.Server{
 		Addr:              env("LISTEN_ADDR", ":8080"),
 		Handler:           handler,
@@ -158,7 +157,7 @@ func bootstrapAdmin(ctx context.Context, db *pgxpool.Pool) error {
 	}
 	username := strings.TrimSpace(os.Getenv("OPENMANAGE_ADMIN_USERNAME"))
 	password := os.Getenv("OPENMANAGE_ADMIN_PASSWORD")
-	if username == "" || len(password) < 12 {
+	if username == "" || len(password) < 12 || strings.Contains(strings.ToLower(password), "replace-with") {
 		return errors.New("no users exist: set OPENMANAGE_ADMIN_USERNAME and OPENMANAGE_ADMIN_PASSWORD (at least 12 characters) for first startup")
 	}
 	if len(password) > 72 {
@@ -254,6 +253,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
 	}
+	if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, "auth.login", "session", user.ID, `{}`); err != nil { log.Printf("audit login write failed: %v", err) }
 	http.SetCookie(w, &http.Cookie{Name: "om_session", Value: sessionToken, Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	http.SetCookie(w, &http.Cookie{Name: "om_csrf", Value: csrfToken, Path: "/", HttpOnly: false, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	writeJSON(w, http.StatusOK, map[string]any{"user": user, "csrf_token": csrfToken})
@@ -281,6 +281,7 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if user, ok := r.Context().Value(userContextKey).(authUser); ok { if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, "auth.logout", "session", user.ID, `{}`); err != nil { log.Printf("audit logout write failed: %v", err) } }
 	http.SetCookie(w, &http.Cookie{Name: "om_session", Value: "", Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	http.SetCookie(w, &http.Cookie{Name: "om_csrf", Value: "", Path: "/", HttpOnly: false, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	w.WriteHeader(http.StatusNoContent)
@@ -412,7 +413,7 @@ func (a *app) recordAudit(r *http.Request, action, resourceType, resourceID stri
 		log.Printf("audit encode failed for %s: %v", action, err)
 		return
 	}
-	if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, action, resourceType, resourceID, data); err != nil {
+	if _, err := a.db.Exec(r.Context(), "INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)", user.ID, action, resourceType, resourceID, string(data)); err != nil {
 		log.Printf("audit write failed for %s: %v", action, err)
 	}
 }
