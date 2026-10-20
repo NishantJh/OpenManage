@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -95,5 +97,67 @@ func TestValidUUID(t *testing.T) {
 		if validUUID(value) {
 			t.Errorf("expected %q to be rejected", value)
 		}
+	}
+}
+
+
+func TestRequireAnyRole(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		user authUser
+		allowed []string
+		want bool
+		status int
+	}{
+		{name: "admin allowed", user: authUser{Role: "admin"}, allowed: []string{"admin"}, want: true, status: http.StatusOK},
+		{name: "operator allowed for inventory writes", user: authUser{Role: "operator"}, allowed: []string{"admin", "operator"}, want: true, status: http.StatusOK},
+		{name: "readonly denied for writes", user: authUser{Role: "readonly"}, allowed: []string{"admin", "operator"}, want: false, status: http.StatusForbidden},
+		{name: "operator denied audit listing", user: authUser{Role: "operator"}, allowed: []string{"admin"}, want: false, status: http.StatusForbidden},
+		{name: "missing actor denied", user: authUser{}, allowed: []string{"admin"}, want: true, status: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.name != "missing actor denied" {
+				req = req.WithContext(context.WithValue(req.Context(), userContextKey, tc.user))
+			}
+			rec := httptest.NewRecorder()
+			got := requireAnyRole(rec, req, tc.allowed...)
+			if tc.name == "missing actor denied" {
+				if got || rec.Code != http.StatusUnauthorized {
+					t.Fatalf("missing actor should be denied with 401, got allowed=%v status=%d", got, rec.Code)
+				}
+				return
+			}
+			if got != tc.want || rec.Code != tc.status {
+				t.Fatalf("got allowed=%v status=%d, want allowed=%v status=%d", got, rec.Code, tc.want, tc.status)
+			}
+		})
+	}
+}
+
+func TestReadonlyCannotCreateOrDeleteDevices(t *testing.T) {
+	ctx := context.WithValue(context.Background(), userContextKey, authUser{ID: "user-id", Role: "readonly"})
+	for _, tc := range []struct {
+		name string
+		handler http.HandlerFunc
+		method string
+		path string
+		body string
+	}{
+		{name: "create", handler: (&app{}).createDevice, method: http.MethodPost, path: "/api/devices", body: `{"name":"router","address":"192.168.1.1"}`},
+		{name: "delete", handler: (&app{}).deleteDevice, method: http.MethodDelete, path: "/api/devices/550e8400-e29b-41d4-a716-446655440000"},
+		{name: "audit listing", handler: (&app{}).listAudit, method: http.MethodGet, path: "/api/audit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)).WithContext(ctx)
+			if strings.Contains(tc.path, "/api/devices/") {
+				req.SetPathValue("id", "550e8400-e29b-41d4-a716-446655440000")
+			}
+			rec := httptest.NewRecorder()
+			tc.handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("expected 403 before database access, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
