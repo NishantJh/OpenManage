@@ -156,7 +156,6 @@ func (a *app) monitorLoop(ctx context.Context) {
 	}
 }
 
-
 func (a *app) pruneMonitoringHistory(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
