@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -20,9 +21,9 @@ func TestMonitoringSettingsRequireAdmin(t *testing.T) {
 
 func TestMonitoringSettingsRejectOutOfRangeInterval(t *testing.T) {
 	for _, interval := range []int{0, 1, 59, 3601, 86400} {
-		t.Run(strings.TrimSpace(string(rune(interval))), func(t *testing.T) {
+		t.Run(strconv.Itoa(interval), func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, "/api/monitoring/settings",
-				strings.NewReader(`{"enabled":true,"interval_seconds":`+itoa(interval)+`}`))
+				strings.NewReader(`{"enabled":true,"interval_seconds":`+strconv.Itoa(interval)+`}`))
 			req = req.WithContext(context.WithValue(req.Context(), userContextKey, authUser{ID: "admin-id", Role: "admin"}))
 			rec := httptest.NewRecorder()
 			(&app{}).updateMonitoringSettings(rec, req)
