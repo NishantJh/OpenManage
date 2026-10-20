@@ -75,3 +75,25 @@ func TestSecurityHeadersAreApplied(t *testing.T) {
 		t.Fatal("missing Content-Security-Policy")
 	}
 }
+
+func TestValidUUID(t *testing.T) {
+	valid := []string{
+		"550e8400-e29b-41d4-a716-446655440000",
+		"550E8400-E29B-41D4-A716-446655440000",
+	}
+	for _, value := range valid {
+		if !validUUID(value) {
+			t.Errorf("expected UUID %q to be valid", value)
+		}
+	}
+	invalid := []string{
+		"", "not-a-uuid", "550e8400e29b41d4a716446655440000",
+		"550e8400-e29b-41d4-a716-44665544000z",
+		"550e8400_e29b-41d4-a716-446655440000",
+	}
+	for _, value := range invalid {
+		if validUUID(value) {
+			t.Errorf("expected %q to be rejected", value)
+		}
+	}
+}
