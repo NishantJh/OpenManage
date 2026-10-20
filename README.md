@@ -2,7 +2,7 @@
 
 A lightweight, self-hosted control plane for OpenWrt devices. OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the same Go process. Docker Compose is the initial deployment target.
 
-> **Early development:** inventory, authentication, audit UI/API, and SSH enrollment are implemented. Read-only device health checks are being added in [PR #19](https://github.com/NishantJh/OpenManage/pull/19). Configuration changes, router-side SSH key installation/rotation, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet.
+> **Early development:** inventory, authentication, audit UI/API, SSH enrollment, and read-only health checks are implemented. An opt-in FreeRADIUS lab is under review in [PR #21](https://github.com/NishantJh/OpenManage/pull/21); it is a PAP smoke-test setup, not production WPA-Enterprise support. Configuration changes, router-side SSH key installation/rotation, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet.
 
 ## Project status at a glance
 
@@ -21,7 +21,7 @@ Last updated: 2026-10-20. This section is the quick reminder of what works now a
 
 ### In progress
 
-- **Read-only device health and diagnostics — [PR #19](https://github.com/NishantJh/OpenManage/pull/19).** Adds a bounded, server-defined SSH health check for system board details, uptime/load, memory, and overlay storage, with results in the inventory UI. It does not allow arbitrary shell commands or change router configuration. Merge only after all required checks pass.
+- **FreeRADIUS lab — [PR #21](https://github.com/NishantJh/OpenManage/pull/21).** Adds an opt-in, loopback-bound FreeRADIUS container and a disposable PAP authentication smoke test. This is a lab-only first slice; AP management UI, production secrets, EAP/PEAP certificates, and database-backed identity integration are not included.
 - **Dependency lockfile workflow — [PR #18](https://github.com/NishantJh/OpenManage/pull/18).** Adds trusted generation of Go/npm dependency metadata. Reproducible dependency installation and CI verification still need to be completed.
 
 ### Planned next
@@ -31,7 +31,8 @@ Last updated: 2026-10-20. This section is the quick reminder of what works now a
 3. **Device lifecycle and fleet visibility:** clearer device details, firmware inventory, operation history/status, and controlled multi-device workflows.
 4. **SSH key lifecycle and named maintenance operations:** explicit install/rotate/revoke workflows and narrowly defined operations with recovery access. No generic command runner.
 5. **Firmware upgrades:** only after single-device compatibility checks, image integrity validation, backup, canary rollout, reboot/health verification, and documented recovery limits.
-6. **Monitoring and later integrations:** bounded reachability checks and alerts first; broader topology/IPAM/PKI/VPN integrations only when justified.
+6. **Monitoring and RADIUS:** extend manual health checks to scheduled reachability/health monitoring; validate the RADIUS lab before adding trusted AP management and production WPA-Enterprise support.
+7. **Later integrations:** broader topology/IPAM/PKI/VPN integrations only when justified.
 
 ### Deferred, not forgotten
 
@@ -71,7 +72,7 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 - `GET /api/devices/{id}` — fetches one record.
 - `DELETE /api/devices/{id}` — deletes one record.
 - `POST /api/devices/{id}/enroll` — verifies a pinned SSH host key and public-key login, then stores the management private key encrypted at rest. Request JSON: `username`, `private_key`, and `expected_fingerprint` (the `SHA256:...` fingerprint must be verified independently).
-- `POST /api/devices/{id}/health-check` — **proposed in PR #19**; runs a fixed set of read-only diagnostics for an enrolled device.
+- `POST /api/devices/{id}/health-check` — runs a fixed set of read-only diagnostics for an enrolled device.
 
 All API routes except `/api/healthz` and `/api/auth/login` require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. `GET /api/audit` returns the latest 100 events and is intended for administrators. The address field is inventory metadata until enrollment is explicitly completed. SSH enrollment verifies a host key fingerprint supplied from a trusted source and authenticates with a private key before storing it encrypted at rest. Enrollment accepts private IP literals only (no DNS names, public addresses, or link-local addresses) and uses TCP/22. Configure `OPENMANAGE_ENCRYPTION_KEY` using a securely backed-up base64-encoded 32-byte random key before enrollment; losing it makes stored SSH credentials unrecoverable. The private key is never returned by the API. Re-enrollment replaces the stored credential only after the new key successfully authenticates; it does not install or rotate `authorized_keys` on the router itself.
 
