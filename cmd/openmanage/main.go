@@ -128,7 +128,11 @@ func main() {
 	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
 	mux.HandleFunc("PUT /api/monitoring/settings", a.updateMonitoringSettings)
 	mux.HandleFunc("GET /api/monitoring/history", a.listMonitoringHistory)
-	go a.monitorLoop(ctx)
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		a.monitorLoop(ctx)
+	}()
 
 	handler := securityHeaders(frontendFallback(a.authMiddleware(mux)))
 	srv := &http.Server{
@@ -150,6 +154,13 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdown); err != nil {
 		log.Printf("shutdown: %v", err)
+	}
+	monitorWait, cancelMonitor := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelMonitor()
+	select {
+	case <-monitorDone:
+	case <-monitorWait.Done():
+		log.Printf("monitoring scheduler did not stop before timeout")
 	}
 }
 
