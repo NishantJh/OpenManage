@@ -1,6 +1,6 @@
 # Persistent monitoring (MVP)
 
-OpenManage now has an opt-in server-side monitoring scheduler. It runs inside the existing Go application process; PostgreSQL stores the settings and per-device check history. No Redis, extra container, or browser timer is required.
+OpenManage now has an opt-in server-side monitoring scheduler. It runs inside the existing Go application process; PostgreSQL stores the settings and per-device check history. No Redis, extra container, or browser timer is required. PostgreSQL remains the source of truth; monitoring settings are a single small row and are cheap to read, so a Redis cache would add invalidation and operational failure modes without a demonstrated performance benefit.
 
 ## Behaviour
 
@@ -18,12 +18,12 @@ OpenManage now has an opt-in server-side monitoring scheduler. It runs inside th
 - `PUT /api/monitoring/settings` — administrator-only; accepts `{"enabled":true,"interval_seconds":300}`. Interval must be 60–3600 seconds and requests require normal session and CSRF protection.
 - `GET /api/monitoring/history?limit=50` — latest persisted check outcomes, with a limit of 1–100.
 
-The migration `999_persistent_monitoring.sql` creates the settings and history tables and inserts the disabled-by-default settings row. Existing device inventory and credentials are unchanged.
+The migration `004_monitoring.sql` creates the settings and history tables and inserts the disabled-by-default settings row. Existing device inventory and credentials are unchanged.
 
 ## Resource and safety limits
 
 - One scheduler in the existing Go process; at most five devices are selected per batch and up to three checks run concurrently. PostgreSQL advisory locking prevents two instances from running the same batch.
-- The PostgreSQL connection pool is explicitly sized to leave capacity for API requests while monitoring workers run.
+- The PostgreSQL connection pool is explicitly sized to leave capacity for API requests while monitoring workers run. Credentials and health-check output are not cached in Redis or another external cache.
 - The application checks only enrolled devices with stored credentials and only private IP addresses on TCP/22.
 - No automatic configuration changes, alerts, or arbitrary shell commands.
 - History is pruned after 30 days. Database backups now also preserve monitoring settings and history.
