@@ -71,20 +71,21 @@ func main() {
 	defer stop()
 
 	dsn := env("DATABASE_URL", "postgres://openmanage:openmanage@localhost:5432/openmanage?sslmode=disable")
-	poolConfig, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		log.Fatalf("parse database configuration: %v", err)
-	}
-	// Leave capacity for HTTP requests while the monitoring lock and bounded
-	// SSH workers are active. This remains modest for the single-container MVP.
-	poolConfig.MaxConns = 10
-	poolConfig.MinConns = 2
-	poolConfig.MaxConnLifetime = 30 * time.Minute
-	poolConfig.MaxConnIdleTime = 5 * time.Minute
-	poolConfig.HealthCheckPeriod = 30 * time.Second
-
 	var pool *pgxpool.Pool
+	var err error
 	for i := 1; i <= 30; i++ {
+		poolConfig, configErr := pgxpool.ParseConfig(dsn)
+		if configErr != nil {
+			log.Fatalf("parse database configuration: %v", configErr)
+		}
+		// Leave capacity for HTTP requests while the monitoring lock and bounded
+		// SSH workers are active. This remains modest for the single-container MVP.
+		poolConfig.MaxConns = 10
+		poolConfig.MinConns = 2
+		poolConfig.MaxConnLifetime = 30 * time.Minute
+		poolConfig.MaxConnIdleTime = 5 * time.Minute
+		poolConfig.HealthCheckPeriod = 30 * time.Second
+
 		pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
 		if err == nil {
 			err = pool.Ping(ctx)
