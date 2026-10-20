@@ -56,3 +56,6 @@ jobs:
         run: docker compose config --quiet
       - name: Build Docker image
         run: docker build -t openmanage:pr .
+
+      - name: Run disposable end-to-end smoke test
+        run: bash scripts/smoke-test.sh
