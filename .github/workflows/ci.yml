@@ -15,6 +15,8 @@ jobs:
     runs-on: [self-hosted, Linux, X64, WSL2]
     steps:
       - uses: actions/checkout@v4
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l cmd/openmanage/*.go)"
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24.x"
