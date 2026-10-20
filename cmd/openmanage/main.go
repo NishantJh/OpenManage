@@ -11,7 +11,6 @@ import (
 	"errors"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
