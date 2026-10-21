@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,7 +83,8 @@ func (a *app) getWiFiLayout(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var layout wifiLayout
 	var updated time.Time
-	err := a.db.QueryRow(ctx, "SELECT layout,updated_at FROM wifi_layouts WHERE name='Home'").Scan(&layoutJSONScanner{target: &layout}, &updated)
+	var raw []byte
+	err := a.db.QueryRow(ctx, "SELECT layout,updated_at FROM wifi_layouts WHERE name='Home'").Scan(&raw, &updated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusOK, wifiLayout{WidthM: 12, HeightM: 8, Rooms: []wifiRoom{}, Walls: []wifiWall{}, APs: []wifiAPPlacement{}})
 		return
@@ -91,23 +93,12 @@ func (a *app) getWiFiLayout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not load Wi-Fi layout")
 		return
 	}
+	if err := json.Unmarshal(raw, &layout); err != nil {
+		writeError(w, http.StatusInternalServerError, "stored Wi-Fi layout is invalid")
+		return
+	}
 	layout.UpdatedAt = &updated
 	writeJSON(w, http.StatusOK, layout)
-}
-
-type layoutJSONScanner struct{ target *wifiLayout }
-
-func (s *layoutJSONScanner) Scan(src any) error {
-	var raw []byte
-	switch v := src.(type) {
-	case []byte:
-		raw = v
-	case string:
-		raw = []byte(v)
-	default:
-		return errors.New("unexpected layout JSON value")
-	}
-	return json.Unmarshal(raw, s.target)
 }
 
 func (a *app) saveWiFiLayout(w http.ResponseWriter, r *http.Request) {
@@ -399,27 +390,14 @@ func parseWiFiScan(deviceID, name, iface, sourceBSSID, output string) []wifiObse
 		bssid := strings.ToUpper(output[m[2]:m[3]])
 		signal := wifiSignal.FindStringSubmatch(block)
 		if len(signal) != 2 { continue }
-		dbm, err := strconvAtoi(signal[1])
+		dbm, err := strconv.Atoi(signal[1])
 		if err != nil || dbm > 0 || dbm < -120 { continue }
 		o := wifiObservation{SourceDeviceID: deviceID, SourceName: name, SourceRadio: iface, SourceBSSID: sourceBSSID, ObservedBSSID: bssid, SignalDBM: dbm, ObservedAt: now}
 		if s := wifiSSID.FindStringSubmatch(block); len(s) == 2 { o.SSID = strings.TrimSpace(s[1]) }
-		if c := wifiChannel.FindStringSubmatch(block); len(c) == 2 { o.Channel, _ = strconvAtoi(c[1]) }
+		if c := wifiChannel.FindStringSubmatch(block); len(c) == 2 { o.Channel, _ = strconv.Atoi(c[1]) }
 		out = append(out, o)
 	}
 	return out
-}
-
-func strconvAtoi(s string) (int, error) {
-	n := 0
-	if s == "" { return 0, errors.New("empty integer") }
-	negative := s[0] == '-'
-	if negative { s = s[1:] }
-	for _, r := range s {
-		if r < '0' || r > '9' { return 0, errors.New("invalid integer") }
-		n = n*10 + int(r-'0')
-	}
-	if negative { n = -n }
-	return n, nil
 }
 
 func (a *app) recordWiFiScanFailure(r *http.Request, deviceID, reason string) {
