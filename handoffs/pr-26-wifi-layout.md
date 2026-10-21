@@ -1,83 +1,110 @@
 # Agent A Handover — Wi-Fi Layout PR #26
 
-Updated: 2026-10-21T10:10:00Z
+Updated: 2026-10-21T15:35:00Z
 
-Owner / workstream: Agent A — Wi-Fi Layout PR #26 validation only
+Owner / workstream: Agent A — Wi-Fi Layout PR #26 validation and narrowly scoped Go safety fix
 
 Message type: REPORT
 
-Status: in-progress — static review findings recorded; implementation fixes not started
+Status: focused fix implemented on PR #26 head; configured CI green; PR remains open and draft; not merged.
 
-PR URL / branch:
+## Canonical references
+
 - Target PR: https://github.com/NishantJh/OpenManage/pull/26
-- PR branch observed during review: `feat/wifi-layout-rssi-foundation`
-- This handover branch: `agent-a/pr26-validation-handover`
-- Handover commit will be linked in the branch history; no PR was opened for this handover.
-- Target PR head SHA observed: `b8942906b8d5e47e5b7723b951c275a894accbce`
-- Target PR base SHA observed: `6e6371b785eddf23e22adc3aa924965315df469d`
-- Re-verify current head/base before acting; values above are a dated snapshot.
+- PR head branch: `feat/wifi-layout-rssi-foundation`
+- Handover branch: `agent-a/pr26-validation-handover`
+- This canonical handover: https://github.com/NishantJh/OpenManage/blob/agent-a/pr26-validation-handover/handoffs/pr-26-wifi-layout.md
+- Earlier review note (historical; not current status): https://github.com/NishantJh/OpenManage/blob/agent-a/pr26-validation-handover/docs/handover-pr26-validation.md
 
-## Verified evidence
+## Current PR state (reconciled 2026-10-21)
 
-- GitHub PR metadata for #26: open, draft, mergeable at inspection time; 30 commits, 10 files, +754/-4.
-- PR Validation workflow run: https://github.com/NishantJh/OpenManage/actions/runs/39578019533 — success.
-- Security Checks workflow run: https://github.com/NishantJh/OpenManage/actions/runs/39578019978 — success.
-- CodeQL workflow run: https://github.com/NishantJh/OpenManage/actions/runs/39578019576 — success.
-- PR Validation steps reported successful: Go formatting, frontend build, Go tests with race detector, Compose validation, Docker image build, disposable smoke test.
-- Security jobs reported successful: Go vulnerability scan and frontend dependency audit.
-- CodeQL Go and JavaScript/TypeScript jobs reported successful.
-- Evidence reflects the observed PR head at the time of the review. CI must be checked again against the current head before any readiness decision.
-- No local shell commands or tests were run in this validation session. No production APs or router configurations were accessed.
+- PR #26 is open, draft, and not merged.
+- Base branch: `main`
+- Base SHA: `6e6371b785eddf23e22adc3aa924965315df469d`
+- Head branch: `feat/wifi-layout-rssi-foundation`
+- Head SHA: `a83877a95adec2ca4050b9fe6c0f849ff1736d9b`
+- PR overall diff at the last inspection: 43 commits, 10 changed files, +1144/-4. These are overall PR figures, not the incremental fix diff.
+- The incremental safety fix compared with the pre-fix head `b8942906b8d5e47e5b7723b951c275a894accbce` touches only:
+  - `cmd/openmanage/wifi_coverage.go`
+  - `cmd/openmanage/wifi_coverage_test.go`
+- Fix work was authorized by the coordinator/user. The validated fix is on the PR head. A separate working branch named `fix/pr26-wifi-scan-safety` was created during the work; after integration, the PR branch head is the authoritative candidate. Do not assume the separate working branch contains every latest cap-helper/test adjustment.
 
-## Changes
+Re-check the live PR head and CI before making a new readiness decision; the SHAs and counts above are a dated snapshot.
 
-- No application source changes by this agent.
-- Canonical detailed handover created at `handoffs/pr-26-wifi-layout.md`.
-- Earlier detailed note retained at `docs/handover-pr26-validation.md`: https://github.com/NishantJh/OpenManage/blob/agent-a/pr26-validation-handover/docs/handover-pr26-validation.md
-- PR #30 establishes this path as Agent A's canonical workstream handover: https://github.com/NishantJh/OpenManage/pull/30 (open and unmerged when checked).
-- Handover branch: https://github.com/NishantJh/OpenManage/tree/agent-a/pr26-validation-handover
+## Latest CI evidence
 
-## Findings and risks
+All three configured workflows passed on PR head `a83877a95adec2ca4050b9fe6c0f849ff1736d9b`:
 
-**HIGH — deadline can allow partial observations to be persisted.** In `cmd/openmanage/wifi_coverage.go`, the interface loop breaks on context error but does not clearly reject the expired context before persistence/success. Individual interface scan errors are skipped. Fix deadline checks before parsing/persistence and define explicit partial-result behavior.
+| Workflow | Run ID | Conclusion |
+| --- | ---: | --- |
+| PR Validation | 39583289594 | success |
+| Security Checks | 39583289515 | success |
+| CodeQL | 39583289523 | success |
 
-**HIGH — output truncation can look like a complete scan.** `runWiFiCommand` uses bounded buffers, but call sites do not visibly reject truncated output. Make truncation observable; fail affected commands and never parse/persist truncated results. Test stdout and stderr size boundaries.
+PR Validation covered Go formatting, frontend build, Go package tests, Compose configuration validation, Docker image build, and disposable end-to-end smoke test. Security Checks covered the Go vulnerability scan and frontend dependency audit. CodeQL Go and JavaScript/TypeScript jobs both passed.
 
-**MEDIUM — layout validation does not explicitly reject non-finite float values.** Add explicit NaN/Inf checks for dimensions and room/wall/AP coordinates and tests confirming rejected saves do not overwrite stored layout.
+Evidence links:
+- https://github.com/NishantJh/OpenManage/actions/runs/39583289594
+- https://github.com/NishantJh/OpenManage/actions/runs/39583289515
+- https://github.com/NishantJh/OpenManage/actions/runs/39583289523
 
-**MEDIUM — observation field validity and audit coverage.** Parser accepts BSSID plus parseable signal; channel can remain zero if not parsed. Failed scan audit handling is not visibly consistent across later command errors, timeouts, empty results, and persistence failures. Define mandatory/unknown fields and consistently audit sanitized failure outcomes.
+These are configured CI results, not production-router validation. No production APs or router configuration were accessed. No local shell/test commands were run in this agent session; GitHub Actions is the reported test evidence.
 
-**MEDIUM — interfaces and skipped failures can be unclear.** Commands are fixed-form and interface names are regex-checked, but interface list is silently capped at four and individual errors are skipped. Keep fixed command allowlist; test invalid names/failures and clearly communicate the cap/skipped interfaces.
+## Implemented scope
 
-Controls observed in source: session auth; admin/operator authorization; CSRF cookie/header equality for mutations; transactions for layout+audit and observations+success audit; private-device-IP check before SSH (helper not fully verified); pinned SHA-256 SSH host key; request body and object-count limits; database RSSI/channel constraints. These are source observations, not complete proof of end-to-end security.
+### `cmd/openmanage/wifi_coverage.go`
 
-Additional risks: shared Home layout is last-write-wins under concurrent edits; stored layout reads are unmarshalled without revalidation. UI represents AP-to-neighbour RSSI observations, not a calibrated building-wide coverage heatmap.
+- Reject NaN and positive/negative infinity in layout dimensions and room, wall, and AP coordinates.
+- Bound stdout and stderr capture and expose truncation; affected command output is rejected rather than parsed/persisted when either stream truncates.
+- Prevent incomplete scan results from being persisted when the scan context is cancelled or expires; check context around persistence and before transaction commit, with bounded independent rollback context.
+- Make scan outcome explicit: `complete`, `partial`, or `failed`.
+- Report discovered/scanned/failed/omitted interface accounting and the four-interface cap; include sanitized failure audit outcomes.
+- Preserve fixed-form remote commands and existing SSH host-key pinning/security controls.
 
-Files inspected:
-- `cmd/openmanage/wifi_coverage.go`
-- `cmd/openmanage/wifi_coverage_test.go`
-- `cmd/openmanage/migrations/007_wifi_coverage.sql`
-- `cmd/openmanage/main.go`
-- `web/src/WifiLayout.tsx`
-- `web/src/App.tsx`
-- `web/src/styles.css`
-- `README.md`, `plan.md`, `AGENTS.md`
-- `.github/workflows/pr-validation.yml`, `.github/workflows/security-checks.yml`, `.github/workflows/codeql.yml`
+### `cmd/openmanage/wifi_coverage_test.go`
 
-## Blockers / dependencies
+Regression coverage added for:
+- stdout/stderr/both-stream truncation and rejecting affected output before parsing;
+- cancelled and expired contexts preventing persistence;
+- NaN and ±Inf across all layout dimension/coordinate fields;
+- partial scan outcome and interface cap in audit details;
+- explicit cap accounting (six discovered, four selected, two omitted);
+- complete outcome when no failures or omissions occur.
 
-No implementation authorization recorded in this handover. The coordinator should check overlap with active PRs before authorizing changes to the Wi-Fi implementation or tests. No coordinator inbox edit made.
+The incremental implementation diff is limited to these two Go files. No UI, migration, dependency, RADIUS, or unrelated roadmap changes were made as part of this fix.
 
-## Coordinator decision requested
+## Original review findings and resolution status
 
-Please confirm whether Agent A should proceed with a focused fix on a dedicated branch, initially limited to `cmd/openmanage/wifi_coverage.go` and `cmd/openmanage/wifi_coverage_test.go`, addressing timeout/partial-scan handling, truncated output, and finite layout values. Optional UI/documentation/migration edits should be limited to what the confirmed behavior contract requires.
+| Finding | Status |
+| --- | --- |
+| Deadline/cancellation could allow incomplete observations to persist | Addressed in focused Go fix; regression tests added |
+| Truncated stdout/stderr could be parsed as complete scan output | Addressed; truncation is detectable and affected output rejected; tests added |
+| NaN/Inf could pass layout numeric checks | Addressed for layout dimensions and all layout coordinates; tests added |
+| Four-interface cap and per-interface failures were not clear in outcome/audit | Addressed with explicit outcome/accounting and regression tests |
+| Parser field semantics (e.g. optional channel) and stored-layout revalidation | Not expanded beyond the authorized fix; retain as follow-up review items if acceptance criteria require them |
+| Shared Home layout is last-write-wins under concurrent edits | Existing known limitation; outside focused fix |
 
-## Next action
+## Security controls observed / preserved
 
-Coordinator: reconcile the current PR #26 head/base and latest CI, check active PR file overlap, then authorize or decline the proposed focused fix. Agent A: do not change application code until that scope is confirmed.
+- Session authentication and admin/operator route authorization.
+- CSRF checks for mutations.
+- Transactional layout/audit and observation persistence.
+- Private-device-IP check before SSH (helper's full behavior was not independently revalidated during this focused fix).
+- SHA-256 SSH host-key fingerprint pinning.
+- Fixed-form command set, restrictive interface-name validation, four-interface cap, request/body limits, and database constraints.
 
-## Limitations / unverified assumptions
+These remain source observations plus configured CI evidence, not proof of every security boundary under live hardware conditions.
 
-- This is a static review of source and reported GitHub workflow results, not a local or lab reproduction.
-- Private-IP helper behavior, all runtime SSH failure paths, output truncation, timeout rollback behavior, and UI handling of partial scans still require targeted tests.
-- No production-device testing is authorized.
+## Coordinator decision / next actions
+
+1. Treat `a83877a95adec2ca4050b9fe6c0f849ff1736d9b` as the last reported validated PR #26 candidate; re-fetch current head and CI before review.
+2. Review the focused diff and regression coverage, particularly persistence rollback/context handling and partial-versus-failed interface accounting.
+3. Keep PR #26 in draft until the coordinator accepts the fix and any remaining acceptance criteria are satisfied.
+4. If additional changes are requested, keep them scoped and check active-PR file overlap first.
+5. Do not merge or mark ready for review without explicit coordinator approval.
+
+## Limitations
+
+- CI used the repository's configured jobs and disposable end-to-end smoke test; no production router/AP testing was performed.
+- A successful smoke test does not replace real-device validation, which must remain explicitly authorized and safely isolated.
+- The earlier note at `docs/handover-pr26-validation.md` is a historical review snapshot and should not be used as the current status without this handover and live GitHub state.
