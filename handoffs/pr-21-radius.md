@@ -1,6 +1,6 @@
 # PR #21 — FreeRADIUS lab handover
 
-Updated: 2026-10-21T10:12:00Z
+Updated: 2026-10-21T10:13:00Z
 
 Owner / workstream: Agent B — optional FreeRADIUS lab validation only
 
@@ -11,8 +11,8 @@ Status: in-progress
 PR URL / branch: https://github.com/NishantJh/OpenManage/pull/21 — `feat/mvp-radius-lab`
 
 Head SHA / base SHA:
-- Test-hardening commit: `f9b0cf02de53bb6e5d1e8141a901a8da0298a350`
-- Handover update is being committed after that code change; re-read the live PR head before using this report as current.
+- Current head at last check: `d51562a5a3ccb942001a4aa6de93a7b3cab8a7b0`
+- Test-hardening code commit: `f9b0cf02de53bb6e5d1e8141a901a8da0298a350`
 - Base: `efa48f16fb5f4673b7c330010ade69f43425d5`
 
 ## Verified evidence
@@ -20,7 +20,7 @@ Head SHA / base SHA:
 - Previous PR Validation run [39464867506](https://github.com/NishantJh/OpenManage/actions/runs/39464867506) succeeded on an earlier revision. Its log showed the prior positive-only RADIUS smoke test pass. It does not validate the new negative case, readiness loop, or cleanup assertions.
 - Previous Security Checks run [39464867415](https://github.com/NishantJh/OpenManage/actions/runs/39464867415) succeeded on an earlier revision. It does not validate the latest head.
 - Previous CodeQL run [39464867665](https://github.com/NishantJh/OpenManage/actions/runs/39464867665) succeeded on an earlier revision. It does not validate the latest head.
-- Latest-head CI status checked for `f9b0cf02de53bb6e5d1e8141a901a8da0298a350`: no PR workflow runs and no commit status checks were returned at the time of inspection. Fresh validation is pending; do not treat PR #21 as merge-ready until the latest head has successful CI.
+- Latest-head CI status checked for `d51562a5a3ccb942001a4aa6de93a7b3cab8a7b0`: no PR workflow runs and no commit status checks were returned at the time of inspection. Fresh validation is pending; do not treat PR #21 as merge-ready until the latest head has successful CI.
 
 ## Changes
 
@@ -37,6 +37,7 @@ Head SHA / base SHA:
 - EXIT cleanup removes the disposable client, runs Compose down, removes the named lab network if needed, and fails the test if the disposable client, Compose service container, or lab network remains.
 - Default `compose.yaml` remains unchanged. Optional Compose still binds UDP 1812 and 1813 to `127.0.0.1` by default.
 - Scope remains basic PAP lab validation only; no EAP/PEAP, certificate lifecycle, or production WPA-Enterprise claims.
+- **Authorization:** user explicitly authorized Agent B's lab-only test hardening on 2026-10-21. This authorizes the scoped test changes only, not merge or production testing.
 
 ## Blockers / dependencies
 
@@ -46,11 +47,11 @@ Head SHA / base SHA:
 
 ## Coordinator decision requested
 
-- None for the implementation scope; please review latest-head CI and decide merge readiness only after the run completes. No merge is requested.
+- None for the implementation scope. Review latest-head CI before deciding merge readiness. No merge is requested.
 
 ## Next action
 
-- Owner: Agent B / PR owner. Confirm a fresh PR Validation run for the exact current head, inspect the logs for both Access-Accept and Access-Reject assertions and cleanup completion, then update this handover with the exact run URL and result.
+- Owner: Agent B / PR owner. Confirm a fresh PR Validation run for the exact current head, inspect logs for both Access-Accept and Access-Reject assertions and cleanup completion, then update this handover with the exact run URL and result.
 
 ## Limitations / unverified assumptions
 
