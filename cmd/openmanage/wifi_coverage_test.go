@@ -50,10 +50,10 @@ func TestValidateWiFiLayout(t *testing.T) {
 
 func TestWiFiCommandResultRejectsTruncatedOutput(t *testing.T) {
 	for _, tc := range []struct {
-		name              string
-		stdoutTruncated   bool
-		stderrTruncated   bool
-		commandErr        error
+		name            string
+		stdoutTruncated bool
+		stderrTruncated bool
+		commandErr      error
 	}{
 		{name: "stdout", stdoutTruncated: true},
 		{name: "stderr", stderrTruncated: true},
