@@ -137,7 +137,7 @@ func TestValidateWiFiLayoutRejectsNonFiniteNumbers(t *testing.T) {
 			WidthM: 12, HeightM: 8,
 			Rooms: []wifiRoom{{ID: "r1", Name: "Living room", X: 0, Y: 0, Width: 5, Height: 4}},
 			Walls: []wifiWall{{ID: "w1", X1: 1, Y1: 1, X2: 2, Y2: 2, Material: "brick"}},
-			APs: []wifiAPPlacement{{DeviceID: "123e4567-e89b-12d3-a456-426614174000", X: 2, Y: 2}},
+			APs:   []wifiAPPlacement{{DeviceID: "123e4567-e89b-12d3-a456-426614174000", X: 2, Y: 2}},
 		}
 	}
 	bad := []struct {
@@ -180,10 +180,10 @@ func TestValidateWiFiLayoutRejectsNonFiniteNumbers(t *testing.T) {
 func TestFinalizeWiFiScanOutcomeReportsPartialAndInterfaceCap(t *testing.T) {
 	outcome := wifiScanOutcome{
 		InterfacesDiscovered: 6,
-		InterfacesScanned: 3,
-		InterfacesFailed: []wifiInterfaceFailure{{Interface: "wlan1", Reason: "interface_scan_failed"}},
-		InterfacesOmitted: 2,
-		Observations: []wifiObservation{{ObservedBSSID: "AA:BB:CC:DD:EE:FF"}},
+		InterfacesScanned:    3,
+		InterfacesFailed:     []wifiInterfaceFailure{{Interface: "wlan1", Reason: "interface_scan_failed"}},
+		InterfacesOmitted:    2,
+		Observations:         []wifiObservation{{ObservedBSSID: "AA:BB:CC:DD:EE:FF"}},
 	}
 	finalizeWiFiScanOutcome(&outcome)
 	if outcome.Status != "partial" || outcome.Count != 1 {
