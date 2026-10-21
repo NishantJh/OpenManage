@@ -70,3 +70,11 @@
 .wifi-note{font-size:10px;line-height:1.6;color:#8f96a7;margin:12px 0 0}
 .wifi-inline-error{font-size:10px;color:#efb38b;padding:8px 10px;border:1px solid #5a3c30;border-radius:6px;margin:0 0 12px}
 @media(max-width:760px){.wifi-layout-head{flex-direction:column}.wifi-layout-bottom{grid-template-columns:1fr}.wifi-layout-actions{width:100%}.wifi-layout-actions button{flex:1}}
+
+.wifi-room-edit{margin-top:14px;border-top:1px solid #292e3a;padding-top:11px}
+.wifi-room-edit h3{font-size:10px;color:#bfc3cf;margin:0 0 7px}
+.wifi-edit-row{display:flex;align-items:center;gap:7px;margin:5px 0}
+.wifi-edit-row input{min-width:0;flex:1;background:#0d1017;border:1px solid #303543;border-radius:5px;color:#dfe2eb;padding:6px 8px;font-size:10px}
+.wifi-edit-row span{flex:1;font-size:10px;color:#858b9b}
+.wifi-edit-row button{display:grid;place-items:center;background:transparent;border:1px solid #343b49;border-radius:5px;color:#aeb3c1;padding:5px}
+.wifi-edit-row button:disabled{opacity:.45}
