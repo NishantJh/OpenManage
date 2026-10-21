@@ -302,7 +302,9 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	deadline := time.Now().Add(wifiScanTimeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) { deadline = d }
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
 	_ = conn.SetDeadline(deadline)
 	sshConn, channels, requests, err := ssh.NewClientConn(conn, net.JoinHostPort(address, "22"), config)
 	if err != nil {
@@ -323,17 +325,27 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "no wireless interfaces were found by iw dev")
 		return
 	}
-	if len(interfaces) > wifiScanLimit { interfaces = interfaces[:wifiScanLimit] }
+	if len(interfaces) > wifiScanLimit {
+		interfaces = interfaces[:wifiScanLimit]
+	}
 	observations := make([]wifiObservation, 0, 32)
 	for _, match := range interfaces {
-		if ctx.Err() != nil { break }
+		if ctx.Err() != nil {
+			break
+		}
 		iface := match[1]
-		if !regexp.MustCompile(`^[[:alnum:]_.:-]{1,32}$`).MatchString(iface) { continue }
+		if !wifiIfaceName.MatchString(iface) {
+			continue
+		}
 		info, _ := runWiFiCommand(client, "iwinfo "+iface+" info", 4096)
 		sourceBSSID := ""
-		if b := wifiBSSIDLine.FindStringSubmatch(info); len(b) == 2 { sourceBSSID = strings.ToUpper(b[1]) }
+		if b := wifiBSSIDLine.FindStringSubmatch(info); len(b) == 2 {
+			sourceBSSID = strings.ToUpper(b[1])
+		}
 		scan, scanErr := runWiFiCommand(client, "iwinfo "+iface+" scan", wifiOutputLimit)
-		if scanErr != nil { continue }
+		if scanErr != nil {
+			continue
+		}
 		observations = append(observations, parseWiFiScan(deviceID, name, iface, sourceBSSID, scan)...)
 	}
 	if len(observations) == 0 {
@@ -360,7 +372,9 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = insertAuditEvent(ctx, tx, user.ID, "wifi.radio.scan", "device", deviceID, map[string]any{"interfaces_scanned": len(interfaces), "observations": len(observations)})
 	}
-	if err == nil { err = tx.Commit(ctx) }
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "scan completed but observations and audit event could not be saved")
 		return
@@ -370,12 +384,16 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 
 func runWiFiCommand(client *ssh.Client, command string, limit int) (string, error) {
 	session, err := client.NewSession()
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	defer session.Close()
 	stdout := &boundedBuffer{limit: limit}
 	stderr := &boundedBuffer{limit: 1024}
 	session.Stdout, session.Stderr = stdout, stderr
-	if err := session.Run(command); err != nil { return strings.TrimSpace(stdout.String()), err }
+	if err := session.Run(command); err != nil {
+		return strings.TrimSpace(stdout.String()), err
+	}
 	return strings.TrimSpace(stdout.String()), nil
 }
 
@@ -385,16 +403,26 @@ func parseWiFiScan(deviceID, name, iface, sourceBSSID, output string) []wifiObse
 	now := time.Now().UTC()
 	for i, m := range matches {
 		end := len(output)
-		if i+1 < len(matches) { end = matches[i+1][0] }
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
 		block := output[m[0]:end]
 		bssid := strings.ToUpper(output[m[2]:m[3]])
 		signal := wifiSignal.FindStringSubmatch(block)
-		if len(signal) != 2 { continue }
+		if len(signal) != 2 {
+			continue
+		}
 		dbm, err := strconv.Atoi(signal[1])
-		if err != nil || dbm > 0 || dbm < -120 { continue }
+		if err != nil || dbm > 0 || dbm < -120 {
+			continue
+		}
 		o := wifiObservation{SourceDeviceID: deviceID, SourceName: name, SourceRadio: iface, SourceBSSID: sourceBSSID, ObservedBSSID: bssid, SignalDBM: dbm, ObservedAt: now}
-		if s := wifiSSID.FindStringSubmatch(block); len(s) == 2 { o.SSID = strings.TrimSpace(s[1]) }
-		if c := wifiChannel.FindStringSubmatch(block); len(c) == 2 { o.Channel, _ = strconv.Atoi(c[1]) }
+		if s := wifiSSID.FindStringSubmatch(block); len(s) == 2 {
+			o.SSID = strings.TrimSpace(s[1])
+		}
+		if c := wifiChannel.FindStringSubmatch(block); len(c) == 2 {
+			o.Channel, _ = strconv.Atoi(c[1])
+		}
 		out = append(out, o)
 	}
 	return out
@@ -404,9 +432,13 @@ func (a *app) recordWiFiScanFailure(r *http.Request, deviceID, reason string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	user, ok := r.Context().Value(userContextKey).(authUser)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	tx, err := a.db.Begin(ctx)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	defer tx.Rollback(ctx)
 	if err = insertAuditEvent(ctx, tx, user.ID, "wifi.radio.scan.failed", "device", deviceID, map[string]string{"reason": reason}); err == nil {
 		_ = tx.Commit(ctx)
