@@ -120,6 +120,6 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
           git -c http.extraheader="AUTHORIZATION: basic $auth" push origin "$branch"
           {
-            echo "Generated dependency metadata and pushed `$branch`."
-            echo "Review the branch and open a PR against `main`; CI should then switch to lockfile verification."
+            echo "Generated dependency metadata and pushed branch: $branch."
+            echo "Review the branch and open a PR against main; CI should then switch to lockfile verification."
           } >> "$GITHUB_STEP_SUMMARY"
