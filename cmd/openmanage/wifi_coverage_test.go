@@ -184,6 +184,28 @@ func TestValidateWiFiLayoutRejectsNonFiniteNumbers(t *testing.T) {
 	}
 }
 
+func TestCapWiFiInterfacesReportsOmittedInterfaces(t *testing.T) {
+	matches := [][]string{
+		{"Interface wlan0", "wlan0"},
+		{"Interface wlan1", "wlan1"},
+		{"Interface wlan2", "wlan2"},
+		{"Interface wlan3", "wlan3"},
+		{"Interface wlan4", "wlan4"},
+		{"Interface wlan5", "wlan5"},
+	}
+	outcome := wifiScanOutcome{}
+	selected := capWiFiInterfaces(matches, &outcome)
+	if len(selected) != wifiScanLimit {
+		t.Fatalf("expected %d interfaces selected, got %d", wifiScanLimit, len(selected))
+	}
+	if outcome.InterfacesDiscovered != 6 || outcome.InterfacesOmitted != 2 {
+		t.Fatalf("unexpected cap accounting: %#v", outcome)
+	}
+	if selected[0][1] != "wlan0" || selected[len(selected)-1][1] != "wlan3" {
+		t.Fatalf("unexpected selected interface range: %#v", selected)
+	}
+}
+
 func TestFinalizeWiFiScanOutcomeReportsPartialAndInterfaceCap(t *testing.T) {
 	outcome := wifiScanOutcome{
 		InterfacesDiscovered: 6,
