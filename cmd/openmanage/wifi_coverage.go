@@ -65,14 +65,14 @@ type wifiInterfaceFailure struct {
 }
 
 type wifiScanOutcome struct {
-	Status               string                `json:"status"`
-	InterfacesDiscovered int                   `json:"interfaces_discovered"`
-	InterfacesScanned    int                   `json:"interfaces_scanned"`
+	Status               string                 `json:"status"`
+	InterfacesDiscovered int                    `json:"interfaces_discovered"`
+	InterfacesScanned    int                    `json:"interfaces_scanned"`
 	InterfacesFailed     []wifiInterfaceFailure `json:"interfaces_failed"`
-	InterfacesOmitted    int                   `json:"interfaces_omitted"`
-	Observations         []wifiObservation     `json:"observations"`
-	Count                int                   `json:"count"`
-	CheckedAt            time.Time             `json:"checked_at"`
+	InterfacesOmitted    int                    `json:"interfaces_omitted"`
+	Observations         []wifiObservation      `json:"observations"`
+	Count                int                    `json:"count"`
+	CheckedAt            time.Time              `json:"checked_at"`
 }
 
 type wifiObservation struct {
@@ -549,12 +549,12 @@ func finalizeWiFiScanOutcome(outcome *wifiScanOutcome) {
 
 func wifiScanAuditDetails(outcome wifiScanOutcome, reason string) map[string]any {
 	details := map[string]any{
-		"status": outcome.Status,
+		"status":                outcome.Status,
 		"interfaces_discovered": outcome.InterfacesDiscovered,
-		"interfaces_scanned": outcome.InterfacesScanned,
-		"interfaces_failed": outcome.InterfacesFailed,
-		"interfaces_omitted": outcome.InterfacesOmitted,
-		"observations": outcome.Count,
+		"interfaces_scanned":    outcome.InterfacesScanned,
+		"interfaces_failed":     outcome.InterfacesFailed,
+		"interfaces_omitted":    outcome.InterfacesOmitted,
+		"observations":          outcome.Count,
 	}
 	if reason != "" {
 		details["reason"] = reason
