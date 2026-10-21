@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "workstreams": [
+    {
+      "id": "wifi-layout",
+      "title": "Wi-Fi Layout validation and hardening",
+      "pull_request": 26,
+      "handover_ref": "agent-a/pr26-validation-handover",
+      "handover_path": "handoffs/pr-26-wifi-layout.md",
+      "owner": "Agent A",
+      "status_source": "handover"
+    },
+    {
+      "id": "radius-lab",
+      "title": "Optional FreeRADIUS lab test hardening",
+      "pull_request": 21,
+      "handover_ref": "feat/mvp-radius-lab",
+      "handover_path": "handoffs/pr-21-radius.md",
+      "owner": "Agent B",
+      "status_source": "handover"
+    }
+  ]
+}
