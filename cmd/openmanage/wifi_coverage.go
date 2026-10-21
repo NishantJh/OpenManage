@@ -57,16 +57,16 @@ type wifiLayout struct {
 }
 
 type wifiObservation struct {
-	ID            int64     `json:"id,omitempty"`
-	SourceDeviceID string   `json:"source_device_id"`
-	SourceName    string    `json:"source_name,omitempty"`
-	SourceRadio   string    `json:"source_radio"`
-	SourceBSSID   string    `json:"source_bssid,omitempty"`
-	ObservedBSSID string    `json:"observed_bssid"`
-	SSID          string    `json:"ssid,omitempty"`
-	Channel       int       `json:"channel,omitempty"`
-	SignalDBM     int       `json:"signal_dbm"`
-	ObservedAt    time.Time `json:"observed_at"`
+	ID             int64     `json:"id,omitempty"`
+	SourceDeviceID  string   `json:"source_device_id"`
+	SourceName     string    `json:"source_name,omitempty"`
+	SourceRadio    string    `json:"source_radio"`
+	SourceBSSID    string    `json:"source_bssid,omitempty"`
+	ObservedBSSID  string    `json:"observed_bssid"`
+	SSID           string    `json:"ssid,omitempty"`
+	Channel        int       `json:"channel,omitempty"`
+	SignalDBM      int       `json:"signal_dbm"`
+	ObservedAt     time.Time `json:"observed_at"`
 }
 
 var (
@@ -363,7 +363,9 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 		err = tx.QueryRow(ctx, `INSERT INTO wifi_radio_observations(source_device_id,source_radio,source_bssid,observed_bssid,ssid,channel,signal_dbm)
 			VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,observed_at`,
 			o.SourceDeviceID, o.SourceRadio, o.SourceBSSID, o.ObservedBSSID, o.SSID, o.Channel, o.SignalDBM).Scan(&o.ID, &o.ObservedAt)
-		if err != nil { break }
+		if err != nil {
+			break
+		}
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, "DELETE FROM wifi_radio_observations WHERE observed_at < NOW() - INTERVAL '30 days'")
