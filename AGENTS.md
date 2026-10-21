@@ -46,3 +46,17 @@ CI prepares embedded frontend assets before running Go tests and building the Do
 - Use plan.md as the roadmap and update it when milestones change.
 - Keep architecture and operational documentation concise and close to the code it describes.
 - Do not duplicate large source excerpts in documentation; explain interfaces, invariants, commands, and failure modes.
+
+## Multi-chat coordination
+
+- The project coordinator is the integration point for cross-chat planning, task allocation, dependency ordering, risk tracking, and consolidated status. A chat's claim is a report, not repository evidence; verify consequential state against GitHub, diffs, and CI.
+- Before starting work, read `plan.md`, inspect open PRs and active branches relevant to the task, and check for overlapping file ownership. Do not duplicate an active task without an explicit handoff.
+- Every task must have one accountable owner, a narrow scope, acceptance criteria, dependencies, and a concrete deliverable. Report blockers early.
+- Each working chat must provide a handover with: task/status; branch and PR; files changed; implementation summary; tests and exact results; dependencies/conflicts; decisions needed; next action; and whether `plan.md` / `AGENTS.md` changed.
+- Treat repository state and merged commits as authoritative. Distinguish implemented, reviewed, merged, CI-verified, and runtime-validated; these are separate states.
+- The coordinator maintains the consolidated task ledger in `plan.md` and this operating policy in `AGENTS.md`. Update both when priorities, ownership, dependencies, or coordination rules materially change. Do not mark work complete based only on a chat's assertion.
+- Never merge PRs, close/discard PRs, rewrite shared branches, modify production configuration, or make destructive changes without the user's explicit approval. Preserve existing ownership boundaries and never overwrite another chat's in-progress work.
+- Do not claim direct control of other ChatGPT chats. Assign work through explicit handover messages and reconcile their returned status reports.
+- When tasks overlap, pause the conflicting edit, compare branch diffs and intended outcomes, then recommend one canonical implementation. Close or supersede duplicate PRs only after confirming their unique changes are preserved and obtaining required approval.
+- Keep test evidence reproducible. Record the exact command, target commit/ref, result, and relevant CI run URL. A passing check on an earlier commit is not evidence for the current head.
+
