@@ -16,6 +16,12 @@ Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful O
 - Enrollment does not install or rotate router-side authorized keys, run remote commands, or push configuration.
 - CI on trusted branch pushes runs frontend build, Go tests, and Docker image build on the WSL2 self-hosted runner. There is intentionally no pull_request trigger because the repository is public and untrusted fork code must not run on that runner.
 
+## Current work (21 October 2026)
+
+- PR #26, `feat: add Wi-Fi layout and inter-AP RSSI collection`, is open as a draft on `feat/wifi-layout-rssi-foundation`. The first implementation slice adds a persisted floor-plan layout, room/wall/AP placement editor, manual read-only RSSI/BSSID/channel scans over enrolled AP SSH, 30-day observation retention, and parser/layout validation tests.
+- The Go formatting check initially failed on `cmd/openmanage/wifi_coverage.go`; the formatting-only fix is committed as `b1dfae766741207e90ea2266b457ed72825a36ff`. The CI run for that exact commit has confirmed Go formatting passes. Frontend build, Go tests, Compose validation, Docker build, end-to-end smoke test, dependency/security checks, and CodeQL were still running or pending at the last inspection. Keep PR #26 draft until all required checks are green and review is complete.
+- This slice records measured inter-AP RSSI at the receiving AP only. It does not yet provide a calibrated building-wide coverage heatmap. Do not represent predicted coverage as measured data.
+
 ## Roadmap
 
 ### 0. Security and engineering hardening — in progress
@@ -93,7 +99,7 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 
 ### 6. Monitoring and later integrations
 
-- [ ] Wi-Fi layout and coverage foundation: persist a dimensioned home layout, rooms, walls, and device-linked AP positions; collect user-triggered, read-only RSSI/BSSID/channel observations from enrolled OpenWrt radios; retain observation history for 30 days. First slice does not yet generate a calibrated building-wide heatmap.
+- [x] Implement the Wi-Fi layout and measured-observation foundation in draft PR #26: persist a dimensioned home layout, rooms, walls, and device-linked AP positions; collect user-triggered, read-only RSSI/BSSID/channel observations from enrolled OpenWrt radios; retain observation history for 30 days. Implementation is present; CI/review/merge acceptance is still pending.
 - [ ] Build the coverage estimator on top of the saved layout and reciprocal inter-AP measurements. Treat AP-to-AP RSSI as calibration points, not as direct measurements of every location; incorporate wall attenuation and clearly distinguish measured observations from predicted coverage.
 
 - [x] Add opt-in server-side monitoring in the existing Go process, persisted settings and per-device check history in PostgreSQL, bounded three-worker batches, PostgreSQL advisory-lock coordination, and 30-day history retention.
@@ -105,7 +111,7 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 
 1. Work from a feature branch and open a PR for every logical change; never commit directly to main.
 2. Keep PRs small and reversible. Database changes should be additive where possible, with documented compatibility and rollback/data-loss implications.
-3. Validate frontend build, go test ./..., Docker image build, and relevant security tests in CI. Report the actual run URL and result; do not infer success from a previous commit.
+3. Validate Go formatting, frontend build, embedded-asset preparation, Go tests, Compose configuration, Docker image build, end-to-end smoke test, and relevant dependency/security checks in CI. Report the actual run URL and result for the exact commit; do not infer success from a previous commit.
 4. The self-hosted runner is trusted infrastructure. Do not add pull_request execution for untrusted fork code; gate the CI job to refs/heads/main so workflow_dispatch cannot execute a non-main ref on that runner.
 5. After each major merge, audit the merged diff and current project for security, correctness, migrations/rollback, dependencies, Compose hardening, tests/CI, and roadmap consistency.
 6. Update this file when scope, sequencing, or milestone status materially changes.
