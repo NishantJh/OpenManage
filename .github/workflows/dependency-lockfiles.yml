@@ -47,7 +47,7 @@ jobs:
         working-directory: web
         run: |
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
 
       - name: Verify generated metadata and run Go tests
