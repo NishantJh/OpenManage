@@ -146,11 +146,13 @@ func (a *app) saveWiFiLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO wifi_layouts(name,layout,updated_by,updated_at)
+	var layoutID string
+	err = tx.QueryRow(ctx, `INSERT INTO wifi_layouts(name,layout,updated_by,updated_at)
 		VALUES('Home',$1,$2,NOW())
-		ON CONFLICT(name) DO UPDATE SET layout=EXCLUDED.layout,updated_by=EXCLUDED.updated_by,updated_at=NOW()`, raw, user.ID)
+		ON CONFLICT(name) DO UPDATE SET layout=EXCLUDED.layout,updated_by=EXCLUDED.updated_by,updated_at=NOW()
+		RETURNING id::text`, string(raw), user.ID).Scan(&layoutID)
 	if err == nil {
-		err = insertAuditEvent(ctx, tx, user.ID, "wifi.layout.updated", "wifi_layout", "Home", map[string]any{
+		err = insertAuditEvent(ctx, tx, user.ID, "wifi.layout.updated", "wifi_layout", layoutID, map[string]any{
 			"rooms": len(layout.Rooms), "walls": len(layout.Walls), "access_points": len(layout.APs),
 		})
 	}
