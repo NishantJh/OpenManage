@@ -32,3 +32,41 @@
 .health-result pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;margin:11px 0 0;background:#0b0e14;border-radius:6px;padding:10px;color:#bfc5d4;font:10px/1.6 ui-monospace,SFMono-Regular,monospace}
 .health-error{font-size:10px;color:#efb38b;margin:10px 0 0}
 @media(max-width:560px){.health-modal{padding:18px;max-height:calc(100vh - 20px)}.health-summary{align-items:flex-start;flex-wrap:wrap}.health-summary small{width:100%;margin-left:16px}.health-result-head{align-items:flex-start;flex-direction:column}}
+
+/* Wi-Fi layout and measured radio observations */
+.wifi-layout{margin:0 0 26px;border:1px solid #292e3a;background:#12151d;border-radius:12px;padding:18px}
+.wifi-layout-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
+.wifi-layout-head h2{font-size:16px;margin:0 0 6px;color:#e6e8f0}
+.wifi-layout-head p{font-size:11px;color:#858b9b;margin:0;line-height:1.6}
+.wifi-layout-actions{display:flex;gap:8px;flex-wrap:wrap}
+.wifi-layout-controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:14px}
+.wifi-layout-controls label{display:grid;gap:5px;color:#aeb3c1;font-size:10px}
+.wifi-layout-controls input,.wifi-layout-controls select{background:#0d1017;border:1px solid #303543;color:#eceef5;border-radius:6px;padding:8px;width:100px;font-size:11px}
+.wifi-canvas{position:relative;border:1px solid #343b49;background:#0d1119;border-radius:9px;overflow:hidden}
+.wifi-canvas svg{display:block;width:100%;height:auto;touch-action:none}
+.wifi-grid{stroke:#242b38;stroke-width:.025}
+.wifi-room{fill:#242b39;stroke:#586175;stroke-width:.035}
+.wifi-room-label{fill:#d6dbea;font-size:.24px;pointer-events:none}
+.wifi-wall{stroke:#d5a96a;stroke-width:.11;stroke-linecap:round}
+.wifi-ap{cursor:grab;touch-action:none}
+.wifi-ap:active{cursor:grabbing}
+.wifi-ap circle{fill:#a99aff;stroke:#fff;stroke-width:.045}
+.wifi-ap text{fill:#fff;font-size:.22px;font-weight:700;paint-order:stroke;stroke:#0d1119;stroke-width:.06px}
+.wifi-layout-bottom{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(0,1.5fr);gap:14px;margin-top:14px}
+.wifi-panel{border:1px solid #292e3a;background:#0f1219;border-radius:8px;padding:13px;min-width:0}
+.wifi-panel h3{font-size:11px;color:#dfe2eb;margin:0 0 11px}
+.wifi-ap-list{display:grid;gap:8px}
+.wifi-ap-row{display:flex;align-items:center;gap:8px;border:1px solid #2c3240;border-radius:7px;padding:8px}
+.wifi-ap-row input[type=checkbox]{accent-color:#9d8aff}
+.wifi-ap-row>div{min-width:0;flex:1}
+.wifi-ap-row b{display:block;color:#dfe2eb;font-size:10px}
+.wifi-ap-row small{display:block;color:#858b9b;font-size:9px;overflow-wrap:anywhere;margin-top:3px}
+.wifi-ap-row button{border:0;background:transparent;color:#a99aff;font-size:10px}
+.wifi-observations{overflow:auto;max-height:310px}
+.wifi-observations table{min-width:580px}
+.wifi-observations td,.wifi-observations th{padding:8px 9px}
+.wifi-signal{font-weight:700;white-space:nowrap}
+.wifi-signal.strong{color:#6bd7a4}.wifi-signal.medium{color:#d6c177}.wifi-signal.weak{color:#ef9b91}
+.wifi-note{font-size:10px;line-height:1.6;color:#8f96a7;margin:12px 0 0}
+.wifi-inline-error{font-size:10px;color:#efb38b;padding:8px 10px;border:1px solid #5a3c30;border-radius:6px;margin:0 0 12px}
+@media(max-width:760px){.wifi-layout-head{flex-direction:column}.wifi-layout-bottom{grid-template-columns:1fr}.wifi-layout-actions{width:100%}.wifi-layout-actions button{flex:1}}
