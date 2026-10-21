@@ -495,6 +495,7 @@ type wifiOutputBuffer struct {
 }
 
 func (b *wifiOutputBuffer) Write(p []byte) (int, error) {
+	written := len(p)
 	remaining := b.limit - b.builder.Len()
 	if remaining < 0 {
 		remaining = 0
@@ -506,7 +507,7 @@ func (b *wifiOutputBuffer) Write(p []byte) (int, error) {
 	if len(p) > 0 {
 		_, _ = b.builder.Write(p)
 	}
-	return len(p), nil
+	return written, nil
 }
 
 func (b *wifiOutputBuffer) String() string {
@@ -629,22 +630,6 @@ func (a *app) recordWiFiScanOutcome(r *http.Request, deviceID, action string, de
 	}
 	defer tx.Rollback(ctx)
 	if err = insertAuditEvent(ctx, tx, user.ID, action, "device", deviceID, details); err == nil {
-		_ = tx.Commit(ctx)
-	}
-}
-func (a *app) recordWiFiScanFailure(r *http.Request, deviceID, reason string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	user, ok := r.Context().Value(userContextKey).(authUser)
-	if !ok {
-		return
-	}
-	tx, err := a.db.Begin(ctx)
-	if err != nil {
-		return
-	}
-	defer tx.Rollback(ctx)
-	if err = insertAuditEvent(ctx, tx, user.ID, "wifi.radio.scan.failed", "device", deviceID, map[string]string{"reason": reason}); err == nil {
 		_ = tx.Commit(ctx)
 	}
 }
