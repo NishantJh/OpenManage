@@ -618,7 +618,7 @@ func parseWiFiScan(deviceID, name, iface, sourceBSSID, output string) []wifiObse
 }
 
 func (a *app) recordWiFiScanFailure(r *http.Request, deviceID, reason string) {
-	user, ok := r.Context().Value(userContextKey).(authUser)
+	_, ok := r.Context().Value(userContextKey).(authUser)
 	if !ok {
 		return
 	}
