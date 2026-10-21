@@ -71,6 +71,13 @@ func TestWiFiCommandResultRejectsTruncatedOutput(t *testing.T) {
 			if !strings.Contains(out, "partial scan output") {
 				t.Fatalf("expected bounded output to be returned for diagnostics, got %q", out)
 			}
+			observations, parseErr := parseWiFiScanOutput("device-id", "AP", "wlan0", "", out, err)
+			if parseErr == nil {
+				t.Fatal("expected failed/truncated command output to be rejected before parsing")
+			}
+			if len(observations) != 0 {
+				t.Fatalf("failed/truncated output produced observations: %#v", observations)
+			}
 		})
 	}
 }
