@@ -43,6 +43,8 @@ CI prepares embedded frontend assets before running Go tests and building the Do
 
 ## Documentation discipline
 
-- Use plan.md as the roadmap and update it when milestones change.
-- Keep architecture and operational documentation concise and close to the code it describes.
-- Do not duplicate large source excerpts in documentation; explain interfaces, invariants, commands, and failure modes.
+- Use plan.md as the roadmap and update it in the same feature branch/PR whenever scope, implementation status, dependencies, sequencing, or acceptance criteria change.
+- Keep AGENTS.md aligned with the actual repository workflow, CI triggers, security boundaries, and required validation commands; correct it when those change.
+- For every feature touching APIs, persistence, operational behavior, security, or UI workflows, review whether plan.md and docs/architecture.md need updates before opening or updating the PR. Keep these documents consistent with the implementation and one another.
+- Distinguish implemented code from validated, merged, and operationally verified milestones. Do not mark acceptance criteria complete until the relevant checks or hands-on validation have actually passed; record pending validation explicitly.
+- Keep architecture and operational documentation concise and close to the code it describes. Do not duplicate large source excerpts; explain interfaces, invariants, commands, and failure modes.
