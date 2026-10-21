@@ -1,6 +1,6 @@
 # PR #21 — FreeRADIUS lab handover
 
-Updated: 2026-10-21T10:13:00Z
+Updated: 2026-10-21T10:42:00Z
 
 Owner / workstream: Agent B — optional FreeRADIUS lab validation only
 
@@ -11,7 +11,7 @@ Status: in-progress
 PR URL / branch: https://github.com/NishantJh/OpenManage/pull/21 — `feat/mvp-radius-lab`
 
 Head SHA / base SHA:
-- Current head at last check: `d51562a5a3ccb942001a4aa6de93a7b3cab8a7b0`
+- Current PR head verified: `87ebc02725019a2cd308ae8441f567a0f68af615`
 - Test-hardening code commit: `f9b0cf02de53bb6e5d1e8141a901a8da0298a350`
 - Base: `efa48f16fb5f4673b7c330010ade69f43425d5`
 
@@ -20,7 +20,7 @@ Head SHA / base SHA:
 - Previous PR Validation run [39464867506](https://github.com/NishantJh/OpenManage/actions/runs/39464867506) succeeded on an earlier revision. Its log showed the prior positive-only RADIUS smoke test pass. It does not validate the new negative case, readiness loop, or cleanup assertions.
 - Previous Security Checks run [39464867415](https://github.com/NishantJh/OpenManage/actions/runs/39464867415) succeeded on an earlier revision. It does not validate the latest head.
 - Previous CodeQL run [39464867665](https://github.com/NishantJh/OpenManage/actions/runs/39464867665) succeeded on an earlier revision. It does not validate the latest head.
-- Latest-head CI status checked for `d51562a5a3ccb942001a4aa6de93a7b3cab8a7b0`: no PR workflow runs and no commit status checks were returned at the time of inspection. Fresh validation is pending; do not treat PR #21 as merge-ready until the latest head has successful CI.
+- Latest-head CI status checked for `87ebc02725019a2cd308ae8441f567a0f68af615`: GitHub returned no PR-triggered workflow runs and no commit status checks at the time of inspection. Fresh validation is pending; do not treat PR #21 as merge-ready until the latest head has successful CI.
 
 ## Changes
 
@@ -41,7 +41,7 @@ Head SHA / base SHA:
 
 ## Blockers / dependencies
 
-- Fresh GitHub Actions PR Validation on the latest PR head is required. No run URL/outcome for the new code is available yet.
+- Fresh GitHub Actions PR Validation on the latest PR head is required. No run URL/outcome for the new code is available yet. PR metadata confirms the PR remains open, draft, and unmerged.
 - No local Docker execution was performed by this agent.
 - Do not edit shared workflow or plan files without coordinator coordination.
 
@@ -51,10 +51,10 @@ Head SHA / base SHA:
 
 ## Next action
 
-- Owner: Agent B / PR owner. Confirm a fresh PR Validation run for the exact current head, inspect logs for both Access-Accept and Access-Reject assertions and cleanup completion, then update this handover with the exact run URL and result.
+- Owner: Agent B / PR owner. Re-check for a fresh PR Validation run on `87ebc02725019a2cd308ae8441f567a0f68af615`; when available, inspect logs for both Access-Accept and Access-Reject assertions and cleanup completion, then update this handover with the exact run URL and result.
 
 ## Limitations / unverified assumptions
 
-- CI for the new script has not been observed yet. The earlier successful run is not evidence for this version.
+- CI for the new script has not been observed yet on current PR head `87ebc02725019a2cd308ae8441f567a0f68af615`. The earlier successful run is not evidence for this version.
 - The cleanup checks are implemented but have not yet been exercised by a fresh CI run.
 - No production AP was configured and no RADIUS service was exposed to the LAN or Internet during this review.
