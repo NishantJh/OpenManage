@@ -140,6 +140,10 @@ func main() {
 	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
 	mux.HandleFunc("PUT /api/monitoring/settings", a.updateMonitoringSettings)
 	mux.HandleFunc("GET /api/monitoring/history", a.listMonitoringHistory)
+	mux.HandleFunc("GET /api/wifi/layout", a.getWiFiLayout)
+	mux.HandleFunc("PUT /api/wifi/layout", a.saveWiFiLayout)
+	mux.HandleFunc("GET /api/wifi/observations", a.listWiFiObservations)
+	mux.HandleFunc("POST /api/devices/{id}/wifi-scan", a.scanDeviceWiFi)
 	monitorDone := make(chan struct{})
 	go func() {
 		defer close(monitorDone)
