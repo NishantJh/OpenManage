@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"regexp"
@@ -15,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/ssh"
 )
+
+var errWiFiOutputTruncated = errors.New("wireless command output exceeded the configured limit")
 
 const (
 	wifiScanTimeout = 30 * time.Second
@@ -54,6 +57,22 @@ type wifiLayout struct {
 	Walls     []wifiWall        `json:"walls"`
 	APs       []wifiAPPlacement `json:"aps"`
 	UpdatedAt *time.Time        `json:"updated_at,omitempty"`
+}
+
+type wifiInterfaceFailure struct {
+	Interface string `json:"interface"`
+	Reason    string `json:"reason"`
+}
+
+type wifiScanOutcome struct {
+	Status               string                `json:"status"`
+	InterfacesDiscovered int                   `json:"interfaces_discovered"`
+	InterfacesScanned    int                   `json:"interfaces_scanned"`
+	InterfacesFailed     []wifiInterfaceFailure `json:"interfaces_failed"`
+	InterfacesOmitted    int                   `json:"interfaces_omitted"`
+	Observations         []wifiObservation     `json:"observations"`
+	Count                int                   `json:"count"`
+	CheckedAt            time.Time             `json:"checked_at"`
 }
 
 type wifiObservation struct {
@@ -170,6 +189,9 @@ func (a *app) saveWiFiLayout(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateWiFiLayout(l wifiLayout) error {
+	if !finiteWiFiNumber(l.WidthM) || !finiteWiFiNumber(l.HeightM) {
+		return errors.New("layout dimensions must be finite numbers")
+	}
 	if l.WidthM < 2 || l.WidthM > 100 || l.HeightM < 2 || l.HeightM > 100 {
 		return errors.New("layout dimensions must be between 2 and 100 metres")
 	}
@@ -182,6 +204,9 @@ func validateWiFiLayout(l wifiLayout) error {
 			return errors.New("each room needs a unique ID and a name")
 		}
 		seen["room:"+room.ID] = true
+		if !finiteWiFiNumber(room.X) || !finiteWiFiNumber(room.Y) || !finiteWiFiNumber(room.Width) || !finiteWiFiNumber(room.Height) {
+			return errors.New("room dimensions and coordinates must be finite numbers")
+		}
 		if room.Width <= 0 || room.Height <= 0 || room.X < 0 || room.Y < 0 || room.X+room.Width > l.WidthM || room.Y+room.Height > l.HeightM {
 			return errors.New("room boundaries must fit inside the layout")
 		}
@@ -196,6 +221,9 @@ func validateWiFiLayout(l wifiLayout) error {
 		default:
 			return errors.New("wall material must be brick, drywall, glass, or open")
 		}
+		if !finiteWiFiNumber(wall.X1) || !finiteWiFiNumber(wall.Y1) || !finiteWiFiNumber(wall.X2) || !finiteWiFiNumber(wall.Y2) {
+			return errors.New("wall coordinates must be finite numbers")
+		}
 		if wall.X1 < 0 || wall.X1 > l.WidthM || wall.X2 < 0 || wall.X2 > l.WidthM || wall.Y1 < 0 || wall.Y1 > l.HeightM || wall.Y2 < 0 || wall.Y2 > l.HeightM {
 			return errors.New("wall coordinates must fit inside the layout")
 		}
@@ -206,11 +234,18 @@ func validateWiFiLayout(l wifiLayout) error {
 			return errors.New("each access point must reference a unique inventory device")
 		}
 		seenDevices[ap.DeviceID] = true
+		if !finiteWiFiNumber(ap.X) || !finiteWiFiNumber(ap.Y) {
+			return errors.New("access point coordinates must be finite numbers")
+		}
 		if ap.X < 0 || ap.X > l.WidthM || ap.Y < 0 || ap.Y > l.HeightM {
 			return errors.New("access point coordinates must fit inside the layout")
 		}
 	}
 	return nil
+}
+
+func finiteWiFiNumber(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func (a *app) listWiFiObservations(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +344,8 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
 	deadline := time.Now().Add(wifiScanTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
@@ -323,73 +360,168 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 	client := ssh.NewClient(sshConn, channels, requests)
 	defer client.Close()
 
+	outcome := wifiScanOutcome{Status: "failed", InterfacesFailed: []wifiInterfaceFailure{}, Observations: []wifiObservation{}, CheckedAt: time.Now().UTC()}
 	list, err := runWiFiCommand(client, "iw dev", 4096)
+	if ctx.Err() != nil {
+		a.finishWiFiScanFailure(w, r, deviceID, http.StatusGatewayTimeout, "Wi-Fi scan timed out or was canceled", "context_done", outcome)
+		return
+	}
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "could not list wireless interfaces with iw dev; check that the wireless tools are installed")
+		reason := "interface_discovery_failed"
+		if errors.Is(err, errWiFiOutputTruncated) {
+			reason = "interface_discovery_output_truncated"
+		}
+		a.finishWiFiScanFailure(w, r, deviceID, http.StatusUnprocessableEntity, "could not safely list wireless interfaces", reason, outcome)
 		return
 	}
-	interfaces := wifiIfaceLine.FindAllStringSubmatch(list, -1)
-	if len(interfaces) == 0 {
-		writeError(w, http.StatusUnprocessableEntity, "no wireless interfaces were found by iw dev")
+	matches := wifiIfaceLine.FindAllStringSubmatch(list, -1)
+	outcome.InterfacesDiscovered = len(matches)
+	if len(matches) == 0 {
+		a.finishWiFiScanFailure(w, r, deviceID, http.StatusUnprocessableEntity, "no wireless interfaces were found by iw dev", "no_interfaces", outcome)
 		return
 	}
-	if len(interfaces) > wifiScanLimit {
-		interfaces = interfaces[:wifiScanLimit]
+	if len(matches) > wifiScanLimit {
+		outcome.InterfacesOmitted = len(matches) - wifiScanLimit
+		matches = matches[:wifiScanLimit]
 	}
-	observations := make([]wifiObservation, 0, 32)
-	for _, match := range interfaces {
+	for _, match := range matches {
 		if ctx.Err() != nil {
-			break
+			a.finishWiFiScanFailure(w, r, deviceID, http.StatusGatewayTimeout, "Wi-Fi scan timed out or was canceled; no observations were saved", "context_done", outcome)
+			return
 		}
 		iface := match[1]
 		if !wifiIfaceName.MatchString(iface) {
+			outcome.InterfacesFailed = append(outcome.InterfacesFailed, wifiInterfaceFailure{Interface: iface, Reason: "invalid_interface_name"})
 			continue
 		}
-		info, _ := runWiFiCommand(client, "iwinfo "+iface+" info", 4096)
+		info, infoErr := runWiFiCommand(client, "iwinfo "+iface+" info", 4096)
+		if ctx.Err() != nil {
+			a.finishWiFiScanFailure(w, r, deviceID, http.StatusGatewayTimeout, "Wi-Fi scan timed out or was canceled; no observations were saved", "context_done", outcome)
+			return
+		}
+		if infoErr != nil {
+			reason := "interface_info_failed"
+			if errors.Is(infoErr, errWiFiOutputTruncated) {
+				reason = "interface_info_output_truncated"
+			}
+			outcome.InterfacesFailed = append(outcome.InterfacesFailed, wifiInterfaceFailure{Interface: iface, Reason: reason})
+			continue
+		}
 		sourceBSSID := ""
 		if b := wifiBSSIDLine.FindStringSubmatch(info); len(b) == 2 {
 			sourceBSSID = strings.ToUpper(b[1])
 		}
 		scan, scanErr := runWiFiCommand(client, "iwinfo "+iface+" scan", wifiOutputLimit)
+		if ctx.Err() != nil {
+			a.finishWiFiScanFailure(w, r, deviceID, http.StatusGatewayTimeout, "Wi-Fi scan timed out or was canceled; no observations were saved", "context_done", outcome)
+			return
+		}
 		if scanErr != nil {
+			reason := "interface_scan_failed"
+			if errors.Is(scanErr, errWiFiOutputTruncated) {
+				reason = "interface_scan_output_truncated"
+			}
+			outcome.InterfacesFailed = append(outcome.InterfacesFailed, wifiInterfaceFailure{Interface: iface, Reason: reason})
 			continue
 		}
-		observations = append(observations, parseWiFiScan(deviceID, name, iface, sourceBSSID, scan)...)
+		outcome.InterfacesScanned++
+		outcome.Observations = append(outcome.Observations, parseWiFiScan(deviceID, name, iface, sourceBSSID, scan)...)
 	}
-	if len(observations) == 0 {
-		writeError(w, http.StatusUnprocessableEntity, "the scan completed but no neighbour RSSI observations were parsed")
+	if ctx.Err() != nil {
+		a.finishWiFiScanFailure(w, r, deviceID, http.StatusGatewayTimeout, "Wi-Fi scan timed out or was canceled; no observations were saved", "context_done", outcome)
 		return
 	}
-	tx, err := a.db.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "scan completed but observations could not be saved")
+	finalizeWiFiScanOutcome(&outcome)
+	if len(outcome.Observations) == 0 {
+		outcome.Status = "failed"
+		a.finishWiFiScanFailure(w, r, deviceID, http.StatusUnprocessableEntity, "no neighbour RSSI observations were available from successful interface scans", "no_observations", outcome)
 		return
 	}
-	defer tx.Rollback(ctx)
-	for i := range observations {
-		o := &observations[i]
-		err = tx.QueryRow(ctx, `INSERT INTO wifi_radio_observations(source_device_id,source_radio,source_bssid,observed_bssid,ssid,channel,signal_dbm)
-			VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,observed_at`,
-			o.SourceDeviceID, o.SourceRadio, o.SourceBSSID, o.ObservedBSSID, o.SSID, o.Channel, o.SignalDBM).Scan(&o.ID, &o.ObservedAt)
-		if err != nil {
-			break
+	outcome.Count = len(outcome.Observations)
+	outcome.CheckedAt = time.Now().UTC()
+	err = persistWiFiScan(ctx, func() error {
+		tx, beginErr := a.db.Begin(ctx)
+		if beginErr != nil {
+			return beginErr
 		}
-	}
-	if err == nil {
-		_, err = tx.Exec(ctx, "DELETE FROM wifi_radio_observations WHERE observed_at < NOW() - INTERVAL '30 days'")
-	}
-	user := r.Context().Value(userContextKey).(authUser)
-	if err == nil {
-		err = insertAuditEvent(ctx, tx, user.ID, "wifi.radio.scan", "device", deviceID, map[string]any{"interfaces_scanned": len(interfaces), "observations": len(observations)})
-	}
-	if err == nil {
-		err = tx.Commit(ctx)
-	}
+		defer tx.Rollback(ctx)
+		for i := range outcome.Observations {
+			o := &outcome.Observations[i]
+			if insertErr := tx.QueryRow(ctx, `INSERT INTO wifi_radio_observations(source_device_id,source_radio,source_bssid,observed_bssid,ssid,channel,signal_dbm)
+				VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,observed_at`,
+				o.SourceDeviceID, o.SourceRadio, o.SourceBSSID, o.ObservedBSSID, o.SSID, o.Channel, o.SignalDBM).Scan(&o.ID, &o.ObservedAt); insertErr != nil {
+				return insertErr
+			}
+		}
+		if _, deleteErr := tx.Exec(ctx, "DELETE FROM wifi_radio_observations WHERE observed_at < NOW() - INTERVAL '30 days'"); deleteErr != nil {
+			return deleteErr
+		}
+		user := r.Context().Value(userContextKey).(authUser)
+		if auditErr := insertAuditEvent(ctx, tx, user.ID, "wifi.radio.scan", "device", deviceID, wifiScanAuditDetails(outcome, "")); auditErr != nil {
+			return auditErr
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return tx.Commit(ctx)
+	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "scan completed but observations and audit event could not be saved")
+		outcome.Status = "failed"
+		outcome.Observations = []wifiObservation{}
+		outcome.Count = 0
+		reason := "persistence_failed"
+		status := http.StatusInternalServerError
+		message := "scan observations and audit event could not be saved"
+		if ctx.Err() != nil {
+			reason = "context_done"
+			status = http.StatusGatewayTimeout
+			message = "Wi-Fi scan timed out or was canceled; no observations were saved"
+		}
+		a.finishWiFiScanFailure(w, r, deviceID, status, message, reason, outcome)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"device_id": deviceID, "device_name": name, "observations": observations, "count": len(observations), "checked_at": time.Now().UTC()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"device_id": deviceID, "device_name": name, "status": outcome.Status,
+		"interfaces_discovered": outcome.InterfacesDiscovered, "interfaces_scanned": outcome.InterfacesScanned,
+		"interfaces_failed": outcome.InterfacesFailed, "interfaces_omitted": outcome.InterfacesOmitted,
+		"observations": outcome.Observations, "count": outcome.Count, "checked_at": outcome.CheckedAt,
+	})
+}
+
+type wifiOutputBuffer struct {
+	builder   strings.Builder
+	limit     int
+	truncated bool
+}
+
+func (b *wifiOutputBuffer) Write(p []byte) (int, error) {
+	remaining := b.limit - b.builder.Len()
+	if remaining < 0 {
+		remaining = 0
+	}
+	if len(p) > remaining {
+		b.truncated = true
+		p = p[:remaining]
+	}
+	if len(p) > 0 {
+		_, _ = b.builder.Write(p)
+	}
+	return len(p), nil
+}
+
+func (b *wifiOutputBuffer) String() string {
+	return b.builder.String()
+}
+
+func wifiCommandResult(stdout string, stdoutTruncated, stderrTruncated bool, commandErr error) (string, error) {
+	stdout = strings.TrimSpace(stdout)
+	if stdoutTruncated || stderrTruncated {
+		return stdout, errWiFiOutputTruncated
+	}
+	if commandErr != nil {
+		return stdout, commandErr
+	}
+	return stdout, nil
 }
 
 func runWiFiCommand(client *ssh.Client, command string, limit int) (string, error) {
@@ -398,13 +530,51 @@ func runWiFiCommand(client *ssh.Client, command string, limit int) (string, erro
 		return "", err
 	}
 	defer session.Close()
-	stdout := &boundedBuffer{limit: limit}
-	stderr := &boundedBuffer{limit: 1024}
+	stdout := &wifiOutputBuffer{limit: limit}
+	stderr := &wifiOutputBuffer{limit: 1024}
 	session.Stdout, session.Stderr = stdout, stderr
-	if err := session.Run(command); err != nil {
-		return strings.TrimSpace(stdout.String()), err
+	runErr := session.Run(command)
+	return wifiCommandResult(stdout.String(), stdout.truncated, stderr.truncated, runErr)
+}
+
+func finalizeWiFiScanOutcome(outcome *wifiScanOutcome) {
+	outcome.Count = len(outcome.Observations)
+	if len(outcome.InterfacesFailed) > 0 || outcome.InterfacesOmitted > 0 {
+		outcome.Status = "partial"
+	} else {
+		outcome.Status = "complete"
 	}
-	return strings.TrimSpace(stdout.String()), nil
+}
+
+func wifiScanAuditDetails(outcome wifiScanOutcome, reason string) map[string]any {
+	details := map[string]any{
+		"status": outcome.Status,
+		"interfaces_discovered": outcome.InterfacesDiscovered,
+		"interfaces_scanned": outcome.InterfacesScanned,
+		"interfaces_failed": outcome.InterfacesFailed,
+		"interfaces_omitted": outcome.InterfacesOmitted,
+		"observations": outcome.Count,
+	}
+	if reason != "" {
+		details["reason"] = reason
+	}
+	return details
+}
+
+func persistWiFiScan(ctx context.Context, persist func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return persist()
+}
+
+func (a *app) finishWiFiScanFailure(w http.ResponseWriter, r *http.Request, deviceID string, status int, message, reason string, outcome wifiScanOutcome) {
+	outcome.Status = "failed"
+	outcome.Observations = []wifiObservation{}
+	outcome.Count = 0
+	outcome.CheckedAt = time.Now().UTC()
+	a.recordWiFiScanOutcome(r, deviceID, "wifi.radio.scan.failed", wifiScanAuditDetails(outcome, reason))
+	writeJSON(w, status, map[string]any{"error": message, "outcome": outcome})
 }
 
 func parseWiFiScan(deviceID, name, iface, sourceBSSID, output string) []wifiObservation {
@@ -438,6 +608,30 @@ func parseWiFiScan(deviceID, name, iface, sourceBSSID, output string) []wifiObse
 	return out
 }
 
+func (a *app) recordWiFiScanFailure(r *http.Request, deviceID, reason string) {
+	user, ok := r.Context().Value(userContextKey).(authUser)
+	if !ok {
+		return
+	}
+	a.recordWiFiScanOutcome(r, deviceID, "wifi.radio.scan.failed", map[string]any{"reason": reason})
+}
+
+func (a *app) recordWiFiScanOutcome(r *http.Request, deviceID, action string, details map[string]any) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	user, ok := r.Context().Value(userContextKey).(authUser)
+	if !ok {
+		return
+	}
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err = insertAuditEvent(ctx, tx, user.ID, action, "device", deviceID, details); err == nil {
+		_ = tx.Commit(ctx)
+	}
+}
 func (a *app) recordWiFiScanFailure(r *http.Request, deviceID, reason string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
