@@ -134,6 +134,7 @@ export default function WifiLayout({ devices, role, onNotice }: { devices: Devic
         {layout.aps.map((ap) => { const device = deviceMap.get(ap.device_id); return <g key={ap.device_id} className="wifi-ap" transform={"translate(" + ap.x + " " + ap.y + ")"} onPointerDown={(e) => { e.stopPropagation(); setDragging(ap.device_id); e.currentTarget.setPointerCapture(e.pointerId); }} onClick={(e) => e.stopPropagation()}><circle r=".22"/><circle r=".34" fill="none" stroke="#a99aff" strokeWidth=".035" opacity=".7"/><text x=".32" y=".07">{device?.name ?? ap.label}</text></g>; })}
       </svg>
     </div>
+<p className="wifi-note">The current view shows measured AP-to-neighbour RSSI only at the scanning AP locations. A calibrated building-wide heatmap is the next step; the layout and wall annotations collected here will be inputs to that model.</p>
     <div className="wifi-layout-bottom">
       <div className="wifi-panel"><h3>Access point placement</h3><div className="wifi-ap-list">{devices.length === 0 ? <p className="wifi-note">Add devices to inventory before placing them on the plan.</p> : devices.map((device) => {
         const placement = layout.aps.find((ap) => ap.device_id === device.id);
