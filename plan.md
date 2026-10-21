@@ -93,6 +93,9 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 
 ### 6. Monitoring and later integrations
 
+- [ ] Wi-Fi layout and coverage foundation: persist a dimensioned home layout, rooms, walls, and device-linked AP positions; collect user-triggered, read-only RSSI/BSSID/channel observations from enrolled OpenWrt radios; retain observation history for 30 days. First slice does not yet generate a calibrated building-wide heatmap.
+- [ ] Build the coverage estimator on top of the saved layout and reciprocal inter-AP measurements. Treat AP-to-AP RSSI as calibration points, not as direct measurements of every location; incorporate wall attenuation and clearly distinguish measured observations from predicted coverage.
+
 - [x] Add opt-in server-side monitoring in the existing Go process, persisted settings and per-device check history in PostgreSQL, bounded three-worker batches, PostgreSQL advisory-lock coordination, and 30-day history retention.
 - [ ] Validate real SSH checks against a disposable OpenWrt VM/device and exercise outage, bad credential, pinned-host-key mismatch, and restart recovery scenarios.
 - [ ] Add alert delivery and firmware inventory after persistent monitoring is validated.
