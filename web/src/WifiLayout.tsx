@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Map, Plus, Save, RefreshCw, RadioTower, Ruler, ScanLine } from "lucide-react";
+import { Plus, Save, RefreshCw, RadioTower, Ruler, ScanLine, Trash2 } from "lucide-react";
 
 type Device = { id: string; name: string; address: string; model: string; status: string };
 type Room = { id: string; name: string; x: number; y: number; width: number; height: number };
@@ -111,6 +111,7 @@ export default function WifiLayout({ devices, role, onNotice }: { devices: Devic
 
   const writable = role === "admin" || role === "operator";
   const recent = observations.slice(0, 120);
+  const bssidOwners = useMemo(() => new Map(observations.filter((o) => o.source_bssid).map((o) => [o.source_bssid.toUpperCase(), o.source_name])), [observations]);
   return <section className="wifi-layout">
     <div className="wifi-layout-head"><div><div className="eyebrow">RADIO PLANNING / COVERAGE</div><h2>Wi-Fi layout & signal observations</h2><p>Map rooms and AP positions, then collect RSSI readings from each enrolled OpenWrt radio.</p></div>
       <div className="wifi-layout-actions"><button className="secondary" onClick={() => void load()} disabled={loading}><RefreshCw size={14}/> Reload</button>{writable && <button className="secondary" onClick={() => void save()} disabled={saving || loading}><Save size={14}/>{saving ? "Saving…" : "Save layout"}</button>}{writable && <button className="primary" onClick={() => void scanAll()} disabled={scanning || loading || layout.aps.length === 0}><ScanLine size={14}/>{scanning ? "Scanning radios…" : "Collect RSSI"}</button>}</div>
@@ -138,10 +139,12 @@ export default function WifiLayout({ devices, role, onNotice }: { devices: Devic
         const placement = layout.aps.find((ap) => ap.device_id === device.id);
         return <div className="wifi-ap-row" key={device.id}><input aria-label={"Place " + device.name} type="checkbox" checked={Boolean(placement)} disabled={!writable} onChange={(e) => toggleAP(device, e.target.checked)}/><div><b>{device.name}</b><small>{device.address} · {placement ? placement.x.toFixed(1) + " m, " + placement.y.toFixed(1) + " m" : "Not placed"}</small></div>{placement && <button onClick={() => setLayout((old) => ({ ...old, aps: old.aps.map((ap) => ap.device_id === device.id ? { ...ap, x: Math.max(0, ap.x - 0.5) } : ap) }))} title="Nudge left">←</button>}</div>;
       })}</div>
-        <p className="wifi-note">Drag AP markers to approximate positions. Add rooms and draw walls by clicking two points on the plan. Layout changes are shared only after saving.</p>
+        {layout.rooms.length > 0 && <div className="wifi-room-edit"><h3>Rooms</h3>{layout.rooms.map((room) => <div className="wifi-edit-row" key={room.id}><input aria-label={"Room name " + room.name} value={room.name} disabled={!writable} onChange={(e) => setLayout((old) => ({ ...old, rooms: old.rooms.map((r) => r.id === room.id ? { ...r, name: e.target.value } : r) }))}/><button disabled={!writable} title={"Remove " + room.name} onClick={() => setLayout((old) => ({ ...old, rooms: old.rooms.filter((r) => r.id !== room.id) }))}><Trash2 size={13}/></button></div>)}</div>}
+        {layout.walls.length > 0 && <div className="wifi-room-edit"><h3>Walls ({layout.walls.length})</h3>{layout.walls.map((wall, i) => <div className="wifi-edit-row" key={wall.id}><span>Wall {i + 1} · {wall.material}</span><button disabled={!writable} title="Remove wall" onClick={() => setLayout((old) => ({ ...old, walls: old.walls.filter((w) => w.id !== wall.id) }))}><Trash2 size={13}/></button></div>)}</div>}
+        <p className="wifi-note">Drag AP markers to approximate positions. Add rooms, rename them, and draw walls by clicking two points on the plan. Layout changes are shared only after saving.</p>
       </div>
       <div className="wifi-panel"><h3><RadioTower size={14} style={{ verticalAlign: "middle", marginRight: 5 }}/>Neighbour radio observations <span style={{ color: "#858b9b", fontWeight: 400 }}>({observations.length})</span></h3>
-        <div className="wifi-observations"><table><thead><tr><th>RECEIVING AP</th><th>RADIO</th><th>OBSERVED BSSID / SSID</th><th>CHANNEL</th><th>RSSI</th><th>SEEN</th></tr></thead><tbody>{recent.length === 0 ? <tr><td colSpan={6} className="empty">No observations yet. Place enrolled APs and select Collect RSSI.</td></tr> : recent.map((o) => <tr key={o.id}><td><b>{o.source_name}</b></td><td>{o.source_radio}</td><td><code>{o.observed_bssid}</code><small>{o.ssid || "Hidden / unknown SSID"}</small></td><td>{o.channel || "—"}</td><td className={"wifi-signal " + (o.signal_dbm >= -60 ? "strong" : o.signal_dbm >= -70 ? "medium" : "weak")}>{o.signal_dbm} dBm</td><td className="last-seen">{new Date(o.observed_at).toLocaleString()}</td></tr>)}</tbody></table></div>
+        <div className="wifi-observations"><table><thead><tr><th>RECEIVING AP</th><th>RADIO</th><th>OBSERVED BSSID / SSID</th><th>CHANNEL</th><th>RSSI</th><th>SEEN</th></tr></thead><tbody>{recent.length === 0 ? <tr><td colSpan={6} className="empty">No observations yet. Place enrolled APs and select Collect RSSI.</td></tr> : recent.map((o) => <tr key={o.id}><td><b>{o.source_name}</b></td><td>{o.source_radio}</td><td><b>{bssidOwners.get(o.observed_bssid.toUpperCase()) || "Unmapped neighbour"}</b><code>{o.observed_bssid}</code><small>{o.ssid || "Hidden / unknown SSID"}</small></td><td>{o.channel || "—"}</td><td className={"wifi-signal " + (o.signal_dbm >= -60 ? "strong" : o.signal_dbm >= -70 ? "medium" : "weak")}>{o.signal_dbm} dBm</td><td className="last-seen">{new Date(o.observed_at).toLocaleString()}</td></tr>)}</tbody></table></div>
         <p className="wifi-note">RSSI values here are measured by the AP radio, not predicted. Only the latest 120 records are shown; the database retains up to 30 days. Scans are manual and sequential because radio scans can briefly affect wireless service.</p>
       </div>
     </div>
