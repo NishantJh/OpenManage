@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -70,7 +69,78 @@ type wifiObservation struct {
 }
 
 var (
-	wifiIfaceLine = regexp.MustCompile(`(?m)^([[:alnum:]_.:-]+)[[:space:]]+ESSID:`)
+	wifiIfaceLine = regexp.MustCompile(`(?m)^\\s*Interface[[:space:]]+([[:alnum:]_.:-]+)[[:space:]]*package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/ssh"
+)
+
+const (
+	wifiScanTimeout = 30 * time.Second
+	wifiScanLimit   = 4
+	wifiOutputLimit = 12 * 1024
+)
+
+type wifiRoom struct {
+	ID     string  `json:"id"`
+	Name   string  `json:"name"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+type wifiWall struct {
+	ID       string  `json:"id"`
+	X1       float64 `json:"x1"`
+	Y1       float64 `json:"y1"`
+	X2       float64 `json:"x2"`
+	Y2       float64 `json:"y2"`
+	Material string  `json:"material"`
+}
+
+type wifiAPPlacement struct {
+	DeviceID string  `json:"device_id"`
+	Label    string  `json:"label"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+}
+
+type wifiLayout struct {
+	WidthM  float64           `json:"width_m"`
+	HeightM float64           `json:"height_m"`
+	Rooms   []wifiRoom        `json:"rooms"`
+	Walls   []wifiWall        `json:"walls"`
+	APs     []wifiAPPlacement `json:"aps"`
+	UpdatedAt *time.Time      `json:"updated_at,omitempty"`
+}
+
+type wifiObservation struct {
+	ID            int64     `json:"id,omitempty"`
+	SourceDeviceID string   `json:"source_device_id"`
+	SourceName    string    `json:"source_name,omitempty"`
+	SourceRadio   string    `json:"source_radio"`
+	SourceBSSID   string    `json:"source_bssid,omitempty"`
+	ObservedBSSID string    `json:"observed_bssid"`
+	SSID          string    `json:"ssid,omitempty"`
+	Channel       int       `json:"channel,omitempty"`
+	SignalDBM     int       `json:"signal_dbm"`
+	ObservedAt    time.Time `json:"observed_at"`
+}
+
+var (
+	)
 	wifiBSSIDLine = regexp.MustCompile(`(?i)Access Point:[[:space:]]*([0-9a-f:]{17})`)
 	wifiCellStart = regexp.MustCompile(`(?m)^Cell[[:space:]]+[0-9]+[[:space:]]+-[[:space:]]+Address:[[:space:]]*([0-9a-fA-F:]{17})`)
 	wifiSignal    = regexp.MustCompile(`(?i)Signal:[[:space:]]*(-?[0-9]+)[[:space:]]*dBm`)
@@ -323,14 +393,14 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 	client := ssh.NewClient(sshConn, channels, requests)
 	defer client.Close()
 
-	list, err := runWiFiCommand(client, "iwinfo", 4096)
+	list, err := runWiFiCommand(client, "iw dev", 4096)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "could not list wireless interfaces with iwinfo; check that iwinfo is installed")
+		writeError(w, http.StatusUnprocessableEntity, "could not list wireless interfaces with iw dev; check that the wireless tools are installed")
 		return
 	}
 	interfaces := wifiIfaceLine.FindAllStringSubmatch(list, -1)
 	if len(interfaces) == 0 {
-		writeError(w, http.StatusUnprocessableEntity, "no active wireless interfaces were found by iwinfo")
+		writeError(w, http.StatusUnprocessableEntity, "no wireless interfaces were found by iw dev")
 		return
 	}
 	if len(interfaces) > wifiScanLimit { interfaces = interfaces[:wifiScanLimit] }
@@ -436,5 +506,3 @@ func (a *app) recordWiFiScanFailure(r *http.Request, deviceID, reason string) {
 	}
 }
 
-// Keep bytes imported for bounded command output handling without exposing remote output on errors.
-var _ = bytes.MinRead
