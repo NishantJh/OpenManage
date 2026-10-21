@@ -68,7 +68,13 @@ type wifiObservation struct {
 	ObservedAt    time.Time `json:"observed_at"`
 }
 
-var (\n	wifiIfaceLine = regexp.MustCompile("(?m)^\\s*Interface[[:space:]]+([[:alnum:]_.:-]+)[[:space:]]*$")\n	wifiBSSIDLine = regexp.MustCompile("(?i)Access Point:[[:space:]]*([0-9a-f:]{17})")\n	wifiCellStart = regexp.MustCompile("(?m)^Cell[[:space:]]+[0-9]+[[:space:]]+-[[:space:]]+Address:[[:space:]]*([0-9a-fA-F:]{17})")\n	wifiSignal = regexp.MustCompile("(?i)Signal:[[:space:]]*(-?[0-9]+)[[:space:]]*dBm")\n	wifiChannel = regexp.MustCompile("(?i)Channel:[[:space:]]*([0-9]+)")\n	wifiSSID = regexp.MustCompile("(?m)^\\s*ESSID:[[:space:]]*\"?(.*?)\"?[[:space:]]*$")
+var (
+	wifiIfaceLine = regexp.MustCompile("(?m)^\\s*Interface[[:space:]]+([[:alnum:]_.:-]+)[[:space:]]*$")
+	wifiBSSIDLine = regexp.MustCompile("(?i)Access Point:[[:space:]]*([0-9a-f:]{17})")
+	wifiCellStart = regexp.MustCompile("(?m)^Cell[[:space:]]+[0-9]+[[:space:]]+-[[:space:]]+Address:[[:space:]]*([0-9a-fA-F:]{17})")
+	wifiSignal = regexp.MustCompile("(?i)Signal:[[:space:]]*(-?[0-9]+)[[:space:]]*dBm")
+	wifiChannel = regexp.MustCompile("(?i)Channel:[[:space:]]*([0-9]+)")
+	wifiSSID = regexp.MustCompile("(?m)^\\s*ESSID:[[:space:]]*\"?(.*?)\"?[[:space:]]*$")
 )
 
 func (a *app) getWiFiLayout(w http.ResponseWriter, r *http.Request) {
