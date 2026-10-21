@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent, KeyboardEvent } from "react";
 import { Plus, Wifi, Move, RotateCcw, Info, Trash2, Signal, Ruler } from "lucide-react";
 
 type Device = { id: string; name: string; address: string; model: string; firmware: string; status: string };
@@ -7,6 +8,8 @@ type Layout = { width: number; height: number; placements: Placement[] };
 const STORAGE_KEY = "openmanage.wifi-coverage.v1";
 const DEFAULT_LAYOUT: Layout = { width: 20, height: 12, placements: [] };
 const COLORS = ["#7c8cff", "#3bd4b4", "#f4b860", "#ed7eac", "#69b8f7", "#b59cff"];
+
+function estimatedRadius(p: Placement) { return p.band === "5 GHz" ? p.radius * 0.65 : p.radius; }
 
 function loadLayout(): Layout {
   try {
@@ -68,7 +71,7 @@ export function WifiCoverage({ devices }: { devices: Device[] }) {
     if (!window.confirm("Reset the Wi-Fi coverage layout? AP placements and room dimensions will be cleared from this browser.")) return;
     setLayout(DEFAULT_LAYOUT); setActiveId(null);
   }
-  function movePoint(event: React.PointerEvent<SVGSVGElement>) {
+  function movePoint(event: PointerEvent<SVGSVGElement>) {
     if (!dragId.current || !svgRef.current) return;
     const bounds = svgRef.current.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
@@ -114,11 +117,11 @@ export function WifiCoverage({ devices }: { devices: Device[] }) {
             <rect x="1" y="1" width="898" height="498" rx="12" fill="none" stroke="#68758d" strokeWidth="2" opacity=".7"/>
             <text x="18" y="24" fill="#9ca9bf" fontSize="10" letterSpacing="1.5">ROOM PLAN · {layout.width} M × {layout.height} M</text>
             {showFootprints && resolved.map(p => <g key={p.deviceId} pointerEvents="none">
-              <ellipse cx={p.x*900} cy={p.y*500} rx={p.radius*scaleX} ry={p.radius*scaleY} fill={`url(#wifi-gradient-${p.deviceId.replace(/[^a-zA-Z0-9_-]/g,"")})`}/>
-              <ellipse cx={p.x*900} cy={p.y*500} rx={p.radius*scaleX} ry={p.radius*scaleY} fill="none" stroke={p.color} strokeWidth="1.5" strokeDasharray="5 5" opacity=".75"/>
+              <ellipse cx={p.x*900} cy={p.y*500} rx={estimatedRadius(p)*scaleX} ry={estimatedRadius(p)*scaleY} fill={`url(#wifi-gradient-${p.deviceId.replace(/[^a-zA-Z0-9_-]/g,"")})`}/>
+              <ellipse cx={p.x*900} cy={p.y*500} rx={estimatedRadius(p)*scaleX} ry={estimatedRadius(p)*scaleY} fill="none" stroke={p.color} strokeWidth="1.5" strokeDasharray="5 5" opacity=".75"/>
               <ellipse cx={p.x*900} cy={p.y*500} rx={p.radius*scaleX*.68} ry={p.radius*scaleY*.68} fill="none" stroke={p.color} strokeWidth="1" opacity=".55"/>
             </g>)}
-            {resolved.map(p => <g key={p.deviceId} className={"wifi-ap-marker" + (active?.deviceId === p.deviceId ? " selected" : "")} transform={`translate(${p.x*900} ${p.y*500})`} onPointerDown={e => { e.stopPropagation(); dragId.current = p.deviceId; setActiveId(p.deviceId); svgRef.current?.setPointerCapture(e.pointerId); }} onClick={() => setActiveId(p.deviceId)} role="button" aria-label={`Select ${pointLabel(p.deviceId)} access point`} tabIndex={0} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setActiveId(p.deviceId); }}>
+            {resolved.map(p => <g key={p.deviceId} className={"wifi-ap-marker" + (active?.deviceId === p.deviceId ? " selected" : "")} transform={`translate(${p.x*900} ${p.y*500})`} onPointerDown={e => { e.stopPropagation(); dragId.current = p.deviceId; setActiveId(p.deviceId); svgRef.current?.setPointerCapture(e.pointerId); }} onClick={() => setActiveId(p.deviceId)} role="button" aria-label={`Select ${pointLabel(p.deviceId)} access point`} tabIndex={0} onKeyDown={(e: KeyboardEvent<SVGGElement>) => { if (e.key === "Enter" || e.key === " ") setActiveId(p.deviceId); }}>
               <circle r="24" fill={p.color} opacity=".12"/><circle r="17" fill="#111925" stroke={p.color} strokeWidth="2.5"/><circle r="4" fill={p.color}/>
               <path d="M -8 -5 Q 0 -13 8 -5 M -5 -1 Q 0 -6 5 -1" fill="none" stroke="#f4f7ff" strokeWidth="1.5" strokeLinecap="round"/>
               <rect x="-58" y="22" width="116" height="25" rx="6" fill="#0c121d" stroke={p.color} strokeOpacity=".65"/>
