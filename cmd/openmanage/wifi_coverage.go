@@ -374,15 +374,10 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 		a.finishWiFiScanFailure(w, r, deviceID, http.StatusUnprocessableEntity, "could not safely list wireless interfaces", reason, outcome)
 		return
 	}
-	matches := wifiIfaceLine.FindAllStringSubmatch(list, -1)
-	outcome.InterfacesDiscovered = len(matches)
+	matches := capWiFiInterfaces(wifiIfaceLine.FindAllStringSubmatch(list, -1), &outcome)
 	if len(matches) == 0 {
 		a.finishWiFiScanFailure(w, r, deviceID, http.StatusUnprocessableEntity, "no wireless interfaces were found by iw dev", "no_interfaces", outcome)
 		return
-	}
-	if len(matches) > wifiScanLimit {
-		outcome.InterfacesOmitted = len(matches) - wifiScanLimit
-		matches = matches[:wifiScanLimit]
 	}
 	for _, match := range matches {
 		if ctx.Err() != nil {
@@ -541,6 +536,15 @@ func runWiFiCommand(client *ssh.Client, command string, limit int) (string, erro
 	session.Stdout, session.Stderr = stdout, stderr
 	runErr := session.Run(command)
 	return wifiCommandResult(stdout.String(), stdout.truncated, stderr.truncated, runErr)
+}
+
+func capWiFiInterfaces(matches [][]string, outcome *wifiScanOutcome) [][]string {
+	outcome.InterfacesDiscovered = len(matches)
+	if len(matches) > wifiScanLimit {
+		outcome.InterfacesOmitted = len(matches) - wifiScanLimit
+		return matches[:wifiScanLimit]
+	}
+	return matches
 }
 
 func finalizeWiFiScanOutcome(outcome *wifiScanOutcome) {
