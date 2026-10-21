@@ -29,7 +29,7 @@ Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful O
 - [x] Reject malformed device IDs before database queries.
 - [x] Add an enrollment request body-size cap and test malformed/oversized enrollment payloads.
 - [ ] Verify request-size and timeout behavior across all API handlers.
-- [ ] Improve dependency reproducibility: generate and commit go.sum and package-lock.json from the real toolchains, use npm ci, and make CI verify rather than mutate dependency metadata.
+- [ ] Improve dependency reproducibility: generate and commit go.sum and package-lock.json from the real toolchains, use npm ci, and make CI verify rather than mutate dependency metadata. A reconciled trusted-main workflow is proposed in PR #28; it uses Go 1.26.10 / Node 22, pins both jobs to the triggering commit, and separates read-only generation from the write-capable publish job. Keep this unchecked until a trusted workflow run and deterministic lockfile-verification CI are demonstrated.
 - [x] Document the PostgreSQL and OPENMANAGE_ENCRYPTION_KEY backup/restore procedure; recovery testing remains an operator task.
 - [ ] Run and record a disposable-stack restore exercise, including verification that an enrolled credential decrypts with the restored key.
 

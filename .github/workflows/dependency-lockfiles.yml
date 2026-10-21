@@ -1,0 +1,125 @@
+name: Prepare dependency lockfile branch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - ".github/workflows/dependency-lockfiles.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openmanage-dependency-lockfiles
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    # Run only for trusted main pushes. No repository write permission or persisted checkout credentials.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.10"
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate Go dependency metadata
+        run: go mod tidy
+
+      - name: Generate and verify frontend lockfile
+        working-directory: web
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Verify generated metadata and run Go tests
+        run: |
+          git diff --exit-code -- web/package.json
+          test -s go.mod
+          test -s go.sum
+          test -s web/package-lock.json
+          mkdir -p cmd/openmanage/web/dist
+          cp -a web/dist/. cmd/openmanage/web/dist/
+          go test ./...
+
+      - name: Upload generated dependency metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-metadata
+          path: |
+            go.mod
+            go.sum
+            web/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    # This job never installs dependencies or executes project build/test scripts.
+    needs: generate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download generated dependency metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: dependency-metadata
+          path: generated
+
+      - name: Prepare isolated branch and verify artifact paths
+        run: |
+          test -s generated/go.mod
+          test -s generated/go.sum
+          test -s generated/web/package-lock.json
+          cp generated/go.mod go.mod
+          cp generated/go.sum go.sum
+          cp generated/web/package-lock.json web/package-lock.json
+          git add go.mod go.sum web/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Dependency metadata is already current; no branch was pushed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: add reproducible dependency lockfiles"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        id: stage
+
+      - name: Push generated branch
+        if: steps.stage.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          branch="chore/dependency-lockfiles-${GITHUB_RUN_ID}"
+          git branch "$branch"
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push origin "$branch"
+          {
+            echo "Generated dependency metadata and pushed `$branch`."
+            echo "Review the branch and open a PR against `main`; CI should then switch to lockfile verification."
+          } >> "$GITHUB_STEP_SUMMARY"
