@@ -98,6 +98,15 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 - [ ] Add alert delivery and firmware inventory after persistent monitoring is validated.
 - Consider topology, IPAM, PKI/VPN, RADIUS, multi-user roles, and larger-fleet features only when a concrete use case warrants them.
 
+### 7. Agent coordination infrastructure — in progress
+
+- [x] Establish a machine-readable workstream registry and a read-only GitHub Actions reconciliation report for stale handovers.
+- [ ] Validate the scheduled and manual reconciliation workflow on its own branch/PR head and review its generated report.
+- [ ] Add an authenticated dispatch bridge only after selecting a supported agent runtime that can actually start workers and deliver task messages; do not imply GitHub handovers can message arbitrary ChatGPT threads.
+- [ ] Preserve explicit human approval for merges and production-impacting actions; keep the reconciliation workflow read-only.
+
+Exit criteria: workstream ownership and handover freshness are observable; exact-head CI evidence is linked; dispatch is only marked implemented after an end-to-end worker message is demonstrated.
+
 ## Delivery rules
 
 1. Work from a feature branch and open a PR for every logical change; never commit directly to main.
