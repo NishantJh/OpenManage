@@ -445,7 +445,11 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 		if beginErr != nil {
 			return beginErr
 		}
-		defer tx.Rollback(ctx)
+		defer func() {
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer rollbackCancel()
+			_ = tx.Rollback(rollbackCtx)
+		}()
 		for i := range outcome.Observations {
 			o := &outcome.Observations[i]
 			if insertErr := tx.QueryRow(ctx, `INSERT INTO wifi_radio_observations(source_device_id,source_radio,source_bssid,observed_bssid,ssid,channel,signal_dbm)
