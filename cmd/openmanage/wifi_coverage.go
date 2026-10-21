@@ -416,16 +416,17 @@ func (a *app) scanDeviceWiFi(w http.ResponseWriter, r *http.Request) {
 			a.finishWiFiScanFailure(w, r, deviceID, http.StatusGatewayTimeout, "Wi-Fi scan timed out or was canceled; no observations were saved", "context_done", outcome)
 			return
 		}
-		if scanErr != nil {
+		parsed, parseErr := parseWiFiScanOutput(deviceID, name, iface, sourceBSSID, scan, scanErr)
+		if parseErr != nil {
 			reason := "interface_scan_failed"
-			if errors.Is(scanErr, errWiFiOutputTruncated) {
+			if errors.Is(parseErr, errWiFiOutputTruncated) {
 				reason = "interface_scan_output_truncated"
 			}
 			outcome.InterfacesFailed = append(outcome.InterfacesFailed, wifiInterfaceFailure{Interface: iface, Reason: reason})
 			continue
 		}
 		outcome.InterfacesScanned++
-		outcome.Observations = append(outcome.Observations, parseWiFiScan(deviceID, name, iface, sourceBSSID, scan)...)
+		outcome.Observations = append(outcome.Observations, parsed...)
 	}
 	if ctx.Err() != nil {
 		a.finishWiFiScanFailure(w, r, deviceID, http.StatusGatewayTimeout, "Wi-Fi scan timed out or was canceled; no observations were saved", "context_done", outcome)
@@ -576,6 +577,13 @@ func (a *app) finishWiFiScanFailure(w http.ResponseWriter, r *http.Request, devi
 	outcome.CheckedAt = time.Now().UTC()
 	a.recordWiFiScanOutcome(r, deviceID, "wifi.radio.scan.failed", wifiScanAuditDetails(outcome, reason))
 	writeJSON(w, status, map[string]any{"error": message, "outcome": outcome})
+}
+
+func parseWiFiScanOutput(deviceID, name, iface, sourceBSSID, output string, commandErr error) ([]wifiObservation, error) {
+	if commandErr != nil {
+		return nil, commandErr
+	}
+	return parseWiFiScan(deviceID, name, iface, sourceBSSID, output), nil
 }
 
 func parseWiFiScan(deviceID, name, iface, sourceBSSID, output string) []wifiObservation {
