@@ -26,6 +26,7 @@ Read plan.md before planning work. Use this file as the repository-specific oper
 ## CI and security
 
 - CI is defined in .github/workflows/ci.yml and runs on trusted branch pushes using the self-hosted WSL2 runner. It currently builds the frontend, prepares embedded assets, resolves Go dependencies, runs Go tests, and builds the Docker image.
+- Dependency lockfile generation is isolated in `.github/workflows/dependency-lockfiles.yml`: only trusted `main` pushes trigger it; the generator has `contents: read` and no persisted checkout credentials; only the separate publish job has `contents: write`, and it must not install dependencies or run project scripts. Both jobs must use the exact triggering `github.sha`, and the artifact must contain only `go.mod`, `go.sum`, and `web/package-lock.json`.
 - The repository is public. Do not enable a pull_request workflow that executes code from untrusted forks on the self-hosted runner. Prefer branch-push validation for repository writers; review any CI trigger or permission change carefully.
 - Check the latest workflow run for the exact PR head before describing a PR as ready. Also check post-merge CI for important changes.
 - Keep workflow permissions minimal and pin third-party actions to full commit SHAs when practical.
