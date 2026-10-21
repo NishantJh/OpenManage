@@ -191,6 +191,11 @@ func validateWiFiLayout(l wifiLayout) error {
 			return errors.New("each wall needs a unique ID")
 		}
 		seen["wall:"+wall.ID] = true
+		switch wall.Material {
+		case "brick", "drywall", "glass", "open":
+		default:
+			return errors.New("wall material must be brick, drywall, glass, or open")
+		}
 		if wall.X1 < 0 || wall.X1 > l.WidthM || wall.X2 < 0 || wall.X2 > l.WidthM || wall.Y1 < 0 || wall.Y1 > l.HeightM || wall.Y2 < 0 || wall.Y2 > l.HeightM {
 			return errors.New("wall coordinates must fit inside the layout")
 		}
