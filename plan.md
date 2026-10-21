@@ -106,3 +106,47 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 4. The self-hosted runner is trusted infrastructure. Do not add pull_request execution for untrusted fork code; gate the CI job to refs/heads/main so workflow_dispatch cannot execute a non-main ref on that runner.
 5. After each major merge, audit the merged diff and current project for security, correctness, migrations/rollback, dependencies, Compose hardening, tests/CI, and roadmap consistency.
 6. Update this file when scope, sequencing, or milestone status materially changes.
+
+## Coordination ledger (updated 2026-10-21)
+
+This section is the current cross-chat execution ledger. Keep the roadmap above as the product/engineering plan; use this ledger for task ownership, integration order, blockers, and verified status. Reconcile it with live GitHub state before acting.
+
+### Coordination rules
+
+- One accountable chat per task; no parallel edits to the same scope without an explicit handoff.
+- Required handover fields: task/status, branch/PR, files changed, implementation summary, tests with exact results, dependencies/conflicts, decisions needed, next action, and documentation-update status.
+- Verify PR state, changed files, latest-head CI, and merge commit directly. Distinguish implemented, reviewed, merged, CI-verified, and runtime-validated.
+- Never merge, close/discard PRs, rewrite shared branches, or change production configuration without explicit user approval.
+- The coordinator consolidates reports but cannot automatically inspect or control other ChatGPT chats; other chats must return their status reports.
+
+### Active work and initial priority order
+
+| Priority | Workstream | Ownership / boundary | Acceptance evidence | Status at ledger creation |
+|---|---|---|---|---|
+| P0 | MVP integration and first-run readiness | Coordinator tracks overall integration; feature chats own their assigned PRs | Fresh install, device enrollment, read-only health check, monitoring behavior, documented limitations and cleanup; CI on exact PR heads | In progress; reconcile live PR/CI state before relying on this snapshot |
+| P0 | PR #26 | Owned by the other chat per project handover; coordinator does not duplicate its changes | Owner's handover plus live PR diff and latest checks | External ownership; pending status reconciliation |
+| P0 | Persistent monitoring / PR #24 | Keep isolated from production devices; coordinate disposable OpenWrt runtime validation | Baseline, outage/recovery, invalid authentication, host-key mismatch, degraded command, restart and interrupted-check scenarios; repeatable harness passes more than once | Runtime validation not yet established in the handover; verify live PR state |
+| P1 | Dependency-lockfile overlap / PRs #18 and #23 | Coordinator reconciles intended outcomes and diffs before recommending a canonical implementation; do not duplicate workflows | One reproducible lockfile-generation/verification approach; `npm ci`; Go dependency checks; CI verifies rather than mutates metadata | Overlap identified; inspect live PRs and preserve unique work before recommending closure |
+| P1 | Go updates on other open PRs | Verify the completed work reported in handover; do not alter PR #26's scope | Live diff and latest checks for each relevant PR | Reported completed in handover; verify before marking done |
+| P1 | Isolated test harness and runbook | Separate lab-only environment; no production OpenManage instance or physical APs | Safe-target guard, bounded polling, sanitized results, cleanup even on failure, repeatable pass evidence | Planned, not yet runtime-validated in the handover |
+| P2 | FreeRADIUS lab | Optional and isolated; never imply production WPA-Enterprise readiness | Loopback-bound opt-in service and disposable PAP smoke test; exact current PR/CI evidence | Verify live PR #21 state |
+| P2 | Future roadmap | Sequence configuration workflows, guarded maintenance, SSH key lifecycle, firmware and integrations only after MVP readiness | Small PRs with explicit safety, audit, rollback and compatibility acceptance criteria | Planned |
+
+### Integration gates
+
+1. Confirm current main SHA, open PRs, ownership, changed-file overlap, and latest CI before assigning or closing work.
+2. Require each PR owner to provide a handover and test evidence for its exact head commit.
+3. Resolve dependency/lockfile duplication before accepting further workflow changes.
+4. Keep runtime tests in the isolated lab. Do not enable monitoring on the production instance or target physical production APs.
+5. Update this ledger after material changes, then provide the user a concise consolidated status, blockers, decisions needed, and next actions.
+
+### Status semantics
+
+- **Planned:** no implementation evidence yet.
+- **In progress:** active work exists, not accepted.
+- **Implemented:** code exists; testing may still be incomplete.
+- **Reviewed:** diff and design reviewed; not necessarily merged.
+- **Merged:** merge commit verified on the target branch.
+- **CI-verified:** required checks passed for the exact relevant commit.
+- **Runtime-validated:** documented tests passed in the intended isolated runtime environment.
+
