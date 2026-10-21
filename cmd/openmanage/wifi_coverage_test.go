@@ -27,7 +27,11 @@ Cell 02 - Address: AA:BB:CC:DD:EE:02
 
 func TestValidateWiFiLayout(t *testing.T) {
 	valid := wifiLayout{WidthM: 12, HeightM: 8, Rooms: []wifiRoom{{ID: "r1", Name: "Living room", X: 0, Y: 0, Width: 5, Height: 4}}, Walls: []wifiWall{}, APs: []wifiAPPlacement{}}
-	if err := validateWiFiLayout(valid); err != nil { t.Fatalf("valid layout rejected: %v", err) }
+	if err := validateWiFiLayout(valid); err != nil {
+		t.Fatalf("valid layout rejected: %v", err)
+	}
 	valid.Rooms[0].Width = 20
-	if err := validateWiFiLayout(valid); err == nil { t.Fatal("expected out-of-bounds room to be rejected") }
+	if err := validateWiFiLayout(valid); err == nil {
+		t.Fatal("expected out-of-bounds room to be rejected")
+	}
 }
