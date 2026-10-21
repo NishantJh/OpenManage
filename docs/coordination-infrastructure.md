@@ -6,9 +6,9 @@ OpenManage uses parallel workstreams, but separate chat conversations do not sha
 
 ## MVP components
 
-- `.github/coordination/workstreams.json` registers each tracked workstream, its target PR, canonical handover ref/path, and owner.
-- `scripts/coordination/reconcile.py` reads the configured PRs and handovers through the GitHub API and compares the handover's recorded target head SHA with the live PR head SHA.
-- `.github/workflows/coordination-reconcile.yml` runs every 15 minutes and on manual dispatch. Its run summary is the current reconciliation report.
+- `coordination-workstreams.json` registers each tracked workstream, its target PR, canonical handover ref/path, and owner.
+- `reconcile-coordination.py` reads configured PRs and handovers through the GitHub API and compares the handover's recorded target head SHA with the live PR head SHA.
+- `.github/workflows/coordination-reconcile.yml` runs every 15 minutes and on manual dispatch. Its run summary is the reconciliation report.
 - The workflow is read-only: it cannot write issues, push branches, approve/merge PRs, or modify production systems. A stale/missing handover is reported for coordinator action; a matching SHA is not treated as proof that CI passed.
 
 ## Operating procedure
@@ -16,7 +16,7 @@ OpenManage uses parallel workstreams, but separate chat conversations do not sha
 1. Every agent works on an isolated branch and owns a defined workstream.
 2. The owner updates the canonical handover after meaningful progress. The handover must record the target PR's current head SHA, status, evidence URLs, blockers, decision needed, and next action.
 3. The reconciliation workflow compares that recorded target SHA with GitHub's current PR head. Run it manually from Actions when an immediate check is needed.
-4. The coordinator reviews the workflow summary, inspects the exact-head CI runs and changed-file overlap, then assigns or approves the next action.
+4. The coordinator reviews the workflow summary, inspects exact-head CI runs and changed-file overlap, then assigns or approves the next action.
 5. Keep merge approval and production-impacting actions human-controlled. Never include credentials or sensitive logs in handovers.
 
 ## Handover format
