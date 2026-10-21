@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseWiFiScan(t *testing.T) {
@@ -111,6 +112,22 @@ func TestPersistWiFiScanRejectsCanceledContextBeforePersistence(t *testing.T) {
 	}
 	if called {
 		t.Fatal("persistence callback ran after cancellation")
+	}
+}
+
+func TestPersistWiFiScanRejectsExpiredDeadlineBeforePersistence(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	called := false
+	err := persistWiFiScan(ctx, func() error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if called {
+		t.Fatal("persistence callback ran after deadline expiry")
 	}
 }
 
