@@ -34,4 +34,9 @@ func TestValidateWiFiLayout(t *testing.T) {
 	if err := validateWiFiLayout(valid); err == nil {
 		t.Fatal("expected out-of-bounds room to be rejected")
 	}
+	valid.Rooms[0].Width = 5
+	valid.Walls = []wifiWall{{ID: "w1", X1: 1, Y1: 1, X2: 2, Y2: 2, Material: "unknown"}}
+	if err := validateWiFiLayout(valid); err == nil {
+		t.Fatal("expected unsupported wall material to be rejected")
+	}
 }
