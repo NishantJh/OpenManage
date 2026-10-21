@@ -11,8 +11,8 @@ from pathlib import Path
 API = "https://api.github.com"
 CONFIG = Path(__file__).with_name("coordination-workstreams.json")
 PATTERNS = (
-    re.compile(r"(?im)^\s*-?\s*Target PR head SHA observed:.*?([0-9a-f]{40})\s*$"),
-    re.compile(r"(?im)^\s*-?\s*Head:.*?([0-9a-f]{40})\s*$"),
+    re.compile(r"(?im)^\s*-?\s*Target PR head SHA observed:.*?([0-9a-f]{40})"),
+    re.compile(r"(?im)^\s*-?\s*Head:.*?([0-9a-f]{40})"),
 )
 
 
