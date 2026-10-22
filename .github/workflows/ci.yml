@@ -28,12 +28,14 @@ jobs:
       - name: Build frontend
         working-directory: web
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
       - name: Prepare embedded assets
         run: mkdir -p cmd/openmanage/web/dist && cp -a web/dist/. cmd/openmanage/web/dist/
-      - name: Resolve Go dependencies
-        run: go mod tidy
+      - name: Verify dependency metadata
+        run: |
+          go mod tidy -diff
+          git diff --exit-code -- go.mod go.sum web/package.json web/package-lock.json
       - name: Test Go package
         run: go test ./...
       - name: Build Docker image
