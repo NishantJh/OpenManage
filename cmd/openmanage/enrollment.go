@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -210,9 +212,20 @@ func classifyEnrollmentSSHError(err error) (int, string, string) {
 		return http.StatusBadGateway, enrollCodeUnreachable, "Could not connect to SSH on the device"
 	case errors.Is(err, errHostKeyMismatch):
 		return http.StatusUnprocessableEntity, enrollCodeHostKeyMismatch, "The device's SSH host key did not match the expected fingerprint"
+	case isSSHTransportFailure(err):
+		return http.StatusBadGateway, enrollCodeUnreachable, "Connected to TCP/22, but the SSH handshake did not complete"
 	default:
 		return http.StatusUnprocessableEntity, enrollCodeAuthFailed, "SSH authentication failed with the supplied username and key"
 	}
+}
+
+// isSSHTransportFailure reports a handshake that died from the connection itself
+// (closed, reset, or timed out) before authentication could be judged.
+func isSSHTransportFailure(err error) bool {
+	var netErr net.Error
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, syscall.ECONNRESET) ||
+		(errors.As(err, &netErr) && netErr.Timeout())
 }
 
 // sshDialError marks failures to reach the device, as opposed to SSH handshake

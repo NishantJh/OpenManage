@@ -102,3 +102,30 @@ func TestClassifyEnrollmentSSHErrorFromRealFailures(t *testing.T) {
 		})
 	}
 }
+
+// A TCP/22 listener that drops the connection before the SSH handshake completes must
+// be reported as unreachable, not as a rejected key.
+func TestClassifyEnrollmentSSHErrorHandshakeDropIsUnreachable(t *testing.T) {
+	signer, _ := generatedSigner(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	_, err = verifyDeviceSSH(context.Background(), ln.Addr().String(), "root", signer, "SHA256:x")
+	if err == nil {
+		t.Fatal("expected handshake failure")
+	}
+	if status, code, _ := classifyEnrollmentSSHError(err); status != http.StatusBadGateway || code != enrollCodeUnreachable {
+		t.Fatalf("got (%d, %q) for %v", status, code, err)
+	}
+}
