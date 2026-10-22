@@ -4,3 +4,7 @@ export type HealthResult={name:string;label:string;status:"ok"|"error";output?:s
 export type HealthResponse={device_id:string;checked_at:string;status:string;results:HealthResult[]};
 export type MonitoringCheck={id:number;device_id:string;device_name:string;status:"online"|"offline"|"degraded"|"error";reason:string;started_at:string;finished_at:string;duration_ms:number};
 export type MonitoringSettings={enabled:boolean;interval_seconds:number};
+export type ConfigSnapshot={id:number;device_id:string;captured_at:string;last_verified_at:string;size_bytes:number;option_count:number};
+export type CaptureResult={snapshot:ConfigSnapshot;first:boolean;changed:boolean;change_count:number};
+export type ConfigChange={path:string;kind:"added"|"removed"|"changed";old?:string;new?:string;redacted?:boolean};
+export type SnapshotChanges={snapshot_id:number;first:boolean;changes:ConfigChange[]};

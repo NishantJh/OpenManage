@@ -33,3 +33,9 @@
 .health-error{font-size:10px;color:#efb38b;margin:10px 0 0}
 @media(max-width:560px){.health-modal{padding:18px;max-height:calc(100vh - 20px)}.health-summary{align-items:flex-start;flex-wrap:wrap}.health-summary small{width:100%;margin-left:16px}.health-result-head{align-items:flex-start;flex-direction:column}}
 .enroll-error{margin:0 0 15px;align-items:flex-start}.enroll-error p{margin:4px 0 0;line-height:1.5;font-size:10px;color:#e7c4ad}.row-action:disabled{cursor:not-allowed}.row-action:disabled:hover{background:transparent;color:#697081}
+.config-modal{width:min(860px,100%)}
+.config-modal .table-card{margin-bottom:12px}
+.config-modal .notice,.config-modal .error{margin:0 0 14px}
+.config-changes p{font-size:11px;color:#aeb3c1}
+.config-value{font-family:ui-monospace,monospace;font-size:10px;white-space:pre-wrap;word-break:break-all;max-width:240px}
+tr.selected td{background:#1a1e2a}
