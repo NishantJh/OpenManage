@@ -63,8 +63,10 @@ for attempt in $(seq 1 30); do
   [[ "$attempt" == 30 ]] && { docker logs "$router" | tail -20; fail "OpenWrt did not start dropbear and ubus"; }
   sleep 1
 done
+# docker cp keeps the host file owner (uid 1001 on GitHub runners); dropbear ignores
+# an authorized_keys file that root does not own.
 docker cp "$work/mgmt_key.pub" "$router:/etc/dropbear/authorized_keys"
-docker exec "$router" chmod 600 /etc/dropbear/authorized_keys
+docker exec "$router" sh -c "chown root:root /etc/dropbear/authorized_keys && chmod 600 /etc/dropbear/authorized_keys"
 router_ip="$(docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$router")"
 [[ -n "$router_ip" ]] || fail "could not determine OpenWrt container address"
 
@@ -159,7 +161,7 @@ docker exec "$router" rm /etc/dropbear/authorized_keys
 make_due; wait_check error "a revoked credential as an error, not offline"
 api GET "/api/devices/$device_id"; json 'assert d["status"]!="offline", d' < "$body"
 docker cp "$work/mgmt_key.pub" "$router:/etc/dropbear/authorized_keys"
-docker exec "$router" chmod 600 /etc/dropbear/authorized_keys
+docker exec "$router" sh -c "chown root:root /etc/dropbear/authorized_keys && chmod 600 /etc/dropbear/authorized_keys"
 
 docker exec "$router" sh -c 'rm -f /etc/dropbear/dropbear_ed25519_host_key && dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null && /etc/init.d/dropbear restart'
 sleep 2
