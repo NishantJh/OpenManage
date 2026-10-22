@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -146,13 +147,13 @@ func main() {
 		a.monitorLoop(ctx)
 	}()
 
-	handler := securityHeaders(frontendFallback(a.authMiddleware(mux)))
+	handler := securityHeaders(frontendFallback(apiDeadline(a.authMiddleware(mux))))
 	srv := &http.Server{
 		Addr:              env("LISTEN_ADDR", ":8080"),
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      serverWriteTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 	go func() {
@@ -256,18 +257,19 @@ func requireAnyRole(w http.ResponseWriter, r *http.Request, allowed ...string) b
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&in); err != nil {
+	if err := decodeJSONBody(w, r, loginBodyLimit, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	in.Username = strings.TrimSpace(in.Username)
+	if len(in.Username) > maxUsernameLength || len(in.Password) > maxPasswordLength {
+		writeError(w, http.StatusBadRequest, "username or password is too long")
+		return
+	}
 	clientIP := loginClientIP(r.RemoteAddr)
 	if blocked, retryAfter := loginAttempts.isBlocked(clientIP, time.Now()); blocked {
 		writeLoginRateLimited(w, retryAfter)
@@ -399,16 +401,13 @@ func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
 	if !requireAnyRole(w, r, "admin", "operator") {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var in struct {
 		Name     string `json:"name"`
 		Address  string `json:"address"`
 		Model    string `json:"model"`
 		Firmware string `json:"firmware"`
 	}
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&in); err != nil {
+	if err := decodeJSONBody(w, r, deviceBodyLimit, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -418,6 +417,10 @@ func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
 	in.Firmware = strings.TrimSpace(in.Firmware)
 	if in.Name == "" || in.Address == "" {
 		writeError(w, http.StatusBadRequest, "name and address are required")
+		return
+	}
+	if len(in.Name) > maxDeviceFieldLength || len(in.Address) > maxDeviceAddressLength || len(in.Model) > maxDeviceFieldLength || len(in.Firmware) > maxDeviceFieldLength {
+		writeError(w, http.StatusBadRequest, "device fields are too long")
 		return
 	}
 	user := r.Context().Value(userContextKey).(authUser)
@@ -609,6 +612,54 @@ func securityHeaders(next http.Handler) http.Handler {
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// Request-size limits. Small JSON APIs get tight caps; enrollment carries a private key.
+const (
+	loginBodyLimit         = 4 * 1024
+	deviceBodyLimit        = 8 * 1024
+	enrollmentBodyLimit    = 32 * 1024
+	monitoringBodyLimit    = 4 * 1024
+	maxUsernameLength      = 128
+	maxPasswordLength      = 1024
+	maxDeviceFieldLength   = 128
+	maxDeviceAddressLength = 255
+
+	// apiRequestTimeout bounds database and device work per API request. It must stay
+	// below the server WriteTimeout so handlers can still write their error response.
+	apiRequestTimeout  = 25 * time.Second
+	serverWriteTimeout = 30 * time.Second
+)
+
+var errTrailingJSON = errors.New("request must contain a single JSON object")
+
+// decodeJSONBody reads exactly one JSON object of at most limit bytes into dst,
+// rejecting unknown fields and trailing data.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errTrailingJSON
+	}
+	return nil
+}
+
+// apiDeadline gives every API request a context deadline so database queries and
+// device operations cannot outlive the HTTP write timeout.
+func apiDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), apiRequestTimeout)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

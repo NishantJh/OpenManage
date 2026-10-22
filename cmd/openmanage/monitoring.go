@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -57,19 +55,16 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 	if !requireAnyRole(w, r, "admin") {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var in struct {
 		Enabled         bool `json:"enabled"`
 		IntervalSeconds int  `json:"interval_seconds"`
 	}
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid monitoring settings")
-		return
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "request must contain a single JSON object")
+	if err := decodeJSONBody(w, r, monitoringBodyLimit, &in); err != nil {
+		if errors.Is(err, errTrailingJSON) {
+			writeError(w, http.StatusBadRequest, "request must contain a single JSON object")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid monitoring settings")
+		}
 		return
 	}
 	if in.IntervalSeconds < 60 || in.IntervalSeconds > 3600 {
