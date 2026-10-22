@@ -77,9 +77,9 @@ Ports default to 18081 and 18082 (`OPENMANAGE_DRILL_SRC_PORT`, `OPENMANAGE_DRILL
 
 | Date | Host | Application revision | PostgreSQL | Backup | Restore | Result |
 | --- | --- | --- | --- | --- | --- | --- |
-| _not yet recorded_ | | | | | | The script was written without a Docker daemon available; run it on the self-hosted runner or a workstation and add the printed values here. |
+| 2026-10-22 | WSL2 Docker (Docker Compose 5.6.0) | ce11f64 | 17.11 | <1 s (16,071-byte dump) | 11 s | Passed |
 
-OM-SAF-06 stays open until a row above records a passing run.
+OM-SAF-06 is satisfied by the passing run recorded above; re-run the drill after schema, backup, or encryption-key handling changes and add a new row.
 
 ## Recovery limitations
 
