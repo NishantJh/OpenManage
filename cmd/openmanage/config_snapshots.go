@@ -107,7 +107,7 @@ func (a *app) captureConfigSnapshot(w http.ResponseWriter, r *http.Request) {
 	user := r.Context().Value(userContextKey).(authUser)
 	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
 	defer cancel()
-	out, fail := a.captureSnapshot(ctx, deviceID, user.ID)
+	out, fail := a.captureSnapshot(ctx, deviceID, user.ID, false)
 	if fail != nil {
 		if fail.reason != "" {
 			a.recordHealthCheckOutcome(r, "device.config_snapshot.failed", deviceID, fail.reason)
@@ -120,8 +120,9 @@ func (a *app) captureConfigSnapshot(w http.ResponseWriter, r *http.Request) {
 
 // captureSnapshot exports a device's configuration and stores it if it changed. An
 // empty userID means the scheduler captured it; unchanged scheduled captures are not
-// audited, so a quiet fleet does not fill the audit log.
-func (a *app) captureSnapshot(ctx context.Context, deviceID, userID string) (captureResult, *captureFailure) {
+// audited, so a quiet fleet does not fill the audit log. ownChange marks a capture
+// taken right after OpenManage applied a change, which is not drift.
+func (a *app) captureSnapshot(ctx context.Context, deviceID, userID string, ownChange bool) (captureResult, *captureFailure) {
 	var out captureResult
 	target, err := a.loadDeviceTarget(ctx, deviceID)
 	if err != nil {
@@ -183,7 +184,7 @@ func (a *app) captureSnapshot(ctx context.Context, deviceID, userID string) (cap
 			err = scanConfigSnapshot(tx.QueryRow(ctx, `INSERT INTO config_snapshots(device_id,captured_by,digest,size_bytes,option_count,ciphertext,drift)
 				VALUES($1,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7)
 				RETURNING `+configSnapshotColumns,
-				deviceID, userID, digest, len(result.Output), len(cfg), ciphertext, out.Changed), &out.Snapshot)
+				deviceID, userID, digest, len(result.Output), len(cfg), ciphertext, out.Changed && !ownChange), &out.Snapshot)
 		}
 		if err == nil {
 			_, err = tx.Exec(ctx, `DELETE FROM config_snapshots WHERE device_id=$1 AND id NOT IN (

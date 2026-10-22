@@ -2,7 +2,7 @@
 
 A lightweight, self-hosted control plane for OpenWrt devices. OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the same Go process. Docker Compose is the initial deployment target.
 
-> **Early development:** inventory, authentication, audit UI/API, SSH enrollment, read-only health checks, and opt-in persistent monitoring are implemented. Configuration changes, router-side SSH key installation/rotation, RADIUS, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet.
+> **Early development:** inventory, authentication, user management, audit UI/API, SSH enrollment, read-only health checks, opt-in persistent monitoring, encrypted configuration snapshots with drift detection, and one controlled configuration change (hostname, with automatic rollback) are implemented. Broader configuration changes, router-side SSH key installation/rotation, RADIUS, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet.
 
 ## Project status at a glance
 
@@ -76,6 +76,10 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 - `POST /api/users` — administrator-only; creates a user from JSON `username`, `role` (`admin`, `operator`, `readonly`) and `password`.
 - `PATCH /api/users/{id}` — administrator-only; changes `role` and/or `disabled`. Either change signs the user out. The last active administrator cannot be demoted or disabled. Users are disabled rather than deleted so the audit trail keeps its names.
 - `POST /api/users/{id}/password` — administrator-only; sets a user's password and signs them out.
+- `GET /api/config-settings` — administrator-only; lists the settings OpenManage can change (currently `system.hostname`).
+- `POST /api/devices/{id}/config-changes` — administrator-only; previews a change from JSON `setting` and `value`. Reads the device's current value and changes nothing. A preview is valid for 10 minutes.
+- `POST /api/devices/{id}/config-changes/{change}/apply` — administrator-only; applies a preview through rpcd with `uci apply` rollback armed, verifies the new value over a fresh SSH connection, then confirms. The result's `status` is `applied`, `rolled_back` (verification failed; the old value is restored) or `failed` (nothing was applied, for example because the value changed since the preview or another apply is pending).
+- `GET /api/devices/{id}/config-changes` — administrator-only; the last 50 changes for a device.
 - `GET /api/monitoring/settings` — reads persistent server-side monitoring settings.
 - `PUT /api/monitoring/settings` — administrator-only; enables/disables monitoring and sets an interval from 60 to 3600 seconds. Optional `snapshots_enabled` and `snapshot_interval_seconds` (900 to 86400) turn on scheduled configuration snapshots, independently of health monitoring; omitted fields keep their current values.
 - `GET /api/monitoring/history?limit=50` — returns recent persisted monitoring outcomes (limit 1–100).

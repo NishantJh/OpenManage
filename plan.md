@@ -80,6 +80,9 @@ Start read-only: capture configuration snapshots (`uci export`), encrypted at re
 - [x] Snapshot and drift UI: per-device capture, history, and change view with secrets hidden.
 - [x] Scheduled snapshots alongside monitoring (opt-in, 15 min to 24 h), so drift is noticed without a manual capture; drift stays flagged on the device until an administrator acknowledges it.
 - [x] Dashboard "Configuration drift" count, a drift tag per device, snapshot schedule settings, and "Mark changes reviewed" in the UI.
+- [x] First controlled write (API): the system hostname on one device. Preview stores the current value; an administrator applies it through an rpcd session with `uci apply` rollback armed (60 s); a fresh SSH connection must read the new value back before `uci confirm`, otherwise OpenManage rolls back. Stale previews and concurrent applies (including one pending from LuCI) are refused. A baseline snapshot is taken first and the follow-up snapshot is not counted as drift. Lab-tested for apply, confirm surviving the window, stale preview, pending apply, and forced rollback.
+- [ ] Hostname change UI (preview, apply, history).
+- [ ] Next settings on the same engine (for example Wi-Fi SSID/channel), each with a lab rollback test.
 
 - Model templates and revisions in PostgreSQL with explicit validation and immutable revision history.
 - Render a preview and diff before applying; validate target compatibility and require explicit operator confirmation.

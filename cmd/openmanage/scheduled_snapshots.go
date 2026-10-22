@@ -77,7 +77,7 @@ func (a *app) runSnapshotBatch(ctx context.Context, lockConn *pgxpool.Conn, sett
 func (a *app) runScheduledSnapshot(parent context.Context, deviceID string) {
 	ctx, cancel := context.WithTimeout(parent, healthCheckTimeout+3*time.Second)
 	defer cancel()
-	if _, fail := a.captureSnapshot(ctx, deviceID, ""); fail != nil {
+	if _, fail := a.captureSnapshot(ctx, deviceID, "", false); fail != nil {
 		a.snapshotRetry.fail(deviceID, time.Now())
 		// The message is one of captureSnapshot's fixed, secret-free strings.
 		log.Printf("scheduled configuration snapshot failed for device %s: %s", deviceID, fail.msg)
