@@ -75,6 +75,11 @@ Exit criteria: health checks are reliable, resource-bounded, auditable, and use 
 
 Start read-only: capture configuration snapshots (`uci export`), encrypted at rest because they can contain Wi-Fi keys and other secrets, then detect drift between snapshots. Only then add writes, starting with one narrow setting on a single device. Prefer OpenWrt's rpcd `uci apply` with `rollback` and `confirm` for timed rollback.
 
+- [x] Read-only snapshots: `uci export` captured on demand by administrators, AES-256-GCM encrypted and bound to the device, keyed-HMAC digest for drift, last 100 kept per device.
+- [x] Drift: UCI-aware diff between consecutive snapshots, with secret-looking option values redacted.
+- [ ] Snapshot and drift UI, and the dashboard "Configuration drift" count.
+- [ ] Scheduled snapshots alongside monitoring (opt-in), so drift is noticed without a manual capture.
+
 - Model templates and revisions in PostgreSQL with explicit validation and immutable revision history.
 - Render a preview and diff before applying; validate target compatibility and require explicit operator confirmation.
 - Apply structured, validated configuration changes (prefer UCI-aware operations) rather than arbitrary shell text.
