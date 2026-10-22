@@ -55,6 +55,32 @@ Keep a record of which application version the dump came from, and preserve the 
 
 If the database restore fails, keep the app stopped until the cause is understood. Do not run a partial or unverified restore against the only copy of the data.
 
+## Recovery drill
+
+`scripts/restore-drill.sh` proves the procedure above on disposable stacks. It needs Docker Compose, `curl`, `python3`, `openssl`, and Go (the credential check runs the app's own encrypt/decrypt code via two skipped-by-default tests in `cmd/openmanage/restore_drill_test.go`). It uses a generated encryption key and fake credentials only.
+
+```sh
+scripts/restore-drill.sh
+```
+
+The drill:
+
+1. Starts a source stack, creates a device through the API (producing a `device.create` audit row), and stores a fake credential encrypted with the generated key. Real SSH enrollment needs a live router, so the ciphertext is inserted directly.
+2. Stops the app and takes a `pg_dump --format=custom`.
+3. Starts a second, fresh stack with an empty database and the same key, stops its app, runs `pg_restore --clean --if-exists --no-owner --no-privileges`, and restarts the app.
+4. Verifies device and audit row counts match, the device and audit history are visible through the API after login, and the restored ciphertext is byte-identical, decrypts to the original plaintext with the key, and fails with a wrong key.
+5. Removes both stacks and volumes, and prints versions and timings.
+
+Ports default to 18081 and 18082 (`OPENMANAGE_DRILL_SRC_PORT`, `OPENMANAGE_DRILL_DST_PORT`). The script never touches your real `.env` or volumes. Timings include building the app image when it is not cached and vary with host speed, so compare them only on the same host.
+
+### Drill record
+
+| Date | Host | Application revision | PostgreSQL | Backup | Restore | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-22 | WSL2 Docker (Docker Compose 5.6.0) | ce11f64 | 17.11 | <1 s (16,071-byte dump) | 11 s | Passed |
+
+OM-SAF-06 is satisfied by the passing run recorded above; re-run the drill after schema, backup, or encryption-key handling changes and add a new row.
+
 ## Recovery limitations
 
 - This procedure covers the PostgreSQL logical backup and the encryption key, not router configuration backups or the router-side SSH authorized-key state.
