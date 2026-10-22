@@ -51,14 +51,14 @@ Exit criteria: tests cover critical enrollment failure paths; credential changes
 
 Exit criteria: the user can enroll a device through the UI, see a safe outcome, and cannot retrieve the stored private key.
 
-### 2. Shared device-operations engine and health — partly done
+### 2. Shared device-operations engine and health — done
 
 Read-only health checks and monitoring are shipped and run through the typed operation engine in `operations.go`.
 
 - [x] Read-only health checks with bounded output and timeouts, reused by monitoring.
 - [x] Extract a typed operation engine (name, read/write class, role, timeout, output limit, audit policy) and move health checks and monitoring onto it with no behaviour change. Document that read-only operation audits may be best-effort, while write operations must audit transactionally. (`cmd/openmanage/operations.go`; write-class operations are refused until Section 3 adds transactional audit and rollback.)
 - [x] Populate device model and firmware automatically from `ubus call system board` results (the basis for firmware inventory). Health checks and monitoring overwrite them with what the device reports; fields it does not report are left as entered.
-- [ ] Split the frontend into components with a shared fetch/CSRF helper, with no behaviour change, before configuration UI is added.
+- [x] Split the frontend into components with a shared fetch/CSRF helper, with no behaviour change, before configuration UI is added. (`web/src/api.ts`, `web/src/components/`.)
 
 Design notes:
 
