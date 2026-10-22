@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"time"
 
@@ -37,6 +38,10 @@ const (
 	changeStepTimeout = 10 * time.Second
 )
 
+// writableSetting is one UCI option OpenManage may change. Old and new values are
+// stored in config_changes and the audit log in plain text, so a secret option (a
+// Wi-Fi key, a RADIUS secret) must not be added here until those are encrypted and
+// redacted the way snapshots are.
 type writableSetting struct {
 	Key      string
 	Label    string
@@ -150,6 +155,7 @@ func (a *app) listWritableSettings(w http.ResponseWriter, r *http.Request) {
 	for _, s := range writableSettings {
 		out = append(out, map[string]string{"key": s.Key, "label": s.Label, "help": s.Help})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i]["label"] < out[j]["label"] })
 	writeJSON(w, http.StatusOK, out)
 }
 
