@@ -10,3 +10,5 @@ export type ConfigChange={path:string;kind:"added"|"removed"|"changed";old?:stri
 export type SnapshotChanges={snapshot_id:number;first:boolean;changes:ConfigChange[]};
 export type Role="admin"|"operator"|"readonly";
 export type UserRecord={id:string;username:string;role:Role;created_at:string;disabled:boolean;disabled_at:string|null};
+export type WritableSetting={key:string;label:string;help:string};
+export type ConfigChangeRecord={id:number;device_id:string;setting:string;label:string;old_value:string;new_value:string;status:"previewed"|"applying"|"applied"|"rolled_back"|"failed"|"expired";detail:string;created_at:string;expires_at:string;finished_at:string|null};
