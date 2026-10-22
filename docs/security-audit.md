@@ -55,7 +55,9 @@ The coupled PostgreSQL dump and `OPENMANAGE_ENCRYPTION_KEY` recovery procedure i
 
 ### OM-SAF-07 — HTTP request controls need broader verification
 
-**Severity: Medium / follow-up**
+**Severity: Medium / follow-up — remediated; see status below**
+
+Status 2026-10-22: every JSON write endpoint now decodes through one helper that enforces a per-endpoint body cap (login 4 KiB, device create 8 KiB, monitoring 4 KiB, enrollment 32 KiB), rejects unknown fields and trailing data, and applies field-length limits (username, password, device name/address/model/firmware). Every `/api/` request gets a 25-second context deadline, below the 30-second server write timeout, so database and device work cannot outlive the response. Tests cover malformed, unknown-field, trailing, oversized, and over-length bodies on each endpoint, and assert the timeout ordering. The original finding follows.
 
 The enrollment body is limited to 32 KiB and the HTTP server has read-header, read, write, and idle timeouts. Login and inventory writes use a larger 1 MiB body cap. Continue testing oversized and malformed bodies, trailing JSON, cancellation, and timeout behavior across every write endpoint. Consider tighter limits for small JSON APIs and explicit request-context deadlines for database work.
 

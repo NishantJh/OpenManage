@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -114,15 +113,12 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req enrollRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 32*1024)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid enrollment request")
-		return
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "Request must contain a single JSON object")
+	if err := decodeJSONBody(w, r, enrollmentBodyLimit, &req); err != nil {
+		if errors.Is(err, errTrailingJSON) {
+			writeError(w, http.StatusBadRequest, "Request must contain a single JSON object")
+		} else {
+			writeError(w, http.StatusBadRequest, "Invalid enrollment request")
+		}
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)

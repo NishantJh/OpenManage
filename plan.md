@@ -32,7 +32,7 @@ Finish the remaining Section 0 and 1 items first; most are small. Then extract t
 - [x] Format Go sources and make CI reject unformatted Go files.
 - [x] Reject malformed device IDs before database queries.
 - [x] Add an enrollment request body-size cap and test malformed/oversized enrollment payloads.
-- [ ] Verify request-size and timeout behavior across all API handlers.
+- [x] Verify request-size and timeout behavior across all API handlers (per-endpoint body caps, single-object decoding, field-length limits, and a per-request API deadline below the server write timeout).
 - [x] Improve dependency reproducibility: generated `go.sum` and `web/package-lock.json` were committed in PR #32 (generator run [39588749075](https://github.com/NishantJh/OpenManage/actions/runs/39588749075)); post-merge main CI passed ([run 39816060882](https://github.com/NishantJh/OpenManage/actions/runs/39816060882)). CI and PR validation use `npm ci` and `go mod tidy -diff`, and the Dockerfile builds from the lockfiles with `npm ci` and `go mod verify`.
 - [x] Document the PostgreSQL and OPENMANAGE_ENCRYPTION_KEY backup/restore procedure; recovery testing remains an operator task.
 - [ ] Run and record a disposable-stack restore exercise, including verification that an enrolled credential decrypts with the restored key.
