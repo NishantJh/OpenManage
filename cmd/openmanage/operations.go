@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -16,8 +18,9 @@ import (
 // Every SSH action against a device goes through this file. An operation is a named,
 // server-owned definition; callers pick operations by name and never supply command
 // text. Health checks and monitoring use the read-only operations below. Write
-// operations are not executable yet: they need transactional audit and a rollback
-// path (plan.md Section 3) before runOperation will accept one.
+// operations run only through runWrite, from the controlled change workflow in
+// config_changes.go, which audits transactionally and arranges a timed rollback.
+// Their parameters travel on stdin as one JSON line, never inside the command.
 
 type operationClass string
 
@@ -202,18 +205,35 @@ func (s *deviceSession) Close() {
 	_ = s.client.Close()
 }
 
-// run executes one operation with its own timeout and output limit. Results never
-// include stderr or raw SSH errors.
+// run executes one read operation with its own timeout and output limit. Results
+// never include stderr or raw SSH errors.
 func (s *deviceSession) run(op operation) operationResult {
+	if op.Class != operationRead {
+		return operationResult{Name: op.Name, Label: op.Label, Status: "error", Error: errWriteOperationDisabled.Error()}
+	}
+	return s.execute(op, nil)
+}
+
+// runWrite executes a write operation with input marshalled to a single JSON line
+// on stdin. Only the controlled change workflow calls it.
+func (s *deviceSession) runWrite(op operation, input any) operationResult {
+	if op.Class != operationWrite {
+		return operationResult{Name: op.Name, Label: op.Label, Status: "error", Error: "not a write operation"}
+	}
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return operationResult{Name: op.Name, Label: op.Label, Status: "error", Error: "invalid operation input"}
+	}
+	return s.execute(op, append(payload, '\n'))
+}
+
+func (s *deviceSession) execute(op operation, stdin []byte) operationResult {
 	result := operationResult{Name: op.Name, Label: op.Label}
 	start := time.Now()
 	finish := func(status, msg string) operationResult {
 		result.Status, result.Error = status, msg
 		result.Duration = time.Since(start).Milliseconds()
 		return result
-	}
-	if op.Class != operationRead {
-		return finish("error", errWriteOperationDisabled.Error())
 	}
 	session, err := s.client.NewSession()
 	if err != nil {
@@ -224,6 +244,9 @@ func (s *deviceSession) run(op operation) operationResult {
 	stdout := &boundedBuffer{limit: op.OutputLimit}
 	session.Stdout = stdout
 	session.Stderr = &boundedBuffer{limit: operationErrLimit}
+	if stdin != nil {
+		session.Stdin = bytes.NewReader(stdin)
+	}
 	var timedOut atomic.Bool
 	timer := time.AfterFunc(op.Timeout, func() {
 		timedOut.Store(true)

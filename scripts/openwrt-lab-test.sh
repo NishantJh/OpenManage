@@ -176,6 +176,75 @@ scheduled_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SEL
 [[ "$scheduled_audit" == 1 ]] || fail "scheduled drift was not audited as a system action"
 echo "PASS: scheduled snapshots notice drift without a manual capture"
 
+# Controlled configuration change: preview, apply with rpcd rollback armed, verify
+# over a fresh connection, confirm.
+router_hostname() { docker exec "$router" uci get system.@system[0].hostname; }
+api GET /api/config-settings
+json 'assert any(x["key"]=="system.hostname" for x in d), d' < "$body"
+api POST "/api/devices/$device_id/config-changes" '{"setting":"system.hostname","value":"bad name"}'
+[[ "$status" == 400 ]] || fail "invalid hostname preview returned HTTP $status"
+api POST "/api/devices/$device_id/config-changes" '{"setting":"system.hostname","value":"lab-applied"}'
+[[ "$status" == 201 ]] || { cat "$body" >&2; fail "change preview returned HTTP $status"; }
+change_id="$(json 'assert d["status"]=="previewed" and d["old_value"]=="lab-scheduled" and d["new_value"]=="lab-applied", d; print(d["id"])' < "$body")"
+[[ "$(router_hostname)" == lab-scheduled ]] || fail "preview changed the device"
+api POST "/api/devices/$device_id/config-changes/$change_id/apply"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "change apply returned HTTP $status"; }
+json 'assert d["status"]=="applied" and "confirmed" in d["detail"], d' < "$body"
+sleep 1
+[[ "$(router_hostname)" == lab-applied ]] || fail "applied hostname is not on the device"
+api POST "/api/devices/$device_id/config-changes/$change_id/apply"
+[[ "$status" == 409 ]] || fail "a used preview was applied twice (HTTP $status)"
+api GET "/api/devices/$device_id/config-snapshots"
+json 'assert not d[0]["drift"], d[0]' < "$body"
+echo "PASS: a controlled change is previewed, applied, verified and confirmed, and is not reported as drift"
+
+# The confirm must arrive: after the rollback window the change is still there.
+sleep 62
+[[ "$(router_hostname)" == lab-applied ]] || fail "confirmed change was rolled back by the rpcd timer"
+echo "PASS: a confirmed change survives the rollback window"
+
+api POST "/api/devices/$device_id/config-changes" '{"setting":"system.hostname","value":"lab-stale"}'
+stale_id="$(json 'print(d["id"])' < "$body")"
+docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-outside && uci commit system"
+api POST "/api/devices/$device_id/config-changes/$stale_id/apply"
+json 'assert d["status"]=="failed" and "changed since the preview" in d["detail"], d' < "$body"
+[[ "$(router_hostname)" == lab-outside ]] || fail "a stale change touched the device"
+echo "PASS: a change whose preview is stale is refused without touching the device"
+
+# A pending apply from someone else (for example LuCI) blocks ours; nothing is applied.
+api POST "/api/devices/$device_id/config-changes" '{"setting":"system.hostname","value":"lab-blocked"}'
+blocked_id="$(json 'print(d["id"])' < "$body")"
+docker exec "$router" sh -c '
+  sid=$(ubus call session create "{\"timeout\":300}" | jsonfilter -e @.ubus_rpc_session)
+  ubus call session grant "{\"ubus_rpc_session\":\"$sid\",\"scope\":\"uci\",\"objects\":[[\"system\",\"read\"],[\"system\",\"write\"]]}"
+  ubus call uci set "{\"ubus_rpc_session\":\"$sid\",\"config\":\"system\",\"section\":\"@system[0]\",\"values\":{\"description\":\"lab-pending\"}}"
+  ubus call uci apply "{\"ubus_rpc_session\":\"$sid\",\"rollback\":true,\"timeout\":15}"' >/dev/null
+api POST "/api/devices/$device_id/config-changes/$blocked_id/apply"
+json 'assert d["status"]=="failed" and "refused to apply" in d["detail"], d' < "$body"
+[[ "$(router_hostname)" == lab-outside ]] || fail "a blocked change touched the device"
+sleep 17
+echo "PASS: a change is refused while another apply is pending on the device"
+
+# Forced rollback: a lab-only ubus wrapper reports a wrong value once a change has been
+# applied, so verification fails and OpenManage must roll the device back.
+docker exec "$router" sh -c 'mv /bin/ubus /bin/ubus.real && cat > /bin/ubus <<"W"
+#!/bin/sh
+[ "$1 $2 $3" = "call uci apply" ] && touch /tmp/om-lab-applied
+if [ "$1 $2 $3" = "call uci get" ] && [ -f /tmp/om-lab-applied ]; then echo "{\"value\":\"tampered\"}"; exit 0; fi
+exec /bin/ubus.real "$@"
+W
+chmod +x /bin/ubus'
+api POST "/api/devices/$device_id/config-changes" '{"setting":"system.hostname","value":"lab-rollback"}'
+rollback_id="$(json 'print(d["id"])' < "$body")"
+api POST "/api/devices/$device_id/config-changes/$rollback_id/apply"
+docker exec "$router" sh -c 'mv /bin/ubus.real /bin/ubus && rm -f /tmp/om-lab-applied'
+json 'assert d["status"]=="rolled_back" and "previous configuration was restored" in d["detail"], d' < "$body"
+sleep 1
+[[ "$(router_hostname)" == lab-outside ]] || fail "a failed verification did not roll the device back"
+echo "PASS: a change that fails verification is rolled back"
+applied_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action IN ('device.config_change.applied','device.config_change.failed','device.config_change.rolled_back')")"
+[[ "$applied_audit" == 4 ]] || fail "config change audit events: $applied_audit (expected 4)"
+
 # A spare address in the same private subnet has no SSH listener.
 unreachable_ip="$(python3 -c 'import ipaddress,sys; n=ipaddress.ip_interface(sys.argv[1]+"/16").network; print(n.broadcast_address-2)' "$router_ip")"
 api POST /api/devices "{\"name\":\"lab-missing\",\"address\":\"$unreachable_ip\"}"
