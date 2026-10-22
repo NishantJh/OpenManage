@@ -71,7 +71,20 @@ const (
 	enrollCodeServerError     = "server_error"
 )
 
+const sshKeyAAD = "openmanage:ssh-private-key:v1"
+
 func encryptSecret(key []byte, plaintext []byte) ([]byte, error) {
+	return sealSecret(key, plaintext, sshKeyAAD)
+}
+
+func decryptSecret(key, ciphertext []byte) ([]byte, error) {
+	return openSecret(key, ciphertext, sshKeyAAD)
+}
+
+// sealSecret encrypts with AES-256-GCM under a fresh nonce. aad names what the
+// plaintext is (and whose), so a ciphertext copied to another row or purpose fails
+// to decrypt.
+func sealSecret(key, plaintext []byte, aad string) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -84,10 +97,10 @@ func encryptSecret(key []byte, plaintext []byte) ([]byte, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	return append(nonce, gcm.Seal(nil, nonce, plaintext, []byte("openmanage:ssh-private-key:v1"))...), nil
+	return append(nonce, gcm.Seal(nil, nonce, plaintext, []byte(aad))...), nil
 }
 
-func decryptSecret(key, ciphertext []byte) ([]byte, error) {
+func openSecret(key, ciphertext []byte, aad string) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -100,7 +113,7 @@ func decryptSecret(key, ciphertext []byte) ([]byte, error) {
 		return nil, errors.New("encrypted credential is truncated")
 	}
 	nonce, payload := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
-	return gcm.Open(nil, nonce, payload, []byte("openmanage:ssh-private-key:v1"))
+	return gcm.Open(nil, nonce, payload, []byte(aad))
 }
 
 func isPrivateDeviceIP(address string) bool {

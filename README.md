@@ -66,6 +66,9 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 - `DELETE /api/devices/{id}` — deletes one record.
 - `POST /api/devices/{id}/enroll` — verifies a pinned SSH host key and public-key login, then stores the management private key encrypted at rest. Request JSON: `username`, `private_key`, and `expected_fingerprint` (the `SHA256:...` fingerprint must be verified independently). Errors include a stable `code` (`encryption_key_missing`, `encryption_key_invalid`, `invalid_request`, `device_not_found`, `address_not_private`, `invalid_private_key`, `device_unreachable`, `host_key_mismatch`, `ssh_auth_failed`, `key_not_verified`, `server_error`).
 - `POST /api/devices/{id}/health-check` — runs a fixed set of read-only diagnostics for an enrolled device.
+- `POST /api/devices/{id}/config-snapshots` — administrator-only; reads the device's `uci export` and stores it encrypted at rest. Returns `first`, `changed` (drift since the previous snapshot) and `change_count`. An unchanged configuration only refreshes `last_verified_at`. The last 100 snapshots per device are kept.
+- `GET /api/devices/{id}/config-snapshots` — administrator-only; lists snapshot metadata, newest first.
+- `GET /api/devices/{id}/config-snapshots/{snapshot}/changes` — administrator-only; lists UCI paths added, removed or changed since the previous snapshot. Values of secret-looking options (keys, passwords, secrets, tokens) are redacted, and the raw configuration is never returned.
 - `GET /api/monitoring/settings` — reads persistent server-side monitoring settings.
 - `PUT /api/monitoring/settings` — administrator-only; enables/disables monitoring and sets an interval from 60 to 3600 seconds.
 - `GET /api/monitoring/history?limit=50` — returns recent persisted monitoring outcomes (limit 1–100).

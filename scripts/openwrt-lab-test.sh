@@ -130,6 +130,30 @@ api GET "/api/devices/$device_id"
 json 'assert d["firmware"].startswith("OpenWrt 24.10"), d' < "$body"
 echo "PASS: health check records the firmware the router reports"
 
+api POST "/api/devices/$device_id/config-snapshots"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "first config snapshot returned HTTP $status"; }
+first_snapshot="$(json 'assert d["first"] and not d["changed"] and d["snapshot"]["option_count"]>50, d; print(d["snapshot"]["id"])' < "$body")"
+api POST "/api/devices/$device_id/config-snapshots"
+json 'assert not d["first"] and not d["changed"] and d["snapshot"]["id"]==int(sys.argv[1]), d' "$first_snapshot" < "$body"
+echo "PASS: config snapshot captured; an unchanged config is not stored twice"
+snapshot_secret="lab-secret-$RANDOM$RANDOM"
+docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-router && uci set system.@system[0].api_key='$snapshot_secret' && uci commit system"
+api POST "/api/devices/$device_id/config-snapshots"
+second_snapshot="$(json 'assert d["changed"] and d["change_count"]==2, d; print(d["snapshot"]["id"])' < "$body")"
+api GET "/api/devices/$device_id/config-snapshots/$second_snapshot/changes"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "snapshot changes returned HTTP $status"; }
+! grep -q "$snapshot_secret" "$body" || fail "snapshot diff leaked a secret value"
+json '
+c={x["path"]:x for x in d["changes"]}
+assert c["system.@system[0].hostname"]=={"path":"system.@system[0].hostname","kind":"changed","old":"OpenWrt","new":"lab-router"}, c
+assert c["system.@system[0].api_key"]["redacted"] and "new" not in c["system.@system[0].api_key"], c
+assert len(c)==2, c' < "$body"
+api GET "/api/devices/$device_id/config-snapshots"
+json 'assert len(d)==2, d' < "$body"
+leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM config_snapshots WHERE position(convert_to('$snapshot_secret','UTF8') in ciphertext)>0 OR position(convert_to('lab-router','UTF8') in ciphertext)>0")"
+[[ "$leaks" == 0 ]] || fail "config snapshot plaintext found in PostgreSQL"
+echo "PASS: config drift is detected, secrets are redacted, and snapshots are encrypted at rest"
+
 # A spare address in the same private subnet has no SSH listener.
 unreachable_ip="$(python3 -c 'import ipaddress,sys; n=ipaddress.ip_interface(sys.argv[1]+"/16").network; print(n.broadcast_address-2)' "$router_ip")"
 api POST /api/devices "{\"name\":\"lab-missing\",\"address\":\"$unreachable_ip\"}"
