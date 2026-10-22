@@ -34,6 +34,8 @@ var webFS embed.FS
 type app struct {
 	db           *pgxpool.Pool
 	secureCookie bool
+	// snapshotRetry holds back scheduled snapshots of devices that just failed.
+	snapshotRetry retryTracker
 }
 
 type contextKey string
@@ -57,7 +59,12 @@ type device struct {
 	CreatedAt  time.Time `json:"created_at"`
 	// Enrollable reports whether the address meets enrollment rules (a private IP literal).
 	Enrollable bool `json:"enrollable"`
+	// ConfigDrift is true while the device has configuration drift nobody has acknowledged.
+	ConfigDrift bool `json:"config_drift"`
 }
+
+const deviceColumns = `id::text,name,address,model,firmware,status,last_seen_at,created_at,
+	EXISTS (SELECT 1 FROM config_snapshots cs WHERE cs.device_id=devices.id AND cs.drift AND cs.acknowledged_at IS NULL)`
 
 type auditEvent struct {
 	ID           int64           `json:"id"`
@@ -143,6 +150,7 @@ func main() {
 	mux.HandleFunc("POST /api/devices/{id}/config-snapshots", a.captureConfigSnapshot)
 	mux.HandleFunc("GET /api/devices/{id}/config-snapshots", a.listConfigSnapshots)
 	mux.HandleFunc("GET /api/devices/{id}/config-snapshots/{snapshot}/changes", a.configSnapshotChanges)
+	mux.HandleFunc("POST /api/devices/{id}/config-snapshots/{snapshot}/acknowledge", a.acknowledgeConfigDrift)
 	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
 	mux.HandleFunc("PUT /api/monitoring/settings", a.updateMonitoringSettings)
 	mux.HandleFunc("GET /api/monitoring/history", a.listMonitoringHistory)
@@ -380,7 +388,7 @@ func (a *app) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) listDevices(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.Query(r.Context(), `SELECT id::text,name,address,model,firmware,status,last_seen_at,created_at FROM devices ORDER BY created_at DESC LIMIT 500`)
+	rows, err := a.db.Query(r.Context(), `SELECT `+deviceColumns+` FROM devices ORDER BY created_at DESC LIMIT 500`)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not query devices")
 		return
@@ -389,7 +397,7 @@ func (a *app) listDevices(w http.ResponseWriter, r *http.Request) {
 	out := make([]device, 0)
 	for rows.Next() {
 		var d device
-		if err := rows.Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not read devices")
 			return
 		}
@@ -437,8 +445,8 @@ func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var d device
-	err = tx.QueryRow(r.Context(), `INSERT INTO devices(name,address,model,firmware,status) VALUES($1,$2,$3,$4,'unknown') RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at`, in.Name, in.Address, in.Model, in.Firmware).
-		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt)
+	err = tx.QueryRow(r.Context(), `INSERT INTO devices(name,address,model,firmware,status) VALUES($1,$2,$3,$4,'unknown') RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE`, in.Name, in.Address, in.Model, in.Firmware).
+		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift)
 	if err == nil {
 		err = insertAuditEvent(r.Context(), tx, user.ID, "device.create", "device", d.ID, map[string]string{"name": d.Name, "address": d.Address})
 	}
@@ -459,8 +467,8 @@ func (a *app) getDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var d device
-	err := a.db.QueryRow(r.Context(), `SELECT id::text,name,address,model,firmware,status,last_seen_at,created_at FROM devices WHERE id=$1`, r.PathValue("id")).
-		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt)
+	err := a.db.QueryRow(r.Context(), `SELECT `+deviceColumns+` FROM devices WHERE id=$1`, r.PathValue("id")).
+		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift)
 	if errors.Is(err, pgx.ErrNoRows) || err != nil {
 		writeError(w, http.StatusNotFound, "device not found")
 		return
@@ -532,13 +540,14 @@ func (a *app) listAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// insertAuditEvent records an action; an empty userID records it as the system.
 func insertAuditEvent(ctx context.Context, tx pgx.Tx, userID, action, resourceType, resourceID string, details any) error {
 	data, err := json.Marshal(details)
 	if err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx,
-		"INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)",
+		"INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES(NULLIF($1,'')::uuid,$2,$3,$4,$5)",
 		userID, action, resourceType, resourceID, string(data))
 	return err
 }

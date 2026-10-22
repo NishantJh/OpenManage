@@ -16,7 +16,7 @@ Last updated: 2026-10-22. This section is a quick summary of what works now and 
 - Audit activity API and UI.
 - SSH enrollment: independently verified host-key fingerprint plus SSH public-key authentication; private keys are encrypted at rest and never returned by the API.
 - Enrollment constrained to private IP addresses and TCP/22.
-- Read-only health checks and opt-in, server-side persistent monitoring with bounded concurrency and 30-day history, run through a typed operation engine. Device model and firmware are filled in from what the router reports.
+- Read-only health checks, opt-in scheduled configuration snapshots with drift flags, and opt-in, server-side persistent monitoring with bounded concurrency and 30-day history, run through a typed operation engine. Device model and firmware are filled in from what the router reports.
 - Atomic audit logging for key state changes and bounded login rate limiting.
 - Committed Go and npm lockfiles; CI installs with `npm ci` and fails if dependency metadata drifts.
 
@@ -60,7 +60,7 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 ## API
 
 - `GET /api/healthz` — application and database health.
-- `GET /api/devices` — lists up to 500 inventory records. Each record includes `enrollable`, which is true when the address is a private IP literal that SSH enrollment accepts.
+- `GET /api/devices` — lists up to 500 inventory records. Each record includes `enrollable`, which is true when the address is a private IP literal that SSH enrollment accepts, and `config_drift`, which is true while the device has configuration drift no administrator has acknowledged.
 - `POST /api/devices` — adds a record with JSON fields `name`, `address`, `model`, `firmware`.
 - `GET /api/devices/{id}` — fetches one record.
 - `DELETE /api/devices/{id}` — deletes one record.
@@ -69,8 +69,9 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 - `POST /api/devices/{id}/config-snapshots` — administrator-only; reads the device's `uci export` and stores it encrypted at rest. Returns `first`, `changed` (drift since the previous snapshot) and `change_count`. An unchanged configuration only refreshes `last_verified_at`. The last 100 snapshots per device are kept.
 - `GET /api/devices/{id}/config-snapshots` — administrator-only; lists snapshot metadata, newest first.
 - `GET /api/devices/{id}/config-snapshots/{snapshot}/changes` — administrator-only; lists UCI paths added, removed or changed since the previous snapshot. Values of secret-looking options (keys, passwords, secrets, tokens) are redacted, and the raw configuration is never returned.
+- `POST /api/devices/{id}/config-snapshots/{snapshot}/acknowledge` — administrator-only; marks drift up to and including this snapshot as reviewed, so the device no longer reports `config_drift`.
 - `GET /api/monitoring/settings` — reads persistent server-side monitoring settings.
-- `PUT /api/monitoring/settings` — administrator-only; enables/disables monitoring and sets an interval from 60 to 3600 seconds.
+- `PUT /api/monitoring/settings` — administrator-only; enables/disables monitoring and sets an interval from 60 to 3600 seconds. Optional `snapshots_enabled` and `snapshot_interval_seconds` (900 to 86400) turn on scheduled configuration snapshots, independently of health monitoring; omitted fields keep their current values.
 - `GET /api/monitoring/history?limit=50` — returns recent persisted monitoring outcomes (limit 1–100).
 
 All API routes except `/api/healthz` and `/api/auth/login` require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. `GET /api/audit` returns the latest 100 events and is intended for administrators. The address field is inventory metadata until enrollment is explicitly completed. SSH enrollment verifies a host key fingerprint supplied from a trusted source and authenticates with a private key before storing it encrypted at rest. Enrollment accepts private IP literals only (no DNS names, public addresses, or link-local addresses) and uses TCP/22. Configure `OPENMANAGE_ENCRYPTION_KEY` using a securely backed-up base64-encoded 32-byte random key before enrollment; losing it makes stored SSH credentials unrecoverable. The private key is never returned by the API. Re-enrollment replaces the stored credential only after the new key successfully authenticates; it does not install or rotate `authorized_keys` on the router itself.

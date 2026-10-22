@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -20,9 +23,19 @@ const (
 )
 
 type monitoringSettings struct {
-	Enabled         bool      `json:"enabled"`
-	IntervalSeconds int       `json:"interval_seconds"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	Enabled         bool `json:"enabled"`
+	IntervalSeconds int  `json:"interval_seconds"`
+	// SnapshotsEnabled turns on scheduled configuration snapshots, independently of
+	// health monitoring; SnapshotIntervalSeconds is how often each device is exported.
+	SnapshotsEnabled        bool      `json:"snapshots_enabled"`
+	SnapshotIntervalSeconds int       `json:"snapshot_interval_seconds"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+const monitoringSettingsColumns = `enabled, interval_seconds, snapshots_enabled, snapshot_interval_seconds, updated_at`
+
+func scanMonitoringSettings(row pgx.Row, s *monitoringSettings) error {
+	return row.Scan(&s.Enabled, &s.IntervalSeconds, &s.SnapshotsEnabled, &s.SnapshotIntervalSeconds, &s.UpdatedAt)
 }
 
 type monitoringCheck struct {
@@ -38,8 +51,8 @@ type monitoringCheck struct {
 
 func (a *app) getMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 	var settings monitoringSettings
-	err := a.db.QueryRow(r.Context(), `SELECT enabled, interval_seconds, updated_at
-		FROM monitoring_settings WHERE id=TRUE`).Scan(&settings.Enabled, &settings.IntervalSeconds, &settings.UpdatedAt)
+	err := scanMonitoringSettings(a.db.QueryRow(r.Context(), `SELECT `+monitoringSettingsColumns+`
+		FROM monitoring_settings WHERE id=TRUE`), &settings)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load monitoring settings")
 		return
@@ -51,9 +64,12 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 	if !requireAnyRole(w, r, "admin") {
 		return
 	}
+	// The snapshot fields are optional so older clients keep the current values.
 	var in struct {
-		Enabled         bool `json:"enabled"`
-		IntervalSeconds int  `json:"interval_seconds"`
+		Enabled                 bool  `json:"enabled"`
+		IntervalSeconds         int   `json:"interval_seconds"`
+		SnapshotsEnabled        *bool `json:"snapshots_enabled"`
+		SnapshotIntervalSeconds *int  `json:"snapshot_interval_seconds"`
 	}
 	if err := decodeJSONBody(w, r, monitoringBodyLimit, &in); err != nil {
 		if errors.Is(err, errTrailingJSON) {
@@ -67,6 +83,10 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "monitoring interval must be between 60 and 3600 seconds")
 		return
 	}
+	if in.SnapshotIntervalSeconds != nil && (*in.SnapshotIntervalSeconds < 900 || *in.SnapshotIntervalSeconds > 86400) {
+		writeError(w, http.StatusBadRequest, "snapshot interval must be between 900 and 86400 seconds")
+		return
+	}
 	user := r.Context().Value(userContextKey).(authUser)
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
@@ -75,14 +95,15 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var settings monitoringSettings
-	err = tx.QueryRow(r.Context(), `UPDATE monitoring_settings
-		SET enabled=$1, interval_seconds=$2, updated_at=NOW()
+	err = scanMonitoringSettings(tx.QueryRow(r.Context(), `UPDATE monitoring_settings
+		SET enabled=$1, interval_seconds=$2, snapshots_enabled=COALESCE($3, snapshots_enabled),
+			snapshot_interval_seconds=COALESCE($4, snapshot_interval_seconds), updated_at=NOW()
 		WHERE id=TRUE
-		RETURNING enabled, interval_seconds, updated_at`, in.Enabled, in.IntervalSeconds).
-		Scan(&settings.Enabled, &settings.IntervalSeconds, &settings.UpdatedAt)
+		RETURNING `+monitoringSettingsColumns, in.Enabled, in.IntervalSeconds, in.SnapshotsEnabled, in.SnapshotIntervalSeconds), &settings)
 	if err == nil {
 		err = insertAuditEvent(r.Context(), tx, user.ID, "monitoring.settings.update", "monitoring", "settings",
-			map[string]any{"enabled": in.Enabled, "interval_seconds": in.IntervalSeconds})
+			map[string]any{"enabled": settings.Enabled, "interval_seconds": settings.IntervalSeconds,
+				"snapshots_enabled": settings.SnapshotsEnabled, "snapshot_interval_seconds": settings.SnapshotIntervalSeconds})
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -157,6 +178,8 @@ func (a *app) pruneMonitoringHistory(parent context.Context) {
 	_, _ = a.db.Exec(ctx, "DELETE FROM monitoring_checks WHERE finished_at < NOW() - INTERVAL '30 days'")
 }
 
+// runDueMonitoringChecks runs due health checks and, separately opt-in, due
+// configuration snapshots.
 func (a *app) runDueMonitoringChecks(ctx context.Context) {
 	// A PostgreSQL session-level advisory lock prevents duplicate polling if a
 	// second OpenManage instance is started during an upgrade or recovery.
@@ -182,15 +205,23 @@ func (a *app) runDueMonitoringChecks(ctx context.Context) {
 
 	var settings monitoringSettings
 	settingsCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	err = lockConn.QueryRow(settingsCtx, `SELECT enabled, interval_seconds, updated_at
-		FROM monitoring_settings WHERE id=TRUE`).Scan(&settings.Enabled, &settings.IntervalSeconds, &settings.UpdatedAt)
+	err = scanMonitoringSettings(lockConn.QueryRow(settingsCtx, `SELECT `+monitoringSettingsColumns+`
+		FROM monitoring_settings WHERE id=TRUE`), &settings)
 	cancel()
-	if err != nil || !settings.Enabled {
+	if err != nil {
 		return
 	}
+	if settings.Enabled {
+		a.runMonitoringBatch(ctx, lockConn, settings)
+	}
+	if settings.SnapshotsEnabled {
+		a.runSnapshotBatch(ctx, lockConn, settings)
+	}
+}
 
+func (a *app) runMonitoringBatch(ctx context.Context, lockConn *pgxpool.Conn, settings monitoringSettings) {
 	queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
-	rows, err := lockConn.Query(queryCtx, `SELECT d.id::text
+	ids, err := queryDeviceIDs(queryCtx, lockConn, `SELECT d.id::text
 		FROM devices d
 		JOIN device_credentials dc ON dc.device_id=d.id
 		LEFT JOIN LATERAL (
@@ -201,34 +232,39 @@ func (a *app) runDueMonitoringChecks(ctx context.Context) {
 		   OR last_check.finished_at <= NOW() - ($1 * INTERVAL '1 second')
 		ORDER BY COALESCE(last_check.finished_at, TIMESTAMPTZ 'epoch'), d.created_at
 		LIMIT $2`, settings.IntervalSeconds, monitorBatchLimit)
+	queryCancel()
 	if err != nil {
-		queryCancel()
+		log.Printf("monitoring schedule query failed")
 		return
 	}
+	runBounded(ctx, ids, a.runPersistentCheck)
+}
+
+// queryDeviceIDs runs a query that returns one device ID per row.
+func queryDeviceIDs(ctx context.Context, conn *pgxpool.Conn, sql string, args ...any) ([]string, error) {
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			queryCancel()
-			log.Printf("monitoring schedule query returned an invalid row")
-			return
+			return nil, err
 		}
 		ids = append(ids, id)
 	}
-	rowsErr := rows.Err()
-	rows.Close()
-	queryCancel()
-	if rowsErr != nil {
-		log.Printf("monitoring schedule query failed while reading rows")
-		return
-	}
+	return ids, rows.Err()
+}
+
+// runBounded runs fn for each device on a small bounded worker pool, so one slow
+// router does not delay every other router in the batch, without opening an
+// unbounded number of SSH sessions.
+func runBounded(ctx context.Context, ids []string, fn func(context.Context, string)) {
 	if len(ids) == 0 {
 		return
 	}
-
-	// Run a small bounded worker pool so one slow router does not delay every
-	// other router in the batch, without opening an unbounded number of SSH sessions.
 	workers := monitoringWorkerCount(len(ids))
 	jobs := make(chan string)
 	var wg sync.WaitGroup
@@ -240,7 +276,7 @@ func (a *app) runDueMonitoringChecks(ctx context.Context) {
 				if ctx.Err() != nil {
 					continue
 				}
-				a.runPersistentCheck(ctx, id)
+				fn(ctx, id)
 			}
 		}()
 	}
