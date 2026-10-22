@@ -1,0 +1,20 @@
+name: OpenWrt lab
+# Opt-in: runs enrollment, health checks and monitoring against a disposable OpenWrt
+# rootfs container. GitHub-hosted only; it never runs on the self-hosted runner.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+permissions:
+  contents: read
+concurrency:
+  group: openwrt-lab-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run OpenWrt lab test
+        run: bash scripts/openwrt-lab-test.sh

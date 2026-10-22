@@ -82,6 +82,8 @@ Frontend: `cd web`, then `npm ci` and `npm run dev`.
 
 For Go: `go test ./...` and `go run ./cmd/openmanage`. The embedded frontend must be built into `cmd/openmanage/web/dist` first; the Docker build does this automatically.
 
+Real-OpenWrt lab: `bash scripts/openwrt-lab-test.sh` needs Docker. It runs enrollment, health checks and monitoring (including outage, revoked key and host-key change) against a disposable OpenWrt 24.10 container. CI runs the same script weekly, and on demand from the "OpenWrt lab" workflow.
+
 ## Security and recovery
 
 Do not treat this early build as a production management plane. Review [the safety audit](docs/security-audit.md) and complete the remaining findings before relying on it for routine router administration. Keep it on a trusted LAN, prefer HTTPS, set `OPENMANAGE_COOKIE_SECURE=true` behind a TLS-terminating proxy, and do not forward its port from the internet. See [Backup and recovery](docs/backup-recovery.md) for the coupled database and encryption-key recovery procedure.
