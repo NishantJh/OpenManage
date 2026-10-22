@@ -2,11 +2,11 @@
 
 A lightweight, self-hosted control plane for OpenWrt devices. OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the same Go process. Docker Compose is the initial deployment target.
 
-> **Early development:** inventory, authentication, audit UI/API, SSH enrollment, and read-only health checks are implemented. An opt-in FreeRADIUS lab is under review in [PR #21](https://github.com/NishantJh/OpenManage/pull/21); it is a PAP smoke-test setup, not production WPA-Enterprise support. Configuration changes, router-side SSH key installation/rotation, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet.
+> **Early development:** inventory, authentication, audit UI/API, SSH enrollment, read-only health checks, and opt-in persistent monitoring are implemented. Configuration changes, router-side SSH key installation/rotation, RADIUS, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet.
 
 ## Project status at a glance
 
-Last updated: 2026-10-20. This section is the quick reminder of what works now and what comes next. See [plan.md](plan.md) for the detailed engineering roadmap and [open pull requests](https://github.com/NishantJh/OpenManage/pulls) for work awaiting review or CI.
+Last updated: 2026-10-22. This section is a quick summary of what works now and what comes next. See [plan.md](plan.md) for the detailed roadmap and [open pull requests](https://github.com/NishantJh/OpenManage/pulls) for work in review.
 
 ### Implemented
 
@@ -16,28 +16,20 @@ Last updated: 2026-10-20. This section is the quick reminder of what works now a
 - Audit activity API and UI.
 - SSH enrollment: independently verified host-key fingerprint plus SSH public-key authentication; private keys are encrypted at rest and never returned by the API.
 - Enrollment constrained to private IP addresses and TCP/22.
-- Atomic audit logging for key state changes and bounded login rate limiting (check the roadmap/audit notes for remaining verification work).
-- CI workflows for build/tests and security checks. PR validation must pass on the latest commit before a change is merged.
+- Read-only health checks and opt-in, server-side persistent monitoring with bounded concurrency and 30-day history.
+- Atomic audit logging for key state changes and bounded login rate limiting.
+- Committed Go and npm lockfiles; CI installs with `npm ci` and fails if dependency metadata drifts.
 
-### In progress
+### Next
 
-- **Persistent monitoring — [PR #24](https://github.com/NishantJh/OpenManage/pull/24).** Adds opt-in server-side monitoring, PostgreSQL-backed check history, bounded concurrent SSH checks, and scheduler coordination. CI and disposable OpenWrt-device validation remain required before enabling it on live APs.
-- **FreeRADIUS lab — [PR #21](https://github.com/NishantJh/OpenManage/pull/21).** Adds an opt-in, loopback-bound FreeRADIUS container and a disposable PAP authentication smoke test. This is a lab-only first slice; AP management UI, production secrets, EAP/PEAP certificates, and database-backed identity integration are not included.
-- **Dependency lockfile workflow — [PR #18](https://github.com/NishantJh/OpenManage/pull/18).** Adds trusted generation of Go/npm dependency metadata. Reproducible dependency installation and CI verification still need to be completed.
+The current priority is to finish the remaining hardening and enrollment work, then build product features on a shared, typed operations engine. In order:
 
-### Planned next
-
-1. **Structured configuration workflows:** inspect configuration, define validated changes, show a preview/diff, and require explicit confirmation before applying. Prefer UCI-aware operations over shell text.
-2. **Apply and verify safely:** preflight checks, bounded execution, post-change connectivity/state verification, audit events, and a tested timed rollback where feasible.
-3. **Device lifecycle and fleet visibility:** clearer device details, firmware inventory, operation history/status, and controlled multi-device workflows.
-4. **SSH key lifecycle and named maintenance operations:** explicit install/rotate/revoke workflows and narrowly defined operations with recovery access. No generic command runner.
-5. **Firmware upgrades:** only after single-device compatibility checks, image integrity validation, backup, canary rollout, reboot/health verification, and documented recovery limits.
-6. **Monitoring and RADIUS:** extend manual health checks to scheduled reachability/health monitoring; validate the RADIUS lab before adding trusted AP management and production WPA-Enterprise support.
-7. **Later integrations:** broader topology/IPAM/PKI/VPN integrations only when justified.
-
-### Deferred, not forgotten
-
-The current priority is to make the application work end to end. Broader security hardening can follow, but existing authentication, CSRF protection, SSH host-key verification, encrypted credential storage, role checks, and audit controls remain part of the baseline. Before relying on OpenManage as a routine router-management plane, finish the remaining items in [the safety audit](docs/security-audit.md), including enrollment failure-path coverage, deterministic dependency installation, and a disposable backup/restore exercise.
+1. **Finish hardening:** enrollment failure-path tests, request-size and timeout checks on every handler, clearer enrollment errors in the UI, a real-OpenWrt smoke test, and a recorded backup/restore exercise. See [the safety audit](docs/security-audit.md).
+2. **Shared operations engine:** move health checks and monitoring onto typed, policy-checked operations; fill in model/firmware automatically.
+3. **Read-only configuration:** encrypted configuration snapshots and drift detection.
+4. **Controlled configuration changes:** preview/diff, explicit confirmation, apply with timed rollback, verification, and audit, starting with one setting on one device.
+5. **Built-in RADIUS:** WPA-Enterprise authentication inside the Go app, with no separate RADIUS container.
+6. **Later:** alerts, SSH key lifecycle and encryption-key rotation, then firmware upgrades with canary rollout and honest recovery limits.
 
 ## Design principles
 
@@ -86,7 +78,7 @@ Compose starts with memory limits of 192 MiB for the app and 256 MiB for Postgre
 
 ## Development
 
-Frontend: `cd web`, then `npm install` and `npm run dev`.
+Frontend: `cd web`, then `npm ci` and `npm run dev`.
 
 For Go: `go test ./...` and `go run ./cmd/openmanage`. The embedded frontend must be built into `cmd/openmanage/web/dist` first; the Docker build does this automatically.
 

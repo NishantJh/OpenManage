@@ -6,6 +6,10 @@ This is the roadmap and source of truth for sequencing work. Keep it short and u
 
 Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful OpenWISP concepts but implemented around Go, PostgreSQL, and a React/TypeScript UI. Keep the default deployment small; do not add Redis or another service unless a demonstrated requirement justifies it.
 
+## Priority (agreed 2026-10-22)
+
+Finish the remaining Section 0 and 1 items first; most are small. Then extract the shared operations engine (Section 2) and move on to product work in order: read-only configuration, then controlled writes, then built-in RADIUS. PRs that do not map to a roadmap item get a plan entry first, or are parked as drafts or closed.
+
 ## Current baseline
 
 - Go HTTP API and React/TypeScript UI, served by one app process; PostgreSQL persists inventory and security data.
@@ -14,24 +18,25 @@ Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful O
 - SSH enrollment API verifies an independently verified SHA-256 host-key fingerprint and SSH public-key authentication before storing the private key encrypted with AES-256-GCM.
 - Enrollment is admin-only, limited to private IP literals on TCP/22, and requires OPENMANAGE_ENCRYPTION_KEY.
 - Enrollment does not install or rotate router-side authorized keys, run remote commands, or push configuration.
-- CI on trusted branch pushes runs frontend build, Go tests, and Docker image build on the WSL2 self-hosted runner. There is intentionally no pull_request trigger because the repository is public and untrusted fork code must not run on that runner.
+- CI on trusted branch pushes runs frontend build, Go tests, and Docker image build on the WSL2 self-hosted runner. Pull requests are validated on GitHub-hosted runners only; the repository is public, so untrusted fork code must never run on the self-hosted runner.
 
 ## Roadmap
 
 ### 0. Security and engineering hardening — in progress
 
 - [x] Make credential persistence, device status update, and the enrollment audit event atomic in one database transaction.
-- [ ] Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures.
+- [x] Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures (merged in PR #34).
 - [x] Make inventory create/delete and login/logout audit writes atomic with their corresponding state changes; mandatory audit failure must fail the action (merged in PR #15; post-merge CI, security checks, and CodeQL passed).
-- [x] Add bounded login rate limiting with safe peer-address parsing, no trust in forwarded headers, and Retry-After responses (PR in progress; verify after merge).
+- [x] Add bounded login rate limiting with safe peer-address parsing, no trust in forwarded headers, and Retry-After responses (merged; post-merge verification tracked as OM-SAF-04 in docs/security-audit.md).
 - [ ] Complete the safety-audit findings in docs/security-audit.md before treating this as a routine LAN management plane.
 - [x] Format Go sources and make CI reject unformatted Go files.
 - [x] Reject malformed device IDs before database queries.
 - [x] Add an enrollment request body-size cap and test malformed/oversized enrollment payloads.
 - [ ] Verify request-size and timeout behavior across all API handlers.
-- [ ] Improve dependency reproducibility: the trusted-main workflow merged in PR #28 ran successfully on merge commit `c69f2ed20ab7107ae86605adefd1e5bbcb31ed0c` (run [39588749075](https://github.com/NishantJh/OpenManage/actions/runs/39588749075)); generation/tests passed, artifact `dependency-metadata` was uploaded and digest-verified on download, and branch `chore/dependency-lockfiles-39588749075` was pushed with generated `go.mod`, `go.sum`, and `web/package-lock.json`. Follow-up PR adds the generated lockfiles and changes main/PR CI to verify with `npm ci` and `go mod tidy -diff`. Keep this unchecked until that PR's exact-head CI and post-merge main CI pass.
+- [x] Improve dependency reproducibility: generated `go.sum` and `web/package-lock.json` were committed in PR #32 (generator run [39588749075](https://github.com/NishantJh/OpenManage/actions/runs/39588749075)); post-merge main CI passed ([run 39816060882](https://github.com/NishantJh/OpenManage/actions/runs/39816060882)). CI and PR validation use `npm ci` and `go mod tidy -diff`, and the Dockerfile builds from the lockfiles with `npm ci` and `go mod verify`.
 - [x] Document the PostgreSQL and OPENMANAGE_ENCRYPTION_KEY backup/restore procedure; recovery testing remains an operator task.
 - [ ] Run and record a disposable-stack restore exercise, including verification that an enrolled credential decrypts with the restored key.
+- [ ] Default the Compose port binding to `127.0.0.1:8080`; LAN access becomes an explicit `OPENMANAGE_PORT` choice.
 
 Exit criteria: tests cover critical enrollment failure paths; credential changes cannot commit without their audit event; CI passes on the PR head and after merge.
 
@@ -41,13 +46,21 @@ Exit criteria: tests cover critical enrollment failure paths; credential changes
 - [x] Keep private-key material out of local storage, logs, audit details, analytics, and API responses; clear form state after submission and on close.
 - [x] Refresh device status and last-seen data after successful SSH authentication.
 - [x] Allow admins to re-enroll from the inventory without exposing stored secrets.
-- [ ] Verify UI error handling for missing encryption-key configuration, invalid key formats, unreachable devices, and fingerprint mismatch.
+- [ ] Verify UI error handling for missing encryption-key configuration, invalid key formats, unreachable devices, and fingerprint mismatch. Return stable error codes from the API so the UI can show specific guidance.
+- [ ] Validate inventory addresses at creation so devices that cannot be enrolled (hostnames, public or link-local IPs) are flagged up front.
 
 Exit criteria: the user can enroll a device through the UI, see a safe outcome, and cannot retrieve the stored private key.
 
-### 2. Shared device-operations engine and health — next
+### 2. Shared device-operations engine and health — partly done
 
-Design one reusable, bounded SSH operation engine that can support both read-only and future write-capable operations. Begin by implementing only read-only health and diagnostics; the shared engine must not imply that arbitrary commands are allowed.
+Read-only health checks and monitoring are shipped, but they use a fixed command list and SSH runner in `device_health.go` rather than the typed policy engine described here. Extract that engine before any write-capable operation is added.
+
+- [x] Read-only health checks with bounded output and timeouts, reused by monitoring.
+- [ ] Extract a typed operation engine (name, read/write class, role, timeout, output limit, audit policy) and move health checks and monitoring onto it with no behaviour change. Document that read-only operation audits may be best-effort, while write operations must audit transactionally.
+- [ ] Populate device model and firmware automatically from `ubus call system board` results (the basis for firmware inventory).
+- [ ] Split the frontend into components with a shared fetch/CSRF helper, with no behaviour change, before configuration UI is added.
+
+Design notes:
 
 - Reuse stored credentials and pinned host keys; enforce per-device timeouts, cancellation, concurrency limits, output-size limits, and safe error handling.
 - Represent work as typed, named operations with explicit policies: allowed operation, read/write classification, validated parameters, privilege requirements, timeout, and audit requirements.
@@ -59,6 +72,8 @@ Design one reusable, bounded SSH operation engine that can support both read-onl
 Exit criteria: health checks are reliable, resource-bounded, auditable, and use the same policy/execution boundary intended for later controlled writes.
 
 ### 3. Versioned configuration workflows
+
+Start read-only: capture configuration snapshots (`uci export`), encrypted at rest because they can contain Wi-Fi keys and other secrets, then detect drift between snapshots. Only then add writes, starting with one narrow setting on a single device. Prefer OpenWrt's rpcd `uci apply` with `rollback` and `confirm` for timed rollback.
 
 - Model templates and revisions in PostgreSQL with explicit validation and immutable revision history.
 - Render a preview and diff before applying; validate target compatibility and require explicit operator confirmation.
@@ -76,6 +91,8 @@ Exit criteria: changes are reviewable, staged, auditable, and have a tested reco
 - Design router-side key installation, rotation, and revocation as explicit workflows with preflight checks, audit records, and recovery access.
 - Require explicit authorization, confirmation for disruptive actions, bounded execution, and post-operation verification.
 - Preserve least privilege on routers where feasible and ensure failures do not silently remove the only management path.
+- Plan rotation of `OPENMANAGE_ENCRYPTION_KEY` (re-encrypt stored credentials without downtime or data loss).
+- Add minimal user management (create operator/readonly users, change password) when a second user needs access, and before the first configuration write so writes can be authorised by role.
 
 Exit criteria: maintenance and credential lifecycle operations have tested failure recovery and cannot silently lock out management access.
 
@@ -95,8 +112,20 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 
 - [x] Add opt-in server-side monitoring in the existing Go process, persisted settings and per-device check history in PostgreSQL, bounded three-worker batches, PostgreSQL advisory-lock coordination, and 30-day history retention.
 - [ ] Validate real SSH checks against a disposable OpenWrt VM/device and exercise outage, bad credential, pinned-host-key mismatch, and restart recovery scenarios.
-- [ ] Add alert delivery and firmware inventory after persistent monitoring is validated.
-- Consider topology, IPAM, PKI/VPN, RADIUS, multi-user roles, and larger-fleet features only when a concrete use case warrants them.
+- [ ] Add a disposable OpenWrt VM/container smoke job (opt-in) so enrollment and monitoring are exercised against real OpenWrt in CI.
+- [ ] Add alert delivery after persistent monitoring is validated: one outbound webhook (ntfy/Gotify-compatible), no new service.
+- Consider topology, IPAM, PKI/VPN, Wi-Fi planning, and larger-fleet features only when a concrete use case warrants them.
+
+### 7. Built-in RADIUS for WPA-Enterprise
+
+RADIUS is built into the Go application rather than run as a separate FreeRADIUS container. It comes after user management and the first controlled configuration write, because it needs user identities and a safe way to push RADIUS settings to APs. EAP (PEAP/TTLS) is security-sensitive protocol code with no mature Go server library, so treat it as high-risk.
+
+- [ ] Design doc: scope, EAP methods, server certificate handling, per-AP shared-secret storage, threat model.
+- [ ] Opt-in UDP 1812 listener in the app with PAP and MAC authentication for a lab, per-AP secrets encrypted at rest, rate limiting, and audit.
+- [ ] PEAP or TTLS with a server certificate, tested against real phone and laptop clients.
+- [ ] Push AP RADIUS configuration through the Section 3 configuration workflow.
+
+Exit criteria: a client can join a managed AP with per-user credentials, failures are audited without logging secrets, and the listener is off unless enabled.
 
 ## Delivery rules
 
