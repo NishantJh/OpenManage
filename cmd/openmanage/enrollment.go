@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -150,28 +151,16 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Private key is not a supported, unencrypted SSH private key")
 		return
 	}
-	var observedFingerprint string
-	config := &ssh.ClientConfig{
-		User:            req.Username,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: pinnedHostKeyCallback(req.ExpectedFingerprint, &observedFingerprint),
-		Timeout:         enrollmentTimeout,
-	}
-	dialer := net.Dialer{Timeout: enrollmentTimeout}
-	conn, err := dialer.DialContext(r.Context(), "tcp", net.JoinHostPort(address, "22"))
+	observedFingerprint, err := verifyDeviceSSH(r.Context(), net.JoinHostPort(address, "22"), req.Username, signer, req.ExpectedFingerprint)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "Could not connect to SSH on the device")
+		var dialErr *sshDialError
+		if errors.As(err, &dialErr) {
+			writeError(w, http.StatusBadGateway, "Could not connect to SSH on the device")
+		} else {
+			writeError(w, http.StatusUnprocessableEntity, "SSH authentication failed or host-key fingerprint did not match")
+		}
 		return
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(enrollmentTimeout))
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, net.JoinHostPort(address, "22"), config)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "SSH authentication failed or host-key fingerprint did not match")
-		return
-	}
-	_ = ssh.NewClient(sshConn, chans, reqs).Close()
-	_ = conn.SetDeadline(time.Time{})
 
 	ciphertext, err := encryptSecret(key, []byte(req.PrivateKey))
 	if err != nil {
@@ -185,12 +174,57 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Could not prepare enrollment audit event")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	tx, err := a.db.BeginTx(ctx, pgx.TxOptions{})
+	updated, err := storeEnrollment(r.Context(), a.db, r.PathValue("id"), user.ID, req.Username, ciphertext, observedFingerprint, string(auditDetails))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not start credential transaction")
+		writeError(w, http.StatusInternalServerError, "Could not persist enrollment and audit event")
 		return
+	}
+	writeJSON(w, http.StatusOK, enrollResponse{
+		DeviceID: r.PathValue("id"), Username: req.Username,
+		Fingerprint: observedFingerprint, UpdatedAt: updated,
+	})
+}
+
+// sshDialError marks failures to reach the device, as opposed to SSH handshake
+// failures such as a host-key mismatch or rejected credentials.
+type sshDialError struct{ err error }
+
+func (e *sshDialError) Error() string { return e.err.Error() }
+func (e *sshDialError) Unwrap() error { return e.err }
+
+// verifyDeviceSSH completes an SSH handshake against hostPort, accepting only the
+// pinned host-key fingerprint, and returns the fingerprint that was observed.
+func verifyDeviceSSH(ctx context.Context, hostPort, username string, signer ssh.Signer, expectedFingerprint string) (string, error) {
+	var observedFingerprint string
+	config := &ssh.ClientConfig{
+		User:            username,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: pinnedHostKeyCallback(expectedFingerprint, &observedFingerprint),
+		Timeout:         enrollmentTimeout,
+	}
+	dialer := net.Dialer{Timeout: enrollmentTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", hostPort)
+	if err != nil {
+		return "", &sshDialError{err}
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(enrollmentTimeout))
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, hostPort, config)
+	if err != nil {
+		return "", err
+	}
+	_ = ssh.NewClient(sshConn, chans, reqs).Close()
+	return observedFingerprint, nil
+}
+
+// storeEnrollment upserts the device credential, marks the device online, and
+// writes the audit event in one transaction so none is persisted without the others.
+func storeEnrollment(ctx context.Context, db *pgxpool.Pool, deviceID, userID, username string, ciphertext []byte, fingerprint, auditDetails string) (time.Time, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return time.Time{}, err
 	}
 	defer tx.Rollback(ctx)
 	var updated time.Time
@@ -200,24 +234,17 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 			"ON CONFLICT (device_id) DO UPDATE SET username=EXCLUDED.username, "+
 			"private_key_ciphertext=EXCLUDED.private_key_ciphertext, host_key_fingerprint=EXCLUDED.host_key_fingerprint, updated_at=NOW() "+
 			"RETURNING updated_at",
-		r.PathValue("id"), req.Username, ciphertext, observedFingerprint).Scan(&updated)
+		deviceID, username, ciphertext, fingerprint).Scan(&updated)
 	if err == nil {
-		_, err = tx.Exec(ctx, "UPDATE devices SET status='online', last_seen_at=NOW(), updated_at=NOW() WHERE id=$1", r.PathValue("id"))
+		_, err = tx.Exec(ctx, "UPDATE devices SET status='online', last_seen_at=NOW(), updated_at=NOW() WHERE id=$1", deviceID)
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx,
 			"INSERT INTO audit_events(user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5)",
-			user.ID, "device.enrolled", "device", r.PathValue("id"), string(auditDetails))
+			userID, "device.enrolled", "device", deviceID, auditDetails)
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
 	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not persist enrollment and audit event")
-		return
-	}
-	writeJSON(w, http.StatusOK, enrollResponse{
-		DeviceID: r.PathValue("id"), Username: req.Username,
-		Fingerprint: observedFingerprint, UpdatedAt: updated,
-	})
+	return updated, err
 }
