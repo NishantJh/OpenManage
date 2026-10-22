@@ -332,44 +332,29 @@ func (a *app) monitorDevice(ctx context.Context, deviceID string) (string, strin
 		return "error", "stored credential is invalid"
 	}
 
-	dialer := net.Dialer{Timeout: monitorCheckTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(address, "22"))
-	if err != nil {
-		return "offline", "SSH port unreachable"
-	}
-	defer conn.Close()
-	watchDone := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = conn.Close()
-		case <-watchDone:
-		}
-	}()
-	defer close(watchDone)
 	deadline := time.Now().Add(monitorCheckTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
-	_ = conn.SetDeadline(deadline)
-	config := &ssh.ClientConfig{
-		User: username,
-		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: func(_ string, _ net.Addr, hostKey ssh.PublicKey) error {
-			if ssh.FingerprintSHA256(hostKey) != fingerprint {
-				return errors.New("pinned host key mismatch")
-			}
-			return nil
-		},
-		Timeout: monitorCheckTimeout,
+	client, err := dialPinnedSSH(ctx, net.JoinHostPort(address, "22"), username, signer, fingerprint, deadline)
+	var dialErr *sshDialError
+	if errors.As(err, &dialErr) {
+		return "offline", "SSH port unreachable"
 	}
-	sshConn, channels, requests, err := ssh.NewClientConn(conn, net.JoinHostPort(address, "22"), config)
 	if err != nil {
 		// Do not label authentication or host-key verification failures as device outages.
 		return "error", "SSH authentication or pinned host-key verification failed"
 	}
-	client := ssh.NewClient(sshConn, channels, requests)
 	defer client.Close()
+	watchDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = client.Close()
+		case <-watchDone:
+		}
+	}()
+	defer close(watchDone)
 
 	failures := 0
 	for _, command := range openWrtHealthCommands {

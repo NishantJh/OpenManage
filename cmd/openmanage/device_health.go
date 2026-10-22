@@ -151,38 +151,22 @@ func (a *app) runDeviceHealthCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config := &ssh.ClientConfig{
-		User: username,
-		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: func(_ string, _ net.Addr, hostKey ssh.PublicKey) error {
-			if ssh.FingerprintSHA256(hostKey) != fingerprint {
-				return errors.New("host key fingerprint mismatch")
-			}
-			return nil
-		},
-		Timeout: healthCheckTimeout,
-	}
-	dialer := net.Dialer{Timeout: healthCheckTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(address, "22"))
-	if err != nil {
-		a.recordHealthCheckOutcome(r, "device.health_check.failed", r.PathValue("id"), "connection_failed")
-		writeError(w, http.StatusBadGateway, "could not connect to the enrolled device over SSH")
-		return
-	}
-	defer conn.Close()
 	deadline := time.Now().Add(healthCheckTimeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
 	}
-	_ = conn.SetDeadline(deadline)
-
-	sshConn, channels, requests, err := ssh.NewClientConn(conn, net.JoinHostPort(address, "22"), config)
+	client, err := dialPinnedSSH(ctx, net.JoinHostPort(address, "22"), username, signer, fingerprint, deadline)
+	var dialErr *sshDialError
+	if errors.As(err, &dialErr) {
+		a.recordHealthCheckOutcome(r, "device.health_check.failed", r.PathValue("id"), "connection_failed")
+		writeError(w, http.StatusBadGateway, "could not connect to the enrolled device over SSH")
+		return
+	}
 	if err != nil {
 		a.recordHealthCheckOutcome(r, "device.health_check.failed", r.PathValue("id"), "ssh_or_host_key_failed")
 		writeError(w, http.StatusBadGateway, "SSH connection or pinned host-key verification failed")
 		return
 	}
-	client := ssh.NewClient(sshConn, channels, requests)
 	defer client.Close()
 
 	results := make([]healthResult, 0, len(openWrtHealthCommands))

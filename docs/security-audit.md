@@ -63,7 +63,9 @@ The enrollment body is limited to 32 KiB and the HTTP server has read-header, re
 
 ### OM-SAF-08 — Enrollment safety boundaries are good but not yet fully integration-tested
 
-**Severity: Medium** — failure-path tests added in PR #34
+**Severity: Medium** — failure-path tests added in PR #34; real-OpenWrt lab test added
+
+The lab test (`scripts/openwrt-lab-test.sh`) found and fixed two bugs. When dropbear offered both RSA and Ed25519 host keys, Go negotiated RSA, so an Ed25519 pin always failed. A router with a blank root password let SSH "none" auth through, so enrollment "verified" any key; it now fails with `key_not_verified`.
 
 Enrollment restricts targets to private IP literals, TCP/22, independently pinned SHA-256 host keys, and SSH key authentication before persistence. The private key is encrypted with AES-256-GCM and excluded from API responses/audit details. Tests still need to cover SSH authentication/fingerprint failures, re-enrollment preserving existing credentials after failure, and database/audit failure rollback. Keep arbitrary remote command execution disabled until the typed operation engine and its policy checks are implemented.
 
