@@ -12,6 +12,7 @@ Last updated: 2026-10-22. This section is a quick summary of what works now and 
 
 - Go HTTP API, React/TypeScript frontend, PostgreSQL persistence, and Docker Compose deployment.
 - Administrator bootstrap, session authentication, role checks, CSRF protection, and security headers.
+- User management API: create users, change roles, disable, and reset or change passwords, with sessions revoked on each change.
 - Device inventory: add, view, and delete devices.
 - Audit activity API and UI.
 - SSH enrollment: independently verified host-key fingerprint plus SSH public-key authentication; private keys are encrypted at rest and never returned by the API.
@@ -70,6 +71,11 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 - `GET /api/devices/{id}/config-snapshots` — administrator-only; lists snapshot metadata, newest first.
 - `GET /api/devices/{id}/config-snapshots/{snapshot}/changes` — administrator-only; lists UCI paths added, removed or changed since the previous snapshot. Values of secret-looking options (keys, passwords, secrets, tokens) are redacted, and the raw configuration is never returned.
 - `POST /api/devices/{id}/config-snapshots/{snapshot}/acknowledge` — administrator-only; marks drift up to and including this snapshot as reviewed, so the device no longer reports `config_drift`.
+- `POST /api/auth/password` — changes the caller's own password (JSON `current_password`, `new_password`, 12–72 bytes). Other sessions of that user are signed out; wrong current passwords count towards the login rate limit.
+- `GET /api/users` — administrator-only; lists users with role and disabled state.
+- `POST /api/users` — administrator-only; creates a user from JSON `username`, `role` (`admin`, `operator`, `readonly`) and `password`.
+- `PATCH /api/users/{id}` — administrator-only; changes `role` and/or `disabled`. Either change signs the user out. The last active administrator cannot be demoted or disabled. Users are disabled rather than deleted so the audit trail keeps its names.
+- `POST /api/users/{id}/password` — administrator-only; sets a user's password and signs them out.
 - `GET /api/monitoring/settings` — reads persistent server-side monitoring settings.
 - `PUT /api/monitoring/settings` — administrator-only; enables/disables monitoring and sets an interval from 60 to 3600 seconds. Optional `snapshots_enabled` and `snapshot_interval_seconds` (900 to 86400) turn on scheduled configuration snapshots, independently of health monitoring; omitted fields keep their current values.
 - `GET /api/monitoring/history?limit=50` — returns recent persisted monitoring outcomes (limit 1–100).

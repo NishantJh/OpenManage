@@ -184,6 +184,52 @@ api POST "/api/devices/$missing_id/enroll" "$(enroll_body "$work/mgmt_key" "$hos
 expect_code 502 device_unreachable "enrollment reports an unreachable device"
 api DELETE "/api/devices/$missing_id"
 
+# User management: a second user, role changes and disabling revoke sessions, and the
+# last active administrator cannot be removed.
+login_as() { # username password jar -> sets $status, $csrf_other
+  status="$(curl --silent -o "$body" -w '%{http_code}' -c "$3" -H 'Content-Type: application/json' \
+    --data "{\"username\":\"$1\",\"password\":\"$2\"}" "$base_url/api/auth/login")"
+  [[ "$status" != 200 ]] || csrf_other="$(json 'print(d["csrf_token"])' < "$body")"
+}
+api_as() { # jar csrf method path [json-body]
+  local args=(--silent -o "$body" -w '%{http_code}' -X "$3" -b "$1" -H "X-CSRF-Token: $2")
+  [[ $# -ge 5 ]] && args+=(-H 'Content-Type: application/json' --data "$5")
+  status="$(curl "${args[@]}" "$base_url$4")"
+}
+op_jar="$work/operator.cookies"
+api POST /api/users '{"username":"lab-operator","role":"operator","password":"lab-operator-pass-1"}'
+[[ "$status" == 201 ]] || { cat "$body" >&2; fail "creating a user returned HTTP $status"; }
+op_id="$(json 'assert d["role"]=="operator" and not d["disabled"], d; print(d["id"])' < "$body")"
+api POST /api/users '{"username":"lab-operator","role":"readonly","password":"lab-operator-pass-1"}'
+[[ "$status" == 409 ]] || fail "duplicate username returned HTTP $status"
+login_as lab-operator lab-operator-pass-1 "$op_jar"; [[ "$status" == 200 ]] || fail "new operator could not log in"
+api_as "$op_jar" "$csrf_other" GET /api/users; [[ "$status" == 403 ]] || fail "operator listed users (HTTP $status)"
+api_as "$op_jar" "$csrf_other" POST /api/auth/password '{"current_password":"wrong-password-000","new_password":"lab-operator-pass-2"}'
+[[ "$status" == 403 ]] || fail "wrong current password returned HTTP $status"
+api_as "$op_jar" "$csrf_other" POST /api/auth/password '{"current_password":"lab-operator-pass-1","new_password":"lab-operator-pass-2"}'
+[[ "$status" == 200 ]] || fail "changing own password returned HTTP $status"
+api_as "$op_jar" "$csrf_other" GET /api/auth/me; [[ "$status" == 200 ]] || fail "password change ended the caller's own session"
+api PATCH "/api/users/$op_id" '{"role":"readonly"}'
+json 'assert d["role"]=="readonly", d' < "$body"
+api_as "$op_jar" "$csrf_other" GET /api/auth/me; [[ "$status" == 401 ]] || fail "role change did not revoke sessions (HTTP $status)"
+login_as lab-operator lab-operator-pass-2 "$op_jar"; [[ "$status" == 200 ]] || fail "login with the new password failed"
+api PATCH "/api/users/$op_id" '{"disabled":true}'
+json 'assert d["disabled"], d' < "$body"
+api_as "$op_jar" "$csrf_other" GET /api/auth/me; [[ "$status" == 401 ]] || fail "disabling did not revoke sessions"
+login_as lab-operator lab-operator-pass-2 "$op_jar"; [[ "$status" == 401 ]] || fail "disabled user could log in (HTTP $status)"
+api GET /api/users
+admin_id="$(json 'print([u["id"] for u in d if u["username"]=="admin"][0])' < "$body")"
+api PATCH "/api/users/$admin_id" '{"role":"operator"}'
+[[ "$status" == 409 ]] || fail "last administrator could be demoted (HTTP $status)"
+api PATCH "/api/users/$admin_id" '{"disabled":true}'
+[[ "$status" == 409 ]] || fail "last administrator could be disabled (HTTP $status)"
+api GET /api/auth/me; [[ "$status" == 200 ]] || fail "administrator session was lost"
+users_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action IN ('user.create','user.update','user.password_change')")"
+[[ "$users_audit" == 4 ]] || fail "user management audit events: $users_audit (expected 4)"
+! compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events WHERE resource_type='user'" | grep -q "lab-operator-pass" \
+  || fail "a password reached the audit log"
+echo "PASS: user management creates, demotes and disables users, revokes their sessions, and keeps one administrator"
+
 # Monitoring scenarios. Clearing this device's history makes it due on the next
 # 15-second scheduler poll instead of waiting a full interval.
 make_due() { compose exec -T db psql -q -U openmanage -d openmanage -c "DELETE FROM monitoring_checks WHERE device_id='$device_id'" >/dev/null; }

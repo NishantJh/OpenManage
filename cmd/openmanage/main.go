@@ -151,6 +151,11 @@ func main() {
 	mux.HandleFunc("GET /api/devices/{id}/config-snapshots", a.listConfigSnapshots)
 	mux.HandleFunc("GET /api/devices/{id}/config-snapshots/{snapshot}/changes", a.configSnapshotChanges)
 	mux.HandleFunc("POST /api/devices/{id}/config-snapshots/{snapshot}/acknowledge", a.acknowledgeConfigDrift)
+	mux.HandleFunc("POST /api/auth/password", a.changeOwnPassword)
+	mux.HandleFunc("GET /api/users", a.listUsers)
+	mux.HandleFunc("POST /api/users", a.createUser)
+	mux.HandleFunc("PATCH /api/users/{id}", a.updateUser)
+	mux.HandleFunc("POST /api/users/{id}/password", a.resetUserPassword)
 	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
 	mux.HandleFunc("PUT /api/monitoring/settings", a.updateMonitoringSettings)
 	mux.HandleFunc("GET /api/monitoring/history", a.listMonitoringHistory)
@@ -234,7 +239,7 @@ func (a *app) authMiddleware(next http.Handler) http.Handler {
 		err = a.db.QueryRow(r.Context(), `
 			SELECT u.id::text,u.username,u.role
 			FROM sessions s JOIN users u ON u.id=s.user_id
-			WHERE s.token_hash=$1 AND s.expires_at > NOW()`, hash).Scan(&user.ID, &user.Username, &user.Role)
+			WHERE s.token_hash=$1 AND s.expires_at > NOW() AND u.disabled_at IS NULL`, hash).Scan(&user.ID, &user.Username, &user.Role)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "session expired or invalid")
 			return
@@ -290,7 +295,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	}
 	var user authUser
 	var passwordHash string
-	err := a.db.QueryRow(r.Context(), "SELECT id::text,username,role,password_hash FROM users WHERE username=$1", in.Username).
+	err := a.db.QueryRow(r.Context(), "SELECT id::text,username,role,password_hash FROM users WHERE username=$1 AND disabled_at IS NULL", in.Username).
 		Scan(&user.ID, &user.Username, &user.Role, &passwordHash)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(in.Password)) != nil {
 		loginAttempts.recordFailure(clientIP, time.Now())
