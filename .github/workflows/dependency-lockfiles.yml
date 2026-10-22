@@ -33,12 +33,12 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.10"
+          go-version: "1.27.3"
           cache: false
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Generate Go dependency metadata
         run: go mod tidy
