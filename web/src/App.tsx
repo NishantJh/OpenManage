@@ -14,6 +14,7 @@ const enrollGuidance:Record<string,string>={
  invalid_private_key:"The key could not be read. Paste a complete, unencrypted OpenSSH or PEM private key, including the BEGIN and END lines.",
  device_unreachable:"Nothing answered on TCP/22. Check that the device is powered on, SSH (dropbear) is running, and this server can reach the address.",
  host_key_mismatch:"The device presented a different host key. Re-check the fingerprint from a trusted console on the router. If the key really changed, find out why before trusting it.",
+ key_not_verified:"The router let OpenManage in without checking the key, which usually means root has no password. Set a root password (run passwd on the router or use LuCI), then enroll again so the key itself is verified.",
  ssh_auth_failed:"The device rejected the key. Make sure its public key is in /etc/dropbear/authorized_keys on the router and the username is correct.",
  invalid_request:"Fill in the username, the private key, and a fingerprint starting with SHA256:.",
 };

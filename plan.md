@@ -111,8 +111,8 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 ### 6. Monitoring and later integrations
 
 - [x] Add opt-in server-side monitoring in the existing Go process, persisted settings and per-device check history in PostgreSQL, bounded three-worker batches, PostgreSQL advisory-lock coordination, and 30-day history retention.
-- [ ] Validate real SSH checks against a disposable OpenWrt VM/device and exercise outage, bad credential, pinned-host-key mismatch, and restart recovery scenarios.
-- [ ] Add a disposable OpenWrt VM/container smoke job (opt-in) so enrollment and monitoring are exercised against real OpenWrt in CI.
+- [x] Validate real SSH checks against a disposable OpenWrt VM/device and exercise outage, bad credential, pinned-host-key mismatch, and restart recovery scenarios. (`scripts/openwrt-lab-test.sh`, OpenWrt 24.10.4 rootfs container.)
+- [ ] Add a disposable OpenWrt VM/container smoke job (opt-in) so enrollment and monitoring are exercised against real OpenWrt in CI. The script exists; the workflow job is still to do.
 - [ ] Add alert delivery after persistent monitoring is validated: one outbound webhook (ntfy/Gotify-compatible), no new service.
 - Consider topology, IPAM, PKI/VPN, Wi-Fi planning, and larger-fleet features only when a concrete use case warrants them.
 

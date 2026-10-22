@@ -67,6 +67,7 @@ const (
 	enrollCodeUnreachable     = "device_unreachable"
 	enrollCodeHostKeyMismatch = "host_key_mismatch"
 	enrollCodeAuthFailed      = "ssh_auth_failed"
+	enrollCodeKeyNotVerified  = "key_not_verified"
 	enrollCodeServerError     = "server_error"
 )
 
@@ -210,6 +211,8 @@ func classifyEnrollmentSSHError(err error) (int, string, string) {
 	switch {
 	case errors.As(err, &dialErr):
 		return http.StatusBadGateway, enrollCodeUnreachable, "Could not connect to SSH on the device"
+	case errors.Is(err, errKeyNotUsed):
+		return http.StatusUnprocessableEntity, enrollCodeKeyNotVerified, "The device allowed login without checking the SSH key, so the key could not be verified"
 	case errors.Is(err, errHostKeyMismatch):
 		return http.StatusUnprocessableEntity, enrollCodeHostKeyMismatch, "The device's SSH host key did not match the expected fingerprint"
 	case isSSHTransportFailure(err):
@@ -238,26 +241,12 @@ func (e *sshDialError) Unwrap() error { return e.err }
 // verifyDeviceSSH completes an SSH handshake against hostPort, accepting only the
 // pinned host-key fingerprint, and returns the fingerprint that was observed.
 func verifyDeviceSSH(ctx context.Context, hostPort, username string, signer ssh.Signer, expectedFingerprint string) (string, error) {
-	var observedFingerprint string
-	config := &ssh.ClientConfig{
-		User:            username,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: pinnedHostKeyCallback(expectedFingerprint, &observedFingerprint),
-		Timeout:         enrollmentTimeout,
-	}
-	dialer := net.Dialer{Timeout: enrollmentTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", hostPort)
-	if err != nil {
-		return "", &sshDialError{err}
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(enrollmentTimeout))
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, hostPort, config)
+	client, err := dialPinnedSSH(ctx, hostPort, username, signer, expectedFingerprint, time.Now().Add(enrollmentTimeout))
 	if err != nil {
 		return "", err
 	}
-	_ = ssh.NewClient(sshConn, chans, reqs).Close()
-	return observedFingerprint, nil
+	_ = client.Close()
+	return expectedFingerprint, nil
 }
 
 // storeEnrollment upserts the device credential, marks the device online, and
