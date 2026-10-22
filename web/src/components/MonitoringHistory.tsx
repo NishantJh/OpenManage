@@ -1,0 +1,6 @@
+import { RefreshCw } from "lucide-react";
+import type { MonitoringCheck } from "../types";
+
+export default function MonitoringHistory({monitorHistory,onRefresh}:{monitorHistory:MonitoringCheck[];onRefresh:()=>void}){
+ return <div className="audit-section"><div className="section-head"><div><h2>Monitoring history</h2><p>Persisted server-side checks; newest results first.</p></div><button className="secondary" onClick={onRefresh}><RefreshCw size={15}/> Refresh</button></div><div className="table-card"><div className="table-meta"><span>● &nbsp; Recent checks &nbsp; <b>{monitorHistory.length}</b></span><span>Stored in PostgreSQL</span></div><div className="table-scroll"><table><thead><tr><th>DEVICE</th><th>RESULT</th><th>DETAIL</th><th>FINISHED</th><th>DURATION</th></tr></thead><tbody>{monitorHistory.length===0?<tr><td colSpan={5} className="empty">No monitoring checks recorded yet. Enable monitoring to start.</td></tr>:monitorHistory.map(check=><tr key={check.id}><td><b>{check.device_name}</b><small>{check.device_id}</small></td><td><span className={"status "+(check.status==="error"?"degraded":check.status)}><i/>{check.status.toUpperCase()}</span></td><td>{check.reason}</td><td className="last-seen">{new Date(check.finished_at).toLocaleString()}</td><td>{check.duration_ms} ms</td></tr>)}</tbody></table></div></div></div>;
+}
