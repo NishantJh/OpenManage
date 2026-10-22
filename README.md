@@ -16,7 +16,7 @@ Last updated: 2026-10-22. This section is a quick summary of what works now and 
 - Audit activity API and UI.
 - SSH enrollment: independently verified host-key fingerprint plus SSH public-key authentication; private keys are encrypted at rest and never returned by the API.
 - Enrollment constrained to private IP addresses and TCP/22.
-- Read-only health checks and opt-in, server-side persistent monitoring with bounded concurrency and 30-day history.
+- Read-only health checks and opt-in, server-side persistent monitoring with bounded concurrency and 30-day history, run through a typed operation engine. Device model and firmware are filled in from what the router reports.
 - Atomic audit logging for key state changes and bounded login rate limiting.
 - Committed Go and npm lockfiles; CI installs with `npm ci` and fails if dependency metadata drifts.
 

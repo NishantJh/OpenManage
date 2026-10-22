@@ -271,7 +271,7 @@ func (a *app) runPersistentCheck(parent context.Context, deviceID string) {
 	ctx, cancel := context.WithTimeout(parent, monitorCheckTimeout+3*time.Second)
 	defer cancel()
 
-	status, reason := a.monitorDevice(ctx, deviceID)
+	status, reason, inv := a.monitorDevice(ctx, deviceID)
 	finished := time.Now().UTC()
 	duration := finished.Sub(started).Milliseconds()
 
@@ -283,7 +283,9 @@ func (a *app) runPersistentCheck(parent context.Context, deviceID string) {
 	defer tx.Rollback(ctx)
 	if status != "error" {
 		if status == "online" || status == "degraded" {
-			_, err = tx.Exec(ctx, `UPDATE devices SET status=$1,last_seen_at=$2,updated_at=NOW() WHERE id=$3`, status, finished, deviceID)
+			_, err = tx.Exec(ctx, `UPDATE devices SET status=$1,last_seen_at=$2,updated_at=NOW(),
+				model=COALESCE(NULLIF($4,''),model), firmware=COALESCE(NULLIF($5,''),firmware) WHERE id=$3`,
+				status, finished, deviceID, inv.Model, inv.Firmware)
 		} else {
 			_, err = tx.Exec(ctx, `UPDATE devices SET status=$1,updated_at=NOW() WHERE id=$2`, status, deviceID)
 		}
@@ -300,46 +302,51 @@ func (a *app) runPersistentCheck(parent context.Context, deviceID string) {
 	}
 }
 
-func (a *app) monitorDevice(ctx context.Context, deviceID string) (string, string) {
+// monitorDevice returns the device status, a short reason, and any inventory it reported.
+func (a *app) monitorDevice(ctx context.Context, deviceID string) (string, string, deviceInventory) {
 	target, err := a.loadDeviceTarget(ctx, deviceID)
 	switch {
 	case err == nil:
 	case errors.Is(err, errTargetNotFound), errors.Is(err, errTargetNotEnrolled):
-		return "error", "device is not enrolled"
+		return "error", "device is not enrolled", deviceInventory{}
 	case errors.Is(err, errTargetNotPrivate):
-		return "error", "device address is not an allowed private IP"
+		return "error", "device address is not an allowed private IP", deviceInventory{}
 	case errors.Is(err, errTargetKeyUnavailable):
-		return "error", "server encryption key is unavailable"
+		return "error", "server encryption key is unavailable", deviceInventory{}
 	case errors.Is(err, errTargetDecrypt):
-		return "error", "stored credential could not be decrypted"
+		return "error", "stored credential could not be decrypted", deviceInventory{}
 	case errors.Is(err, errTargetBadCredential):
-		return "error", "stored credential is invalid"
+		return "error", "stored credential is invalid", deviceInventory{}
 	default:
-		return "error", "could not load device credentials"
+		return "error", "could not load device credentials", deviceInventory{}
 	}
 
 	session, err := openDeviceSession(ctx, target, monitorCheckTimeout)
 	var dialErr *sshDialError
 	if errors.As(err, &dialErr) {
-		return "offline", "SSH port unreachable"
+		return "offline", "SSH port unreachable", deviceInventory{}
 	}
 	if err != nil {
 		// Do not label authentication or host-key verification failures as device outages.
-		return "error", "SSH authentication or pinned host-key verification failed"
+		return "error", "SSH authentication or pinned host-key verification failed", deviceInventory{}
 	}
 	defer session.Close()
 
 	failures := 0
+	results := make([]operationResult, 0, len(healthOperations))
 	for _, op := range healthOperations {
 		if ctx.Err() != nil {
-			return "degraded", "health check timed out"
+			return "degraded", "health check timed out", inventoryFromResults(results)
 		}
-		if session.run(op).Status != "ok" {
+		result := session.run(op)
+		if result.Status != "ok" {
 			failures++
 		}
+		results = append(results, result)
 	}
+	inv := inventoryFromResults(results)
 	if failures > 0 {
-		return "degraded", strings.TrimSpace(strconv.Itoa(failures) + " read-only health command(s) failed")
+		return "degraded", strings.TrimSpace(strconv.Itoa(failures) + " read-only health command(s) failed"), inv
 	}
-	return "online", "SSH and read-only health checks passed"
+	return "online", "SSH and read-only health checks passed", inv
 }

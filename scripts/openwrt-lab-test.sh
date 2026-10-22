@@ -126,6 +126,9 @@ assert not failed, ("failed diagnostics", failed, d)
 board=[r for r in d["results"] if r["name"]=="system_board"][0]
 assert "OpenWrt" in board["output"], board' < "$body"
 echo "PASS: read-only health checks succeed on real OpenWrt"
+api GET "/api/devices/$device_id"
+json 'assert d["firmware"].startswith("OpenWrt 24.10"), d' < "$body"
+echo "PASS: health check records the firmware the router reports"
 
 # A spare address in the same private subnet has no SSH listener.
 unreachable_ip="$(python3 -c 'import ipaddress,sys; n=ipaddress.ip_interface(sys.argv[1]+"/16").network; print(n.broadcast_address-2)' "$router_ip")"
