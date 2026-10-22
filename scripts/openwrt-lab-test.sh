@@ -153,6 +153,28 @@ json 'assert len(d)==2, d' < "$body"
 leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM config_snapshots WHERE position(convert_to('$snapshot_secret','UTF8') in ciphertext)>0 OR position(convert_to('lab-router','UTF8') in ciphertext)>0")"
 [[ "$leaks" == 0 ]] || fail "config snapshot plaintext found in PostgreSQL"
 echo "PASS: config drift is detected, secrets are redacted, and snapshots are encrypted at rest"
+api GET "/api/devices/$device_id"; json 'assert d["config_drift"], d' < "$body"
+api POST "/api/devices/$device_id/config-snapshots/$second_snapshot/acknowledge"
+json 'assert d["acknowledged"]==1, d' < "$body"
+api GET "/api/devices/$device_id"; json 'assert not d["config_drift"], d' < "$body"
+echo "PASS: drift counts for the device until an administrator acknowledges it"
+
+# Scheduled snapshots: backdating the newest snapshot makes the device due on the
+# next 15-second scheduler poll.
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"snapshots_enabled":true,"snapshot_interval_seconds":900}'
+json 'assert d["snapshots_enabled"] and d["snapshot_interval_seconds"]==900 and not d["enabled"], d' < "$body"
+docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-scheduled && uci commit system"
+compose exec -T db psql -q -U openmanage -d openmanage -c "UPDATE config_snapshots SET last_verified_at=NOW()-INTERVAL '1 hour' WHERE device_id='$device_id'" >/dev/null
+for attempt in $(seq 1 30); do
+  api GET "/api/devices/$device_id/config-snapshots"
+  json 'assert len(d)==3 and d[0]["drift"] and d[0]["acknowledged_at"] is None, d' < "$body" 2>/dev/null && break
+  [[ "$attempt" == 30 ]] && { cat "$body" >&2; fail "scheduled snapshot did not record drift"; }
+  sleep 2
+done
+api GET "/api/devices/$device_id"; json 'assert d["config_drift"], d' < "$body"
+scheduled_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action='device.config_snapshot' AND user_id IS NULL AND details->>'scheduled'='true' AND details->>'changed'='true'")"
+[[ "$scheduled_audit" == 1 ]] || fail "scheduled drift was not audited as a system action"
+echo "PASS: scheduled snapshots notice drift without a manual capture"
 
 # A spare address in the same private subnet has no SSH listener.
 unreachable_ip="$(python3 -c 'import ipaddress,sys; n=ipaddress.ip_interface(sys.argv[1]+"/16").network; print(n.broadcast_address-2)' "$router_ip")"

@@ -78,7 +78,8 @@ Start read-only: capture configuration snapshots (`uci export`), encrypted at re
 - [x] Read-only snapshots: `uci export` captured on demand by administrators, AES-256-GCM encrypted and bound to the device, keyed-HMAC digest for drift, last 100 kept per device.
 - [x] Drift: UCI-aware diff between consecutive snapshots, with secret-looking option values redacted.
 - [x] Snapshot and drift UI: per-device capture, history, and change view with secrets hidden.
-- [ ] Scheduled snapshots alongside monitoring (opt-in), so drift is noticed without a manual capture, and the dashboard "Configuration drift" count.
+- [x] Scheduled snapshots alongside monitoring (opt-in, 15 min to 24 h), so drift is noticed without a manual capture; drift stays flagged on the device until an administrator acknowledges it.
+- [ ] Dashboard "Configuration drift" count, snapshot schedule settings, and an acknowledge button in the UI.
 
 - Model templates and revisions in PostgreSQL with explicit validation and immutable revision history.
 - Render a preview and diff before applying; validate target compatibility and require explicit operator confirmation.

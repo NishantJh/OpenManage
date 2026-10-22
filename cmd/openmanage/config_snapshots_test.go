@@ -48,6 +48,7 @@ func TestConfigSnapshotEndpointsRequireAdmin(t *testing.T) {
 		{name: "capture", handler: (&app{}).captureConfigSnapshot, method: http.MethodPost, path: "/api/devices/" + id + "/config-snapshots"},
 		{name: "list", handler: (&app{}).listConfigSnapshots, method: http.MethodGet, path: "/api/devices/" + id + "/config-snapshots"},
 		{name: "changes", handler: (&app{}).configSnapshotChanges, method: http.MethodGet, path: "/api/devices/" + id + "/config-snapshots/1/changes", snap: "1"},
+		{name: "acknowledge", handler: (&app{}).acknowledgeConfigDrift, method: http.MethodPost, path: "/api/devices/" + id + "/config-snapshots/1/acknowledge", snap: "1"},
 	} {
 		for _, role := range []string{"operator", "readonly"} {
 			t.Run(tc.name+"/"+role, func(t *testing.T) {

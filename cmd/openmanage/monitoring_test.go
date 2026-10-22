@@ -68,3 +68,18 @@ func TestMonitoringWorkerCountIsBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestMonitoringSettingsRejectOutOfRangeSnapshotInterval(t *testing.T) {
+	for _, interval := range []int{0, 60, 899, 86401} {
+		t.Run(strconv.Itoa(interval), func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/monitoring/settings",
+				strings.NewReader(`{"enabled":false,"interval_seconds":300,"snapshots_enabled":true,"snapshot_interval_seconds":`+strconv.Itoa(interval)+`}`))
+			req = req.WithContext(context.WithValue(req.Context(), userContextKey, authUser{ID: "admin-id", Role: "admin"}))
+			rec := httptest.NewRecorder()
+			(&app{}).updateMonitoringSettings(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("snapshot interval %d: expected 400, got %d: %s", interval, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
