@@ -100,7 +100,7 @@ Exit criteria: changes are reviewable, staged, auditable, and have a tested reco
 - Plan rotation of `OPENMANAGE_ENCRYPTION_KEY` (re-encrypt stored credentials without downtime or data loss).
 - Add minimal user management (create operator/readonly users, change password) when a second user needs access, and before the first configuration write so writes can be authorised by role.
   - [x] API: administrators create users, change roles, disable/re-enable and reset passwords; everyone can change their own password. Role changes, disabling and password changes revoke sessions; the last active administrator cannot be demoted or disabled.
-  - [ ] UI for the above.
+  - [x] UI: a Users section for administrators (add, role, disable, reset password) and "Password" in the top bar for everyone.
 
 Exit criteria: maintenance and credential lifecycle operations have tested failure recovery and cannot silently lock out management access.
 

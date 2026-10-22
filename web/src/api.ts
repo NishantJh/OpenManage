@@ -1,7 +1,7 @@
 // Every API call goes through here so state-changing requests always carry the CSRF token.
 export function csrfToken(){return document.cookie.split("; ").find(c=>c.startsWith("om_csrf="))?.slice("om_csrf=".length)??""}
 
-type Method="GET"|"POST"|"PUT"|"DELETE";
+type Method="GET"|"POST"|"PUT"|"PATCH"|"DELETE";
 
 // apiFetch sends a request with the CSRF header on every non-GET call and a JSON body when given one.
 export function apiFetch(path:string,method:Method="GET",body?:unknown,{csrf=true}:{csrf?:boolean}={}){

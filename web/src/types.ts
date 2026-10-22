@@ -8,3 +8,5 @@ export type ConfigSnapshot={id:number;device_id:string;captured_at:string;last_v
 export type CaptureResult={snapshot:ConfigSnapshot;first:boolean;changed:boolean;change_count:number};
 export type ConfigChange={path:string;kind:"added"|"removed"|"changed";old?:string;new?:string;redacted?:boolean};
 export type SnapshotChanges={snapshot_id:number;first:boolean;changes:ConfigChange[]};
+export type Role="admin"|"operator"|"readonly";
+export type UserRecord={id:string;username:string;role:Role;created_at:string;disabled:boolean;disabled_at:string|null};
