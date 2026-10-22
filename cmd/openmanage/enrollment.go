@@ -39,14 +39,34 @@ type enrollResponse struct {
 func encryptionKey() ([]byte, error) {
 	raw := strings.TrimSpace(os.Getenv("OPENMANAGE_ENCRYPTION_KEY"))
 	if raw == "" {
-		return nil, errors.New("OPENMANAGE_ENCRYPTION_KEY is not configured")
+		return nil, errEncryptionKeyMissing
 	}
 	key, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil || len(key) != 32 {
-		return nil, errors.New("OPENMANAGE_ENCRYPTION_KEY must be base64 encoding of exactly 32 random bytes")
+		return nil, errEncryptionKeyInvalid
 	}
 	return key, nil
 }
+
+var (
+	errEncryptionKeyMissing = errors.New("OPENMANAGE_ENCRYPTION_KEY is not configured")
+	errEncryptionKeyInvalid = errors.New("OPENMANAGE_ENCRYPTION_KEY must be base64 encoding of exactly 32 random bytes")
+	errHostKeyMismatch      = errors.New("host key fingerprint mismatch")
+)
+
+// Stable enrollment error codes returned to the UI alongside the human-readable message.
+const (
+	enrollCodeKeyMissing      = "encryption_key_missing"
+	enrollCodeKeyInvalid      = "encryption_key_invalid"
+	enrollCodeInvalidRequest  = "invalid_request"
+	enrollCodeDeviceNotFound  = "device_not_found"
+	enrollCodeAddressRejected = "address_not_private"
+	enrollCodeInvalidKey      = "invalid_private_key"
+	enrollCodeUnreachable     = "device_unreachable"
+	enrollCodeHostKeyMismatch = "host_key_mismatch"
+	enrollCodeAuthFailed      = "ssh_auth_failed"
+	enrollCodeServerError     = "server_error"
+)
 
 func encryptSecret(key []byte, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
@@ -90,7 +110,7 @@ func pinnedHostKeyCallback(expected string, observed *string) ssh.HostKeyCallbac
 		fingerprint := ssh.FingerprintSHA256(hostKey)
 		*observed = fingerprint
 		if fingerprint != expected {
-			return errors.New("host key fingerprint mismatch")
+			return errHostKeyMismatch
 		}
 		return nil
 	}
@@ -107,78 +127,92 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key, err := encryptionKey()
+	if errors.Is(err, errEncryptionKeyInvalid) {
+		writeErrorCode(w, http.StatusServiceUnavailable, enrollCodeKeyInvalid, "SSH enrollment is disabled: server encryption key is not a base64-encoded 32-byte key")
+		return
+	}
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "SSH enrollment is disabled: server encryption key is not configured")
+		writeErrorCode(w, http.StatusServiceUnavailable, enrollCodeKeyMissing, "SSH enrollment is disabled: server encryption key is not configured")
 		return
 	}
 
 	var req enrollRequest
 	if err := decodeJSONBody(w, r, enrollmentBodyLimit, &req); err != nil {
 		if errors.Is(err, errTrailingJSON) {
-			writeError(w, http.StatusBadRequest, "Request must contain a single JSON object")
+			writeErrorCode(w, http.StatusBadRequest, enrollCodeInvalidRequest, "Request must contain a single JSON object")
 		} else {
-			writeError(w, http.StatusBadRequest, "Invalid enrollment request")
+			writeErrorCode(w, http.StatusBadRequest, enrollCodeInvalidRequest, "Invalid enrollment request")
 		}
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
 	req.ExpectedFingerprint = strings.TrimSpace(req.ExpectedFingerprint)
 	if req.Username == "" || len(req.Username) > 128 || len(req.PrivateKey) == 0 || len(req.PrivateKey) > 24*1024 || !strings.HasPrefix(req.ExpectedFingerprint, "SHA256:") || len(req.ExpectedFingerprint) > 100 {
-		writeError(w, http.StatusBadRequest, "Username, private key, and an independently verified SHA256 host-key fingerprint are required")
+		writeErrorCode(w, http.StatusBadRequest, enrollCodeInvalidRequest, "Username, private key, and an independently verified SHA256 host-key fingerprint are required")
 		return
 	}
 
 	var address string
 	if err := a.db.QueryRow(r.Context(), "SELECT address FROM devices WHERE id=$1", r.PathValue("id")).Scan(&address); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "Device not found")
+			writeErrorCode(w, http.StatusNotFound, enrollCodeDeviceNotFound, "Device not found")
 		} else {
-			writeError(w, http.StatusInternalServerError, "Could not load device")
+			writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "Could not load device")
 		}
 		return
 	}
 	if !isPrivateDeviceIP(address) {
-		writeError(w, http.StatusUnprocessableEntity, "Enrollment only permits private IP addresses; DNS names, link-local, and public addresses are rejected")
+		writeErrorCode(w, http.StatusUnprocessableEntity, enrollCodeAddressRejected, "Enrollment only permits private IP addresses; DNS names, link-local, and public addresses are rejected")
 		return
 	}
 
 	signer, err := ssh.ParsePrivateKey([]byte(req.PrivateKey))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "Private key is not a supported, unencrypted SSH private key")
+		writeErrorCode(w, http.StatusBadRequest, enrollCodeInvalidKey, "Private key is not a supported, unencrypted SSH private key")
 		return
 	}
 	observedFingerprint, err := verifyDeviceSSH(r.Context(), net.JoinHostPort(address, "22"), req.Username, signer, req.ExpectedFingerprint)
 	if err != nil {
-		var dialErr *sshDialError
-		if errors.As(err, &dialErr) {
-			writeError(w, http.StatusBadGateway, "Could not connect to SSH on the device")
-		} else {
-			writeError(w, http.StatusUnprocessableEntity, "SSH authentication failed or host-key fingerprint did not match")
-		}
+		status, code, message := classifyEnrollmentSSHError(err)
+		writeErrorCode(w, status, code, message)
 		return
 	}
 
 	ciphertext, err := encryptSecret(key, []byte(req.PrivateKey))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not protect SSH credential")
+		writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "Could not protect SSH credential")
 		return
 	}
 	auditDetails, err := json.Marshal(map[string]string{
 		"username": req.Username, "host_key_fingerprint": observedFingerprint,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not prepare enrollment audit event")
+		writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "Could not prepare enrollment audit event")
 		return
 	}
 	updated, err := storeEnrollment(r.Context(), a.db, r.PathValue("id"), user.ID, req.Username, ciphertext, observedFingerprint, string(auditDetails))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not persist enrollment and audit event")
+		writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "Could not persist enrollment and audit event")
 		return
 	}
 	writeJSON(w, http.StatusOK, enrollResponse{
 		DeviceID: r.PathValue("id"), Username: req.Username,
 		Fingerprint: observedFingerprint, UpdatedAt: updated,
 	})
+}
+
+// classifyEnrollmentSSHError maps a verifyDeviceSSH failure to an HTTP status, a
+// stable code, and a sanitized message. Underlying error text is never returned.
+func classifyEnrollmentSSHError(err error) (int, string, string) {
+	var dialErr *sshDialError
+	switch {
+	case errors.As(err, &dialErr):
+		return http.StatusBadGateway, enrollCodeUnreachable, "Could not connect to SSH on the device"
+	case errors.Is(err, errHostKeyMismatch):
+		return http.StatusUnprocessableEntity, enrollCodeHostKeyMismatch, "The device's SSH host key did not match the expected fingerprint"
+	default:
+		return http.StatusUnprocessableEntity, enrollCodeAuthFailed, "SSH authentication failed with the supplied username and key"
+	}
 }
 
 // sshDialError marks failures to reach the device, as opposed to SSH handshake

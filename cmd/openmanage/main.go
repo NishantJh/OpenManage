@@ -55,6 +55,8 @@ type device struct {
 	Status     string    `json:"status"`
 	LastSeenAt time.Time `json:"last_seen_at"`
 	CreatedAt  time.Time `json:"created_at"`
+	// Enrollable reports whether the address meets enrollment rules (a private IP literal).
+	Enrollable bool `json:"enrollable"`
 }
 
 type auditEvent struct {
@@ -388,6 +390,7 @@ func (a *app) listDevices(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not read devices")
 			return
 		}
+		d.Enrollable = isPrivateDeviceIP(d.Address)
 		out = append(out, d)
 	}
 	if rows.Err() != nil {
@@ -443,6 +446,7 @@ func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create device and record audit event")
 		return
 	}
+	d.Enrollable = isPrivateDeviceIP(d.Address)
 	writeJSON(w, http.StatusCreated, d)
 }
 
@@ -458,6 +462,7 @@ func (a *app) getDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "device not found")
 		return
 	}
+	d.Enrollable = isPrivateDeviceIP(d.Address)
 	writeJSON(w, http.StatusOK, d)
 }
 
@@ -671,6 +676,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// writeErrorCode adds a stable, machine-readable code so the UI can show specific guidance.
+func writeErrorCode(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]string{"error": message, "code": code})
 }
 
 func env(k, fallback string) string {
