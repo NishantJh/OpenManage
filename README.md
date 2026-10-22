@@ -44,7 +44,7 @@ The current priority is to finish the remaining hardening and enrollment work, t
 1. Clone the repository and enter its directory.
 2. Copy .env.example to .env.
 3. Set POSTGRES_PASSWORD and OPENMANAGE_ADMIN_PASSWORD to unique random passwords. The administrator password must be at least 12 characters. The initial administrator is created only when the users table is empty; later changes to these environment variables do not reset an existing account.
-4. Set OPENMANAGE_PORT in .env. For a LAN-only deployment, prefer binding to the server's specific LAN address, such as `192.168.1.10:8080`. Use `0.0.0.0:8080` only if you intend to listen on all IPv4 interfaces and have restricted access with the host/router firewall.
+4. Set OPENMANAGE_PORT in .env. The default, `127.0.0.1:8080`, is reachable only from the server itself (or a reverse proxy running on it). For LAN access, bind to the server's specific LAN address, such as `192.168.1.10:8080`. Use `0.0.0.0:8080` only if you intend to listen on all IPv4 interfaces and have restricted access with the host/router firewall.
 5. **Choose your transport before logging in from another device.** Preferred: put OpenManage behind a trusted HTTPS reverse proxy (for example, Caddy) and set `OPENMANAGE_COOKIE_SECURE=true`. Ensure the browser trusts the proxy certificate. Direct HTTP at `http://<server-lan-ip>:8080` is supported for a trusted, isolated LAN, but login credentials and session cookies are not encrypted in transit; do not use it on guest Wi-Fi, untrusted VLANs, shared networks, or across the internet.
 6. Start the stack:
 
