@@ -4,15 +4,11 @@ import (
 	"context"
 	"errors"
 	"log"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -305,38 +301,24 @@ func (a *app) runPersistentCheck(parent context.Context, deviceID string) {
 }
 
 func (a *app) monitorDevice(ctx context.Context, deviceID string) (string, string) {
-	var address, username, fingerprint string
-	var ciphertext []byte
-	err := a.db.QueryRow(ctx, `SELECT d.address, c.username, c.private_key_ciphertext, c.host_key_fingerprint
-		FROM devices d JOIN device_credentials c ON c.device_id=d.id WHERE d.id=$1`, deviceID).
-		Scan(&address, &username, &ciphertext, &fingerprint)
-	if errors.Is(err, pgx.ErrNoRows) {
+	target, err := a.loadDeviceTarget(ctx, deviceID)
+	switch {
+	case err == nil:
+	case errors.Is(err, errTargetNotFound), errors.Is(err, errTargetNotEnrolled):
 		return "error", "device is not enrolled"
-	}
-	if err != nil {
+	case errors.Is(err, errTargetNotPrivate):
+		return "error", "device address is not an allowed private IP"
+	case errors.Is(err, errTargetKeyUnavailable):
+		return "error", "server encryption key is unavailable"
+	case errors.Is(err, errTargetDecrypt):
+		return "error", "stored credential could not be decrypted"
+	case errors.Is(err, errTargetBadCredential):
+		return "error", "stored credential is invalid"
+	default:
 		return "error", "could not load device credentials"
 	}
-	if !isPrivateDeviceIP(address) {
-		return "error", "device address is not an allowed private IP"
-	}
-	key, err := encryptionKey()
-	if err != nil {
-		return "error", "server encryption key is unavailable"
-	}
-	privateKey, err := decryptSecret(key, ciphertext)
-	if err != nil {
-		return "error", "stored credential could not be decrypted"
-	}
-	signer, err := ssh.ParsePrivateKey(privateKey)
-	if err != nil {
-		return "error", "stored credential is invalid"
-	}
 
-	deadline := time.Now().Add(monitorCheckTimeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
-	client, err := dialPinnedSSH(ctx, net.JoinHostPort(address, "22"), username, signer, fingerprint, deadline)
+	session, err := openDeviceSession(ctx, target, monitorCheckTimeout)
 	var dialErr *sshDialError
 	if errors.As(err, &dialErr) {
 		return "offline", "SSH port unreachable"
@@ -345,24 +327,14 @@ func (a *app) monitorDevice(ctx context.Context, deviceID string) (string, strin
 		// Do not label authentication or host-key verification failures as device outages.
 		return "error", "SSH authentication or pinned host-key verification failed"
 	}
-	defer client.Close()
-	watchDone := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = client.Close()
-		case <-watchDone:
-		}
-	}()
-	defer close(watchDone)
+	defer session.Close()
 
 	failures := 0
-	for _, command := range openWrtHealthCommands {
+	for _, op := range healthOperations {
 		if ctx.Err() != nil {
 			return "degraded", "health check timed out"
 		}
-		result := runHealthCommand(client, command)
-		if result.Status != "ok" {
+		if session.run(op).Status != "ok" {
 			failures++
 		}
 	}

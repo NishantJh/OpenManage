@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"strings"
 	"testing"
 )
@@ -27,28 +28,40 @@ func TestBoundedBufferRejectsExcessOutput(t *testing.T) {
 	}
 }
 
-func TestHealthCommandsAreNamedAndReadOnlyAllowlist(t *testing.T) {
-	if len(openWrtHealthCommands) < 3 {
-		t.Fatalf("expected multiple health commands, got %d", len(openWrtHealthCommands))
+func TestBoundedBufferLimitHoldsThroughIOCopy(t *testing.T) {
+	buffer := &boundedBuffer{limit: 5}
+	if _, err := io.Copy(buffer, strings.NewReader("12345678")); err == nil {
+		t.Fatal("io.Copy must fail once the limit is exceeded")
 	}
-	seen := map[string]bool{}
-	for _, command := range openWrtHealthCommands {
-		if command.Name == "" || command.Label == "" || command.Command == "" {
-			t.Fatalf("incomplete command definition: %#v", command)
-		}
-		if seen[command.Name] {
-			t.Fatalf("duplicate command name %q", command.Name)
-		}
-		seen[command.Name] = true
-		if strings.ContainsAny(command.Command, ";|&`$\n") {
-			t.Errorf("command %q should be a fixed single command, got %q", command.Name, command.Command)
-		}
+	if buffer.String() != "12345" {
+		t.Fatalf("buffer kept %q", buffer.String())
 	}
 }
 
-func TestHealthCommandsDoNotAcceptClientSuppliedCommands(t *testing.T) {
-	// The execution list is server-owned; callers cannot provide command strings.
-	if strings.Contains(strings.Join([]string{openWrtHealthCommands[0].Command}, ""), "$(") {
-		t.Fatal("health command unexpectedly contains shell substitution")
+func TestHealthOperationsAreNamedReadOnlyAllowlist(t *testing.T) {
+	if len(healthOperations) < 3 {
+		t.Fatalf("expected multiple health operations, got %d", len(healthOperations))
+	}
+	seen := map[string]bool{}
+	for _, op := range healthOperations {
+		if op.Name == "" || op.Label == "" || op.command == "" {
+			t.Fatalf("incomplete operation definition: %#v", op)
+		}
+		if seen[op.Name] {
+			t.Fatalf("duplicate operation name %q", op.Name)
+		}
+		seen[op.Name] = true
+		if op.Class != operationRead || op.Audit != auditBestEffort {
+			t.Errorf("health operation %q must be read-only with best-effort audit", op.Name)
+		}
+		if op.Timeout <= 0 || op.Timeout > healthCheckTimeout || op.OutputLimit <= 0 {
+			t.Errorf("health operation %q needs a bounded timeout and output limit", op.Name)
+		}
+		if len(op.Roles) == 0 {
+			t.Errorf("health operation %q allows no roles", op.Name)
+		}
+		if strings.ContainsAny(op.command, ";|&`$\n<>") {
+			t.Errorf("operation %q should be a fixed single command, got %q", op.Name, op.command)
+		}
 	}
 }
