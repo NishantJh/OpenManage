@@ -109,6 +109,7 @@ func (a *app) runDeviceHealthCheck(w http.ResponseWriter, r *http.Request) {
 		deviceStatus = "degraded"
 		outcome = "partial"
 	}
+	inv := inventoryFromResults(results)
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "health check completed but its result could not be persisted")
@@ -116,11 +117,14 @@ func (a *app) runDeviceHealthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	if err == nil {
-		_, err = tx.Exec(ctx, "UPDATE devices SET status=$1,last_seen_at=NOW(),updated_at=NOW() WHERE id=$2", deviceStatus, r.PathValue("id"))
+		_, err = tx.Exec(ctx, `UPDATE devices SET status=$1,last_seen_at=NOW(),updated_at=NOW(),
+			model=COALESCE(NULLIF($3,''),model), firmware=COALESCE(NULLIF($4,''),firmware) WHERE id=$2`,
+			deviceStatus, r.PathValue("id"), inv.Model, inv.Firmware)
 	}
 	if err == nil {
 		err = insertAuditEvent(ctx, tx, r.Context().Value(userContextKey).(authUser).ID, "device.health_check", "device", r.PathValue("id"), map[string]any{
 			"device_name": target.Name, "outcome": outcome, "commands_run": len(results), "commands_failed": failures,
+			"inventory_reported": inv.Model != "" || inv.Firmware != "",
 		})
 	}
 	if err == nil {
