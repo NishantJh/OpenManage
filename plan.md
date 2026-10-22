@@ -46,8 +46,8 @@ Exit criteria: tests cover critical enrollment failure paths; credential changes
 - [x] Keep private-key material out of local storage, logs, audit details, analytics, and API responses; clear form state after submission and on close.
 - [x] Refresh device status and last-seen data after successful SSH authentication.
 - [x] Allow admins to re-enroll from the inventory without exposing stored secrets.
-- [ ] Verify UI error handling for missing encryption-key configuration, invalid key formats, unreachable devices, and fingerprint mismatch. Return stable error codes from the API so the UI can show specific guidance.
-- [ ] Validate inventory addresses at creation so devices that cannot be enrolled (hostnames, public or link-local IPs) are flagged up front.
+- [x] Verify UI error handling for missing encryption-key configuration, invalid key formats, unreachable devices, and fingerprint mismatch. Return stable error codes from the API so the UI can show specific guidance.
+- [x] Validate inventory addresses at creation so devices that cannot be enrolled (hostnames, public or link-local IPs) are flagged up front.
 
 Exit criteria: the user can enroll a device through the UI, see a safe outcome, and cannot retrieve the stored private key.
 

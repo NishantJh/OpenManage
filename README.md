@@ -60,11 +60,11 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 ## API
 
 - `GET /api/healthz` — application and database health.
-- `GET /api/devices` — lists up to 500 inventory records.
+- `GET /api/devices` — lists up to 500 inventory records. Each record includes `enrollable`, which is true when the address is a private IP literal that SSH enrollment accepts.
 - `POST /api/devices` — adds a record with JSON fields `name`, `address`, `model`, `firmware`.
 - `GET /api/devices/{id}` — fetches one record.
 - `DELETE /api/devices/{id}` — deletes one record.
-- `POST /api/devices/{id}/enroll` — verifies a pinned SSH host key and public-key login, then stores the management private key encrypted at rest. Request JSON: `username`, `private_key`, and `expected_fingerprint` (the `SHA256:...` fingerprint must be verified independently).
+- `POST /api/devices/{id}/enroll` — verifies a pinned SSH host key and public-key login, then stores the management private key encrypted at rest. Request JSON: `username`, `private_key`, and `expected_fingerprint` (the `SHA256:...` fingerprint must be verified independently). Errors include a stable `code` (`encryption_key_missing`, `encryption_key_invalid`, `invalid_request`, `device_not_found`, `address_not_private`, `invalid_private_key`, `device_unreachable`, `host_key_mismatch`, `ssh_auth_failed`, `server_error`).
 - `POST /api/devices/{id}/health-check` — runs a fixed set of read-only diagnostics for an enrolled device.
 - `GET /api/monitoring/settings` — reads persistent server-side monitoring settings.
 - `PUT /api/monitoring/settings` — administrator-only; enables/disables monitoring and sets an interval from 60 to 3600 seconds.
