@@ -1,11 +1,11 @@
-FROM node:22-alpine AS frontend
+FROM node:24-alpine AS frontend
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26.10-alpine AS backend
+FROM golang:1.27.3-alpine AS backend
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
