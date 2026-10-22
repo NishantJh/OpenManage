@@ -41,7 +41,7 @@ Login now applies a bounded per-peer-IP failed-attempt limiter with a 10-failure
 
 ### OM-SAF-05 — Dependency resolution is not reproducible
 
-**Severity: Medium — remediated in PR #32 and the follow-up Dockerfile change; post-merge main CI verification pending**
+**Severity: Medium — remediated in PR #32 (post-merge main CI passed) and the follow-up Dockerfile change**
 
 Status 2026-10-22: generated `go.sum` and `web/package-lock.json` are committed. CI and PR validation install with `npm ci` and verify Go metadata with `go mod tidy -diff`, failing on drift. The Dockerfile installs from the lockfiles with `npm ci` and runs `go mod verify`. The original finding follows.
 
@@ -61,7 +61,7 @@ The enrollment body is limited to 32 KiB and the HTTP server has read-header, re
 
 ### OM-SAF-08 — Enrollment safety boundaries are good but not yet fully integration-tested
 
-**Severity: Medium**
+**Severity: Medium** — failure-path tests added in PR #34
 
 Enrollment restricts targets to private IP literals, TCP/22, independently pinned SHA-256 host keys, and SSH key authentication before persistence. The private key is encrypted with AES-256-GCM and excluded from API responses/audit details. Tests still need to cover SSH authentication/fingerprint failures, re-enrollment preserving existing credentials after failure, and database/audit failure rollback. Keep arbitrary remote command execution disabled until the typed operation engine and its policy checks are implemented.
 

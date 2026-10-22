@@ -25,7 +25,7 @@ Finish the remaining Section 0 and 1 items first; most are small. Then extract t
 ### 0. Security and engineering hardening — in progress
 
 - [x] Make credential persistence, device status update, and the enrollment audit event atomic in one database transaction.
-- [ ] Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures.
+- [x] Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures (merged in PR #34).
 - [x] Make inventory create/delete and login/logout audit writes atomic with their corresponding state changes; mandatory audit failure must fail the action (merged in PR #15; post-merge CI, security checks, and CodeQL passed).
 - [x] Add bounded login rate limiting with safe peer-address parsing, no trust in forwarded headers, and Retry-After responses (merged; post-merge verification tracked as OM-SAF-04 in docs/security-audit.md).
 - [ ] Complete the safety-audit findings in docs/security-audit.md before treating this as a routine LAN management plane.
@@ -33,7 +33,7 @@ Finish the remaining Section 0 and 1 items first; most are small. Then extract t
 - [x] Reject malformed device IDs before database queries.
 - [x] Add an enrollment request body-size cap and test malformed/oversized enrollment payloads.
 - [ ] Verify request-size and timeout behavior across all API handlers.
-- [ ] Improve dependency reproducibility: generated `go.sum` and `web/package-lock.json` were committed in PR #32 (generator run [39588749075](https://github.com/NishantJh/OpenManage/actions/runs/39588749075)). CI and PR validation use `npm ci` and `go mod tidy -diff`, and the Dockerfile builds from the lockfiles with `npm ci` and `go mod verify`. Check this off once post-merge main CI passes on those commits.
+- [x] Improve dependency reproducibility: generated `go.sum` and `web/package-lock.json` were committed in PR #32 (generator run [39588749075](https://github.com/NishantJh/OpenManage/actions/runs/39588749075)); post-merge main CI passed ([run 39816060882](https://github.com/NishantJh/OpenManage/actions/runs/39816060882)). CI and PR validation use `npm ci` and `go mod tidy -diff`, and the Dockerfile builds from the lockfiles with `npm ci` and `go mod verify`.
 - [x] Document the PostgreSQL and OPENMANAGE_ENCRYPTION_KEY backup/restore procedure; recovery testing remains an operator task.
 - [ ] Run and record a disposable-stack restore exercise, including verification that an enrolled credential decrypts with the restored key.
 - [ ] Default the Compose port binding to `127.0.0.1:8080`; LAN access becomes an explicit `OPENMANAGE_PORT` choice.
