@@ -41,7 +41,9 @@ Login now applies a bounded per-peer-IP failed-attempt limiter with a 10-failure
 
 ### OM-SAF-05 — Dependency resolution is not reproducible
 
-**Severity: Medium**
+**Severity: Medium — remediated in PR #32 and the follow-up Dockerfile change; post-merge main CI verification pending**
+
+Status 2026-10-22: generated `go.sum` and `web/package-lock.json` are committed. CI and PR validation install with `npm ci` and verify Go metadata with `go mod tidy -diff`, failing on drift. The Dockerfile installs from the lockfiles with `npm ci` and runs `go mod verify`. The original finding follows.
 
 The repository has no committed Go `go.sum` and no frontend `package-lock.json` at the audited revision. CI and Docker builds use `go mod tidy` / `npm install`, which may resolve changing dependency versions and can mutate dependency metadata during CI. Generate and commit real lockfiles from the project toolchains, switch to `npm ci`, use `go mod download` or equivalent verification in CI, and ensure CI fails if dependency files are stale. Do not fabricate lockfiles.
 

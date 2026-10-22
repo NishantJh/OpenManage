@@ -1,14 +1,14 @@
 FROM node:22-alpine AS frontend
 WORKDIR /src/web
-COPY web/package.json ./
-RUN npm install --no-audit --no-fund
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
 FROM golang:1.26.10-alpine AS backend
 WORKDIR /src
-COPY go.mod ./
-RUN go mod download
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 COPY . .
 RUN mkdir -p cmd/openmanage/web/dist
 COPY --from=frontend /src/web/dist/ ./cmd/openmanage/web/dist/
