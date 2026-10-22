@@ -53,10 +53,10 @@ Exit criteria: the user can enroll a device through the UI, see a safe outcome, 
 
 ### 2. Shared device-operations engine and health — partly done
 
-Read-only health checks and monitoring are shipped, but they use a fixed command list and SSH runner in `device_health.go` rather than the typed policy engine described here. Extract that engine before any write-capable operation is added.
+Read-only health checks and monitoring are shipped and run through the typed operation engine in `operations.go`.
 
 - [x] Read-only health checks with bounded output and timeouts, reused by monitoring.
-- [ ] Extract a typed operation engine (name, read/write class, role, timeout, output limit, audit policy) and move health checks and monitoring onto it with no behaviour change. Document that read-only operation audits may be best-effort, while write operations must audit transactionally.
+- [x] Extract a typed operation engine (name, read/write class, role, timeout, output limit, audit policy) and move health checks and monitoring onto it with no behaviour change. Document that read-only operation audits may be best-effort, while write operations must audit transactionally. (`cmd/openmanage/operations.go`; write-class operations are refused until Section 3 adds transactional audit and rollback.)
 - [ ] Populate device model and firmware automatically from `ubus call system board` results (the basis for firmware inventory).
 - [ ] Split the frontend into components with a shared fetch/CSRF helper, with no behaviour change, before configuration UI is added.
 
