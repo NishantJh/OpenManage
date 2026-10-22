@@ -25,7 +25,7 @@ Tracking: [PR #10](https://github.com/NishantJh/OpenManage/pull/10) is merged; p
 
 The default cookie setting is `OPENMANAGE_COOKIE_SECURE=false`, which is necessary for direct HTTP but means the browser can send the session cookie over cleartext HTTP. HttpOnly and SameSite do not encrypt traffic. A LAN-reachable port must therefore be restricted to a trusted network; use HTTPS through a trusted reverse proxy and set `OPENMANAGE_COOKIE_SECURE=true` for routine use. Never port-forward this service to the public internet.
 
-The LAN-access PR changes the Compose binding default to make LAN use possible and documents binding to a specific LAN IP plus firewall restrictions. This is not a substitute for TLS.
+The Compose binding now defaults to `127.0.0.1:8080` (loopback only). LAN access is an explicit `OPENMANAGE_PORT` choice, documented as binding to a specific LAN IP plus firewall restrictions. This is not a substitute for TLS.
 
 ### OM-SAF-03 — Audit writes are not atomic with several state changes
 
