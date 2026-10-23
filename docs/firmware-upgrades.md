@@ -57,7 +57,7 @@ Decision (Nishant, 2026-10-23): **public ASU is the default** (official packages
 
 - **Setting:** an administrator-set "build server URL" (default `https://sysupgrade.openwrt.org`). OpenManage only speaks the ASU HTTP API to it, so the same code serves both modes. The URL must be `https` or an explicitly allowed private address, and is validated like other inventory addresses (bounded timeouts, no redirects to other hosts).
 - **One-command setup:** a script in the repo (for example `scripts/asu-server-setup.sh`) the user runs on a Linux machine, such as a separate VM or LXC, never inside the OpenManage container. Spec:
-  - Checks: Linux, root or sudo, enough RAM and disk (ASU documents about 2 GB RAM and 50 GB disk as the minimum), and a container runtime. Installs Podman and podman-compose if missing, on Debian/Ubuntu first.
+  - Checks: Linux, root or sudo, enough RAM and disk (ASU documents about 2 GB RAM and 50 GB disk as the minimum), and a container runtime. Installs Podman and podman-compose if missing, on Debian (and Ubuntu) only; it refuses other distributions.
   - Fetches a **pinned** ASU release (tag and checksum recorded in the script), writes the compose and config files, creates the Podman socket link and isolated build network that ASU requires, and starts the stack (server, Redis, worker).
   - Optionally takes extra feeds: `--feed URL --feed-key KEY_FILE` adds the feed to the server's allow list, so third-party packages can be built in. This is the part to test first: forum reports say extra-feed support exists but apk-format feeds are incomplete.
   - Idempotent (safe to re-run), prints the final URL, and offers `--uninstall`. Binds to a private interface by default and prints a warning before exposing it, because ASU has no authentication of its own (to check); a reverse proxy with TLS is recommended.
@@ -69,13 +69,33 @@ Profile mapping: ASU needs release, target, profile and package list. The profil
 
 ## Third-party packages
 
-Options, in order of preference:
+Goal: adding an external package (for example the `luci-theme-fluent` theme) works the way OpenWrt users already do it, and is then remembered so every future upgrade restores it.
 
-1. **Reinstall after the flash** (Phase 1). After the device is back, a typed `package_install` operation installs each third-party package from a source the administrator has registered: a feed URL, or a pinned file URL plus SHA-256. OpenManage downloads the file, checks the hash, uploads it, and installs it. The source list is an allowlist in the database, not a free-form field. Risk: the device briefly runs without the package (for a LuCI theme this just means falling back to the default theme), and the package must still match the new release.
-2. **Bake into the image** (Phase 3, needs option B). Put the files in Image Builder's local `packages/` directory or add a custom feed whose signing key is trusted. The image then needs no network after flashing.
-3. **uci-defaults first-boot script.** Useful for small settings (for example selecting the theme with `uci set luci.main.mediaurlbase`). Not a way to install packages, because the device may have no internet on first boot.
+### Package sources
 
-Per-package compatibility: before an upgrade, show which third-party packages are architecture-independent (typical for LuCI themes) and which are compiled, and warn when the source offers no build for the target release.
+OpenManage keeps a **package source** registry (admin-managed, audited). A third-party package is only ever installed from a registered source, never from a free-form URL typed into an operation. Three kinds, matching the usual OpenWrt methods:
+
+1. **Custom feed.** The same thing as a `customfeeds.conf` line (opkg) or an `/etc/apk/repositories.d/` entry (apk): feed URL plus its signing public key (usign key for opkg, apk key for apk). This is the preferred kind, because the package manager verifies signatures itself and handles dependencies and updates.
+2. **Release file.** A direct `.ipk`/`.apk` URL (typically a GitHub release asset, which is how many LuCI themes ship), pinned with a SHA-256. OpenManage downloads it, checks the hash, uploads it, and installs that one file. Hash-pinned, so a changed upstream file is refused until an admin re-pins it.
+3. **Uploaded file.** The admin uploads the package file in the UI; it is stored encrypted-at-rest in PostgreSQL with its hash (size capped). For packages with no public URL.
+
+**Adding a package** ("Install package" on a device, or on a group):
+- Choose a source and a package name. For a feed, OpenManage offers names from the feed's index; for a file, the name comes from the file's control data.
+- Preflight checks: package architecture is `all` or matches the device; dependencies are available (feed or official); free flash; package manager matches (`.ipk` for opkg, `.apk` for apk).
+- The install is a typed `package_install` operation. Signature checking stays on. For a file source on apk, the "untrusted" flag is used for that single hash-verified file only, never as a global setting.
+- On success the package and its source link are recorded in the device's manifest. From then on it is part of every upgrade plan.
+
+**Packages already on the device** (installed by hand before OpenManage): the inventory marks them "third-party, source unknown". The admin resolves each one by attaching a source (feed, release file or upload). This is a one-time step and cannot be automated, because the package manager does not keep the original file. Packages from a custom feed already configured on the device are matched to a source automatically, once the admin registers that feed (OpenManage reads the feed lines and keys from the device to suggest it).
+
+### Using sources during an upgrade
+
+1. **Reinstall after the flash** (Phase 2, default). Once the device is back, `package_install` reinstalls each third-party package from its source. Risk: the device briefly runs without the package (for a LuCI theme it falls back to the default theme), and the package must still suit the new release; a LuCI theme built for another LuCI version can fail to load.
+2. **Baked into the image** (Phase 4, self-hosted ASU mode only). Feed-kind sources are added to the ASU server's allow list, so the image already contains the package and no network is needed after flashing. Release-file and upload sources need a feed made from them first (to verify).
+3. **uci-defaults first-boot script.** For small settings only (for example selecting the theme with `uci set luci.main.mediaurlbase`). Not a way to install packages, because the device may have no internet on first boot. Normally unnecessary because the config backup already restores settings.
+
+Compatibility warnings before an upgrade: list third-party packages that are architecture-independent (typical for LuCI themes) versus compiled, and warn when a source offers nothing for the target release (feed index has no match, or the file's declared dependencies do not fit).
+
+Out of scope: building packages from source, and a package store or search across the internet.
 
 ## Preserving and reapplying configuration
 
@@ -108,7 +128,8 @@ New operations (names indicative):
 | `firmware_stage` | write | Upload the verified image to a fixed path under `/tmp` |
 | `firmware_check` | read | `sysupgrade -T` on the staged image |
 | `firmware_flash` | write, disruptive | Start `sysupgrade` detached; the connection will drop |
-| `package_install` | write | Install a named package from a registered, hash-pinned source |
+| `package_install` | write | Install a named package from a registered source (feed, hash-pinned file, or upload); parameters are source id and package name only |
+| `package_source_inventory` | read | Read configured feeds and keys on a device to suggest sources |
 
 Write operations audit transactionally (a Section 2 rule). A job state machine in PostgreSQL (`planned`, `built`, `staged`, `flashing`, `verifying`, `done`, `needs_attention`) survives restarts, with no worker service: the existing server process drives it, like the monitoring loop. Migrations are additive.
 
@@ -126,4 +147,5 @@ Write operations audit transactionally (a Section 2 rule). A job state machine i
 3. Which devices matter first, and do they have physical access if a flash fails? Any dual-partition devices?
 4. Is `opkg` (24.10) enough, or do you want `apk` (25.x) support from the start?
 5. Are large release jumps in scope, or only same-release and next-release upgrades?
-6. For the setup script: Debian/Ubuntu only at first, or other distributions too?
+6. (Decided) The setup script targets Debian (and Ubuntu) only at first.
+7. Is the three-kind source registry (feed, release file, upload) the right shape, or do you only need feeds and release files?

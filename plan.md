@@ -157,7 +157,7 @@ Show each client device as a dot on a persistent Wi-Fi floor plan. Design: [devi
 
 Not scheduled; starts after the sections above are done and tested. Goal: build and flash a firmware image per device that keeps all installed packages (including third-party ones such as `luci-theme-fluent`) and reapplies configuration, like ASU. Design, feasibility verdict and open questions: [docs/firmware-upgrades.md](docs/firmware-upgrades.md). It refines Section 5 and inherits its safety rules.
 
-- [ ] Phase 1: package and feed inventory, plan-only package diff (read-only).
+- [ ] Phase 1: package and feed inventory, plan-only package diff (read-only), and a package source registry (custom feed, hash-pinned release file, or upload) for installing external packages such as themes, with source-unknown packages flagged.
 - [ ] Phase 2: single-device upgrade through the ASU API, third-party packages reinstalled afterward, encrypted config backup, post-reboot verification and drift review.
 - [ ] Phase 3: staged rollout (canary, concurrency limit, stop on failure).
 - [ ] Phase 4 (optional): self-hosted ASU mode. A build-server URL setting plus a single setup script for a separate Linux machine (outside the OpenManage stack), with extra feeds for third-party packages. Public ASU stays the default. Decided by Nishant 2026-10-23.
