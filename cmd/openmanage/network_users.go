@@ -242,7 +242,13 @@ func (a *app) getRADIUSStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not read RADIUS clients")
 		return
 	}
-	out := map[string]any{"enabled": a.radius != nil, "listen_addr": "", "dropped_packets": int64(0), "clients": clients}
+	certificate, _, err := loadRADIUSCertInfo(r.Context(), a.db)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load the RADIUS certificate")
+		return
+	}
+	out := map[string]any{"enabled": a.radius != nil, "listen_addr": "", "dropped_packets": int64(0), "clients": clients,
+		"certificate": certificate}
 	if a.radius != nil {
 		out["listen_addr"] = a.radius.addr
 		out["dropped_packets"] = a.radius.dropped.Load()

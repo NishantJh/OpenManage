@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/md5"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -104,7 +105,7 @@ func TestEncodeRADIUSReplyIsSigned(t *testing.T) {
 }
 
 func TestRADIUSHandleDropsNonAccessRequests(t *testing.T) {
-	s := newRADIUSServer(nil, nil, "")
+	s := newRADIUSServer(nil, nil, "", tls.Certificate{})
 	addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.2"), Port: 4000}
 	raw := signedAccessRequest(t, testRADIUSSecret, true)
 	raw[0] = byte(radius.CodeAccountingRequest)
@@ -119,7 +120,7 @@ func TestRADIUSHandleDropsNonAccessRequests(t *testing.T) {
 }
 
 func TestRADIUSReplayCache(t *testing.T) {
-	s := newRADIUSServer(nil, nil, "")
+	s := newRADIUSServer(nil, nil, "", tls.Certificate{})
 	if _, seen := s.replayLookup("k"); seen {
 		t.Fatal("first lookup reported a duplicate")
 	}
@@ -158,6 +159,7 @@ func TestRADIUSEndpointsRequireAdmin(t *testing.T) {
 		{http.MethodPatch, "/api/network-users/x", `{"disabled":true}`, a.updateNetworkUser},
 		{http.MethodPost, "/api/network-users/x/password", `{"password":"long enough password"}`, a.resetNetworkUserPassword},
 		{http.MethodGet, "/api/radius", "", a.getRADIUSStatus},
+		{http.MethodGet, "/api/radius/ca.pem", "", a.downloadRADIUSCA},
 		{http.MethodPost, "/api/devices/x/radius-secret", "", a.rotateRADIUSSecret},
 		{http.MethodDelete, "/api/devices/x/radius-secret", "", a.deleteRADIUSSecret},
 	} {
