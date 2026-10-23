@@ -14,7 +14,8 @@ import (
 // the RADIUS CA as a trust anchor and a Wi-Fi network that uses EAP-TTLS with inner
 // PAP and accepts only OpenManage's server name, so the device never has to ask the
 // user to trust an unknown certificate. The profile is unsigned and holds no
-// password: the device asks for the Wi-Fi username and password when joining.
+// password. If a Wi-Fi username is given it is preset, so the device asks only for
+// the password; otherwise it asks for both when joining.
 
 func validSSID(ssid string) bool {
 	if len(ssid) == 0 || len(ssid) > 32 || !utf8.ValidString(ssid) {
@@ -46,11 +47,15 @@ func xmlText(s string) string {
 	return b.String()
 }
 
-func appleWiFiProfile(caDER []byte, ssid string) []byte {
+func appleWiFiProfile(caDER []byte, ssid, username string) []byte {
 	fp := certFingerprint(caDER)
 	caUUID := profileUUID("ca", fp)
 	wifiUUID := profileUUID("wifi", fp, ssid)
 	profile := profileUUID("profile", fp, ssid)
+	userName := ""
+	if username != "" {
+		userName = "\n\t\t\t\t<key>UserName</key><string>" + xmlText(username) + "</string>"
+	}
 	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -84,7 +89,7 @@ func appleWiFiProfile(caDER []byte, ssid string) []byte {
 				<key>PayloadCertificateAnchorUUID</key><array><string>%[1]s</string></array>
 				<key>TLSTrustedServerNames</key><array><string>%[5]s</string></array>
 				<key>TLSAllowTrustExceptions</key><false/>
-				<key>TLSMaximumVersion</key><string>1.2</string>
+				<key>TLSMaximumVersion</key><string>1.2</string>%[8]s
 			</dict>
 		</dict>
 	</array>
@@ -98,10 +103,11 @@ func appleWiFiProfile(caDER []byte, ssid string) []byte {
 	<key>PayloadRemovalDisallowed</key><false/>
 </dict>
 </plist>
-`, caUUID, base64.StdEncoding.EncodeToString(caDER), wifiUUID, xmlText(ssid), radiusServerName, profile, fp))
+`, caUUID, base64.StdEncoding.EncodeToString(caDER), wifiUUID, xmlText(ssid), radiusServerName, profile, fp, userName))
 }
 
-// downloadAppleWiFiProfile serves the profile for ?ssid=<network name>.
+// downloadAppleWiFiProfile serves the profile for ?ssid=<network name>, with an
+// optional &username=<Wi-Fi user> to preset.
 func (a *app) downloadAppleWiFiProfile(w http.ResponseWriter, r *http.Request) {
 	if !requireAnyRole(w, r, "admin") {
 		return
@@ -109,6 +115,11 @@ func (a *app) downloadAppleWiFiProfile(w http.ResponseWriter, r *http.Request) {
 	ssid := r.URL.Query().Get("ssid")
 	if !validSSID(ssid) {
 		writeError(w, http.StatusBadRequest, "ssid must be 1-32 bytes of printable text")
+		return
+	}
+	username := r.URL.Query().Get("username")
+	if username != "" && !validUsername.MatchString(username) {
+		writeError(w, http.StatusBadRequest, "username is not a valid Wi-Fi username")
 		return
 	}
 	info, caDER, err := loadRADIUSCertInfo(r.Context(), a.db)
@@ -122,5 +133,5 @@ func (a *app) downloadAppleWiFiProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/x-apple-aspen-config")
 	w.Header().Set("Content-Disposition", `attachment; filename="openmanage-wifi.mobileconfig"`)
-	w.Write(appleWiFiProfile(caDER, ssid))
+	w.Write(appleWiFiProfile(caDER, ssid, username))
 }
