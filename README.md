@@ -86,6 +86,10 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 
 All API routes except `/api/healthz` and `/api/auth/login` require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. `GET /api/audit` returns the latest 100 events and is intended for administrators. The address field is inventory metadata until enrollment is explicitly completed. SSH enrollment verifies a host key fingerprint supplied from a trusted source and authenticates with a private key before storing it encrypted at rest. Enrollment accepts private IP literals only (no DNS names, public addresses, or link-local addresses) and uses TCP/22. Configure `OPENMANAGE_ENCRYPTION_KEY` using a securely backed-up base64-encoded 32-byte random key before enrollment; losing it makes stored SSH credentials unrecoverable. The private key is never returned by the API. Re-enrollment replaces the stored credential only after the new key successfully authenticates; it does not install or rotate `authorized_keys` on the router itself.
 
+## Built-in RADIUS (lab stage)
+
+OpenManage can answer RADIUS PAP requests from enrolled APs so that Wi-Fi users ("network users", separate from OpenManage logins) can be checked against it. It is off unless `OPENMANAGE_RADIUS_LISTEN` is set (for example `:1812`) together with `OPENMANAGE_ENCRYPTION_KEY`, and Compose then needs a `ports` entry that binds UDP 1812 to the LAN address only. Each AP needs a shared secret from `POST /api/devices/{id}/radius-secret`, which is shown once and stored encrypted. Requests are accepted only from that device's inventory address and must carry a valid Message-Authenticator. Failures are rate-limited per user and per AP and audited without passwords. EAP (needed for WPA-Enterprise on phones and laptops) is not supported yet; see [the RADIUS design](docs/radius-design.md). Never forward UDP 1812 from the internet.
+
 ## Resource profile
 
 Compose starts with memory limits of 192 MiB for the app and 256 MiB for PostgreSQL. Actual consumption depends on workload and PostgreSQL settings. Redis is intentionally omitted.
@@ -96,7 +100,7 @@ Frontend: `cd web`, then `npm ci` and `npm run dev`.
 
 For Go: `go test ./...` and `go run ./cmd/openmanage`. The embedded frontend must be built into `cmd/openmanage/web/dist` first; the Docker build does this automatically.
 
-Real-OpenWrt lab: `bash scripts/openwrt-lab-test.sh` needs Docker. It runs enrollment, health checks and monitoring (including outage, revoked key and host-key change) against a disposable OpenWrt 24.10 container. CI runs the same script weekly, and on demand from the "OpenWrt lab" workflow.
+Real-OpenWrt lab: `bash scripts/openwrt-lab-test.sh` needs Docker. It runs enrollment, health checks and monitoring (including outage, revoked key and host-key change) against a disposable OpenWrt 24.10 container, and RADIUS checks with `scripts/radius-probe` (so it also needs Go). CI runs the same script weekly, and on demand from the "OpenWrt lab" workflow.
 
 ## Security and recovery
 

@@ -1,6 +1,6 @@
 # Built-in RADIUS: design
 
-Status: proposal for review (plan.md Section 7, first checkbox). Nothing here is implemented yet.
+Status: agreed 2026-10-23. Milestone 2 (PAP lab listener) is implemented; EAP-TTLS is not yet.
 
 ## Goal
 
