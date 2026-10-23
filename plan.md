@@ -149,7 +149,7 @@ Show each client device as a dot on a persistent Wi-Fi floor plan. Design: [devi
 - [x] PR 1 (#68): rebase and reduce #26 to floor plan and AP placement only (DB-persisted, audited, on current main). Close #25 and #26 once it merges.
 - [x] PR 2: client tracking backend and roaming history. One typed read operation `wifi_clients` (hostapd `get_clients` for each AP), opt-in `client_tracking_enabled` (off by default), 5 min default poll adjustable 60-600 s, state rows hard-capped at 24 h, `wifi_client_events` history (connect, roam, disconnect with RSSI) kept 30 days, hashed MAC identity with encrypted MAC, label/hide/clear API. Migration 012. Not yet exercised against a real hostapd.
 - [ ] Lab test with real hostapd `get_clients` (a 60 s poll may be needed for roam tests); configurable roam-history retention.
-- [ ] PR 4: UI with green/red dots, legend, labels, hide and "Clear client data".
+- [x] PR 3 (UI): green/red dots on the floor plan (room of the connected AP), legend, labels, hide, "Clear client data", client tracking toggle with 1/5/10 min poll, and a roaming history list. Verified against mocked API in a browser; not yet against a real AP.
 - [ ] Privacy: keyed-hash identity, masked MACs, reveal audited, never logged. Feature off by default.
 - [ ] Optional later: manual room pin and fingerprinting calibration.
 
