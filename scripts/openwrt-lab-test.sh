@@ -322,6 +322,18 @@ curl --silent --fail -o "$work/radius-ca.pem" -b "$cookie_jar" "$base_url/api/ra
 ! compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT encode(ca_key_ciphertext,'escape') || encode(server_key_ciphertext,'escape') FROM radius_certificate" | grep -q "PRIVATE KEY" \
   || fail "RADIUS certificate keys are stored unencrypted"
 echo "PASS: RADIUS generates a CA and server certificate and offers the CA for download"
+curl --silent --fail -o "$work/wifi.mobileconfig" -b "$cookie_jar" "$base_url/api/radius/apple-profile?ssid=Lab%20%26%20Home" \
+  || fail "Apple profile download failed"
+python3 - "$work/wifi.mobileconfig" "$work/radius-ca.pem" <<'PY' || fail "Apple profile is malformed"
+import base64, plistlib, ssl, sys
+p = plistlib.load(open(sys.argv[1], "rb"))
+ca, wifi = p["PayloadContent"]
+assert ca["PayloadContent"] == ssl.PEM_cert_to_DER_cert(open(sys.argv[2]).read())
+eap = wifi["EAPClientConfiguration"]
+assert wifi["SSID_STR"] == "Lab & Home" and eap["AcceptEAPTypes"] == [21] and eap["TTLSInnerAuthentication"] == "PAP"
+assert eap["TLSTrustedServerNames"] == ["radius.openmanage.home.arpa"] and eap["PayloadCertificateAnchorUUID"] == [ca["PayloadUUID"]]
+PY
+echo "PASS: RADIUS offers an Apple setup profile that trusts only this CA and server name"
 expect_probe timeout "ignores a device without a secret" not-a-secret lab-wifi lab-wifi-password-1
 api POST /api/network-users '{"username":"lab-wifi","password":"lab-wifi-password-1"}'
 [[ "$status" == 201 ]] || fail "creating a network user returned HTTP $status"
