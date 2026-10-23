@@ -413,7 +413,10 @@ expect_probe timeout "drops a request signed with the wrong secret" "wrong-$radi
 api PATCH "/api/network-users/$wifi_id" '{"disabled":true}'
 [[ "$status" == 200 ]] || fail "disabling a network user returned HTTP $status"
 expect_probe reject "rejects a disabled network user" "$radius_secret" lab-wifi lab-wifi-password-1
+# A phone keeps retrying while its user is disabled; re-enabling must let it back in.
+for attempt in $(seq 1 10); do probe "$radius_secret" lab-wifi lab-wifi-password-1 >/dev/null; done
 api PATCH "/api/network-users/$wifi_id" '{"disabled":false}'
+expect_probe accept "accepts a re-enabled user after rejections while disabled" "$radius_secret" lab-wifi lab-wifi-password-1
 for attempt in $(seq 1 10); do probe "$radius_secret" lab-locked wrong-password-123 >/dev/null; done
 expect_probe reject "blocks a user after repeated failures" "$radius_secret" lab-locked lab-locked-password-1
 api POST "/api/devices/$device_id/radius-secret"
@@ -424,7 +427,7 @@ api GET /api/radius
 json 'assert len(d["clients"])==1 and d["dropped_packets"]>=4, d' < "$body"
 ! grep -q "$new_secret" "$body" || fail "RADIUS status returned the shared secret"
 radius_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action='radius.auth_accept'")"
-[[ "$radius_audit" == 3 ]] || fail "RADIUS accept audit events: $radius_audit (expected 3)"
+[[ "$radius_audit" == 4 ]] || fail "RADIUS accept audit events: $radius_audit (expected 4)"
 leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events" | grep -c -e lab-wifi-password -e lab-locked-password -e "$new_secret" -e "$radius_secret" || true)"
 [[ "$leaks" == 0 ]] || fail "a RADIUS password or secret reached the audit log"
 ! compose logs --no-color app | grep -q -e lab-wifi-password -e "$new_secret" || fail "a RADIUS password or secret reached the app log"
