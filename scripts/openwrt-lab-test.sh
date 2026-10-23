@@ -60,8 +60,9 @@ network="${project}_default"
 echo "Starting OpenWrt container ($openwrt_image) on $network ..."
 docker run -d --name "$router" --network "$network" "$openwrt_image" /sbin/init >/dev/null
 for attempt in $(seq 1 30); do
-  docker exec "$router" sh -c 'pgrep dropbear >/dev/null && ubus call system board >/dev/null' 2>/dev/null && break
-  [[ "$attempt" == 30 ]] && { docker logs "$router" | tail -20; fail "OpenWrt did not start dropbear and ubus"; }
+  # dropbear can be running before its init script has written the host key.
+  docker exec "$router" sh -c 'pgrep dropbear >/dev/null && test -s /etc/dropbear/dropbear_ed25519_host_key && ubus call system board >/dev/null' 2>/dev/null && break
+  [[ "$attempt" == 30 ]] && { docker logs "$router" | tail -20; fail "OpenWrt did not start dropbear (with its host key) and ubus"; }
   sleep 1
 done
 # docker cp keeps the host file owner (uid 1001 on GitHub runners); dropbear ignores
@@ -191,6 +192,9 @@ SHIM
 chmod +x "$ubus_bin"'
 set_fake_clients() { docker exec -i "$router" sh -c "cat > /tmp/fake-clients.json" <<< "$1"; }
 set_fake_clients "{\"freq\":5180,\"clients\":{\"$fake_mac\":{\"auth\":true,\"assoc\":true,\"authorized\":true,\"signal\":-58}}}"
+# dnsmasq lease line: expiry mac ip hostname client-id. The second line has no hostname.
+docker exec -i "$router" sh -c "cat > /tmp/dhcp.leases" <<< "4102444800 $fake_mac 192.168.1.50 lab-iphone 01:$fake_mac
+4102444800 de:ad:be:ef:00:09 192.168.1.51 * 01:de:ad:be:ef:00:09"
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":30}'
 [[ "$status" == 400 ]] || fail "a 30 s client poll interval was accepted (HTTP $status)"
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":60}'
@@ -201,16 +205,19 @@ for attempt in $(seq 1 40); do
   [[ "$attempt" == 40 ]] && { cat "$body" >&2; fail "client tracking did not record the fixture client"; }
   sleep 1
 done
-json 'c=d[0]; assert c["connected"] and c["signal_dbm"]==-58 and c["interface"]=="phy0-ap0" and c["device_id"]==sys.argv[1], c; assert c["mac_hint"]=="aa:bb:cc:••:••:••" and c["label"]=="" and not c["hidden"], c' "$device_id" < "$body"
+json 'c=d[0]; assert c["connected"] and c["signal_dbm"]==-58 and c["interface"]=="phy0-ap0" and c["device_id"]==sys.argv[1], c; assert c["mac_hint"]=="aa:bb:cc:••:••:••" and c["label"]=="" and c["name"]=="lab-iphone" and not c["hidden"], c' "$device_id" < "$body"
 ! grep -q "11:22:33" "$body" || fail "client list leaked the full MAC address"
 client_id="$(json 'print(d[0]["id"])' < "$body")"
 mac_leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM wifi_clients WHERE position(convert_to('$fake_mac','UTF8') in mac_ciphertext)>0 OR mac_hint LIKE '%11:22:33%'")"
 [[ "$mac_leaks" == 0 ]] || fail "client MAC found in plaintext in PostgreSQL"
-echo "PASS: a client associated to the AP is tracked, with its MAC masked and encrypted at rest"
+echo "PASS: a client associated to the AP is tracked, named from the DHCP lease, with its MAC masked and encrypted at rest"
 api PATCH "/api/wifi-clients/$client_id" '{"label":"lab phone"}'
 [[ "$status" == 204 ]] || fail "labelling a client returned HTTP $status"
 # The client leaves: the next poll (one interval later) records a disconnect.
 set_fake_clients '{"freq":5180,"clients":{}}'
+# The router also renames the device in its leases. The client is no longer on the AP, so
+# the new name can only arrive through the lease path, not through the hostapd list.
+docker exec -i "$router" sh -c "cat > /tmp/dhcp.leases" <<< "4102444800 $fake_mac 192.168.1.50 lab-iphone-renamed 01:$fake_mac"
 for attempt in $(seq 1 100); do
   api GET /api/wifi-clients
   [[ "$(json 'print(d[0]["connected"])' < "$body")" == False ]] && break
@@ -218,6 +225,12 @@ for attempt in $(seq 1 100); do
   sleep 1
 done
 json 'assert d[0]["label"]=="lab phone", d' < "$body"
+for attempt in $(seq 1 100); do
+  api GET /api/wifi-clients
+  [[ "$(json 'print(d[0]["name"])' < "$body")" == lab-iphone-renamed ]] && break
+  [[ "$attempt" == 100 ]] && { cat "$body" >&2; fail "a changed DHCP lease name did not reach a tracked client"; }
+  sleep 1
+done
 api GET "/api/wifi-client-events?client=$client_id"
 json 'assert [e["kind"] for e in d]==["disconnect","connect"] and d[1]["signal_dbm"]==-58 and d[0]["from_device_id"]==sys.argv[1], d' "$device_id" < "$body"
 ! grep -q "11:22:33" "$body" || fail "client history leaked the full MAC address"
@@ -397,6 +410,7 @@ api POST /api/network-users '{"username":"lab-wifi","password":"lab-wifi-passwor
 wifi_id="$(json 'print(d["id"])' < "$body")"
 api POST /api/network-users '{"username":"lab-locked","password":"lab-locked-password-1"}'
 [[ "$status" == 201 ]] || fail "creating a second network user returned HTTP $status"
+locked_id="$(json 'print(d["id"])' < "$body")"
 api POST "/api/auth/login" '{"username":"lab-wifi","password":"lab-wifi-password-1"}'
 [[ "$status" == 401 ]] || fail "a network user signed in to OpenManage (HTTP $status)"
 api POST "/api/devices/$device_id/radius-secret"
@@ -413,9 +427,24 @@ expect_probe timeout "drops a request signed with the wrong secret" "wrong-$radi
 api PATCH "/api/network-users/$wifi_id" '{"disabled":true}'
 [[ "$status" == 200 ]] || fail "disabling a network user returned HTTP $status"
 expect_probe reject "rejects a disabled network user" "$radius_secret" lab-wifi lab-wifi-password-1
+# A phone keeps retrying while its user is disabled; re-enabling must let it back in.
+for attempt in $(seq 1 10); do probe "$radius_secret" lab-wifi lab-wifi-password-1 >/dev/null; done
 api PATCH "/api/network-users/$wifi_id" '{"disabled":false}'
+expect_probe accept "accepts a re-enabled user after rejections while disabled" "$radius_secret" lab-wifi lab-wifi-password-1
 for attempt in $(seq 1 10); do probe "$radius_secret" lab-locked wrong-password-123 >/dev/null; done
 expect_probe reject "blocks a user after repeated failures" "$radius_secret" lab-locked lab-locked-password-1
+api POST "/api/network-users/$locked_id/password" '{"password":"lab-locked-password-2"}'
+[[ "$status" == 200 ]] || fail "resetting a network user's password returned HTTP $status"
+expect_probe accept "accepts a blocked user right after a password reset" "$radius_secret" lab-locked lab-locked-password-2
+# Phones of disabled users retrying must not lock the AP out for everyone: 50
+# rejections of disabled users would reach the per-AP limit if they counted there.
+for n in 1 2 3 4 5; do
+  api POST /api/network-users "{\"username\":\"lab-off-$n\",\"password\":\"lab-off-password-$n\"}"
+  off_id="$(json 'print(d["id"])' < "$body")"
+  api PATCH "/api/network-users/$off_id" '{"disabled":true}'
+  for attempt in $(seq 1 10); do probe "$radius_secret" "lab-off-$n" "lab-off-password-$n" >/dev/null; done
+done
+expect_probe accept "keeps the AP open after many rejections of disabled users" "$radius_secret" lab-wifi lab-wifi-password-1
 api POST "/api/devices/$device_id/radius-secret"
 new_secret="$(json 'print(d["secret"])' < "$body")"
 expect_probe timeout "stops accepting a rotated-out secret" "$radius_secret" lab-wifi lab-wifi-password-1
@@ -423,8 +452,25 @@ expect_probe accept "accepts the rotated secret" "$new_secret" lab-wifi lab-wifi
 api GET /api/radius
 json 'assert len(d["clients"])==1 and d["dropped_packets"]>=4, d' < "$body"
 ! grep -q "$new_secret" "$body" || fail "RADIUS status returned the shared secret"
+# Run the AP commands from docs/radius-client-setup.md step 3 as written, so a guide
+# step that uci rejects fails here first. The lab router has no radio, so the
+# section is only checked, not brought up (no wifi reload).
+guide_ap_cmds="$(python3 - docs/radius-client-setup.md <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+section = text.split("## 3. Configure the AP", 1)[1].split("\n## ", 1)[0]
+block = re.search(r"```sh\n(.*?)```", section, re.S).group(1)
+print("\n".join(l for l in block.splitlines() if l.strip() != "wifi reload"))
+PY
+)"
+[[ "$guide_ap_cmds" == *"uci commit wireless"* ]] || fail "could not read the AP commands from the setup guide"
+guide_ap_cmds="${guide_ap_cmds//<secret from step 2>/$new_secret}"
+docker exec "$router" sh -c "set -e; touch /etc/config/wireless; $guide_ap_cmds" || fail "the setup guide's AP commands failed on OpenWrt"
+[[ "$(docker exec "$router" uci get wireless.omtest.encryption)" == wpa2 ]] || fail "the setup guide's AP commands did not configure WPA2-Enterprise"
+docker exec "$router" sh -c "uci delete wireless.omtest && uci commit wireless" || fail "the setup guide's undo command failed"
+echo "PASS: the setup guide's AP commands run on OpenWrt"
 radius_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action='radius.auth_accept'")"
-[[ "$radius_audit" == 3 ]] || fail "RADIUS accept audit events: $radius_audit (expected 3)"
+[[ "$radius_audit" == 6 ]] || fail "RADIUS accept audit events: $radius_audit (expected 6)"
 leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events" | grep -c -e lab-wifi-password -e lab-locked-password -e "$new_secret" -e "$radius_secret" || true)"
 [[ "$leaks" == 0 ]] || fail "a RADIUS password or secret reached the audit log"
 ! compose logs --no-color app | grep -q -e lab-wifi-password -e "$new_secret" || fail "a RADIUS password or secret reached the app log"

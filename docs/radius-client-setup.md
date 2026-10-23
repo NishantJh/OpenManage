@@ -70,8 +70,8 @@ Record pass or fail for each step. The dashboard's **Recent activity** shows `ra
 | # | Step | Expected |
 |---|------|----------|
 | 1 | Join `Home-Secure`; enter the Wi-Fi username and password when asked | Connects without a certificate warning; Safari loads a page. Audit: `radius.auth_accept`, method `eap-ttls` |
-| 2 | Forget the network, join again with a wrong password | Fails. Audit: `radius.auth_reject`, reason `bad_credentials` |
-| 3 | Disable the Wi-Fi user in the dashboard; turn Wi-Fi off and on | Cannot join. Audit: reason `disabled`. Re-enable afterwards |
+| 2 | Reset the Wi-Fi user's password in the dashboard (the phone still has the old one); turn Wi-Fi off and on | Fails. Audit: `radius.auth_reject`, reason `bad_credentials`. Then tap `Home-Secure` and enter the new password; it connects. (A network installed by a profile has no Forget button; remove the profile to forget it.) |
+| 3 | Disable the Wi-Fi user in the dashboard; turn Wi-Fi off and on | Cannot join. Audit: reason `disabled`. Re-enable the user; the phone joins again within a minute |
 | 4 | Turn Wi-Fi off and on, then restart the phone | Rejoins on its own without asking |
 | 5 | Leave it connected for 15 minutes and browse | Stays connected (the keys the AP received are correct) |
 | 6 | Optional: remove the profile and join `Home-Secure` manually from the Wi-Fi list | iOS shows a certificate prompt for `radius.openmanage.home.arpa`. Do not trust it unless the fingerprint matches the dashboard. Manual join may pick an inner method other than PAP; if it fails with reason `inner_method_not_pap`, that is a known limitation and the profile is the supported path |

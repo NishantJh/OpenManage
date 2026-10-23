@@ -102,3 +102,39 @@ func TestPollTracker(t *testing.T) {
 		t.Fatal("AP should be due exactly one interval after its last poll")
 	}
 }
+
+func TestParseWifiClientsNamesFromLeases(t *testing.T) {
+	out := "##leases\nAA:BB:CC:11:22:33 nishants-iphone\n" +
+		"de:ad:be:ef:00:01 *\n" + sampleClients
+	byMAC := map[string]string{}
+	for _, c := range parseWifiClients(out) {
+		byMAC[c.MAC] = c.Name
+	}
+	if byMAC["aa:bb:cc:11:22:33"] != "nishants-iphone" || byMAC["de:ad:be:ef:00:01"] != "" {
+		t.Fatalf("unexpected names: %v", byMAC)
+	}
+	bad := parseDHCPLeases("##leases\naa:bb:cc:11:22:33 <script>\naa:bb:cc:11:22:34 ok\n")
+	if len(bad) != 1 || bad["aa:bb:cc:11:22:34"] != "ok" {
+		t.Fatalf("unsafe or malformed lease names must be dropped: %v", bad)
+	}
+}
+
+func TestLeaseCacheNamesAcrossDevices(t *testing.T) {
+	var c leaseCache
+	c.set("router", map[string]string{"aa:bb:cc:11:22:33": "nishants-iphone"})
+	c.set("ap", nil)
+	if got := c.lookup("aa:bb:cc:11:22:33"); got != "nishants-iphone" {
+		t.Fatalf("lookup = %q", got)
+	}
+	if got := c.lookup("de:ad:be:ef:00:01"); got != "" {
+		t.Fatalf("unknown MAC should have no name, got %q", got)
+	}
+	c.set("router", nil)
+	if got := c.lookup("aa:bb:cc:11:22:33"); got != "" {
+		t.Fatalf("a device that reports no leases must drop its names, got %q", got)
+	}
+	out := "##leases\naa:bb:cc:11:22:33 x\n" + sampleClients
+	if got := parseDHCPLeases(leaseSection(out)); got["aa:bb:cc:11:22:33"] != "x" {
+		t.Fatalf("unexpected lease section %q", leaseSection(out))
+	}
+}

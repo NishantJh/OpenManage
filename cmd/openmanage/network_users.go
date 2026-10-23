@@ -152,6 +152,9 @@ func (a *app) updateNetworkUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not update network user")
 		return
 	}
+	if !after.Disabled {
+		a.radius.clearUserFailures(after.Username)
+	}
 	writeJSON(w, http.StatusOK, after)
 }
 
@@ -205,6 +208,7 @@ func (a *app) resetNetworkUserPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not reset password")
 		return
 	}
+	a.radius.clearUserFailures(username)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

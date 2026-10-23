@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
@@ -171,5 +172,22 @@ func TestRADIUSEndpointsRequireAdmin(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("%s %s: expected 403 for operator, got %d", tc.method, tc.path, rec.Code)
 		}
+	}
+}
+
+func TestRADIUSClearUserFailures(t *testing.T) {
+	var none *radiusServer
+	none.clearUserFailures("alice")
+	s := newRADIUSServer(nil, nil, "", tls.Certificate{})
+	now := time.Now()
+	for i := 0; i < radiusUserFailureLimit; i++ {
+		s.userAttempts.recordFailure("alice", now)
+	}
+	if blocked, _ := s.userAttempts.isBlocked("alice", now); !blocked {
+		t.Fatal("user not blocked after the failure limit")
+	}
+	s.clearUserFailures("alice")
+	if blocked, _ := s.userAttempts.isBlocked("alice", now); blocked {
+		t.Fatal("user still blocked after clearUserFailures")
 	}
 }

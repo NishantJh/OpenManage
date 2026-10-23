@@ -17,6 +17,7 @@ const { chromium } = createRequire(process.cwd() + "/")("playwright");
 const pages = [
   { label: "Overview", path: "/", h1: "Your network, at a glance.", has: [], absent: ["Device inventory", "Monitoring history", "Configuration snapshots"] },
   { label: "Devices", path: "/devices", h1: "Devices", has: ["Device inventory"], absent: ["Monitoring history"] },
+  { label: "Floor plan", path: "/floor-plan", h1: "Floor plan", has: [], absent: ["Device inventory", "Monitoring history"] },
   { label: "Configuration", path: "/configuration", h1: "Configuration", has: [], absent: ["Device inventory", "Monitoring history"] },
   { label: "Monitoring", path: "/monitoring", h1: "Monitoring", has: ["Monitoring history"], absent: ["Device inventory"] },
   { label: "Access & security", path: "/access", h1: "Access & security", has: [], absent: ["Device inventory", "Monitoring history"] },
@@ -52,10 +53,10 @@ try {
     await check(p);
   }
   await page.goBack();
-  await check(pages[4]);
+  await check(pages[5]);
   await page.goto(baseUrl + "/monitoring"); // deep link / reload must hit the SPA fallback
   await page.locator("aside nav a.active", { hasText: "Monitoring" }).waitFor();
-  await check(pages[3]);
+  await check(pages[4]);
   // Phone width hides the sidebar; the page switcher must still reach every page.
   await page.setViewportSize({ width: 390, height: 800 });
   assert.ok(!(await page.locator("aside.sidebar").isVisible()), "sidebar hidden on mobile");

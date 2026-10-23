@@ -23,7 +23,8 @@ import PasswordModal from "./PasswordModal";
 
 const headings:Record<PageKey,[string,string]>={
  overview:["Your network, at a glance.","Manage your OpenWrt infrastructure from one lightweight control plane."],
- devices:["Devices","Your managed routers and access points, and where they sit."],
+ devices:["Devices","Your managed routers and access points."],
+ floorplan:["Floor plan","Where your access points and devices sit, room by room."],
  configuration:["Configuration","Network-wide settings applied to your devices."],
  monitoring:["Monitoring","Scheduled health checks and their history."],
  access:["Access & security","Users, roles and the audit trail."],
@@ -64,7 +65,7 @@ export default function Dashboard({username,role,onLogout}:{username:string;role
  {page==="devices"&&<DeviceTable devices={devices} filtered={filtered} loading={loading} query={query} role={role} healthBusy={healthBusy} onHealthCheck={d=>void runHealthCheck(d)} onEnroll={openEnrollment} onRemove={d=>void remove(d)} onAdd={()=>setShowAdd(true)} onConfig={d=>{setNotice("");setConfigDevice(d)}}/>}
  {page==="access"&&role==="admin"&&<UsersSection currentUsername={username} onChanged={()=>void loadAudit()}/>}
  {page==="configuration"&&role==="admin"&&<WifiSection devices={devices} onChanged={()=>void loadAudit()}/>}
- {page==="devices"&&<FloorPlan devices={devices} role={role as Role} onChanged={()=>void loadAudit()}/>}
+ {page==="floorplan"&&<FloorPlan devices={devices} role={role as Role} onChanged={()=>void loadAudit()}/>}
  {page==="access"&&<AuditLog audit={audit} auditLoading={auditLoading} auditError={auditError} onRefresh={()=>void loadAudit()}/>}
  {page==="overview"&&<Attention devices={devices} monitoring={monitoring} history={monitorHistory} audit={audit} loading={loading}/>}
  {page==="overview"&&<div className="bottom-cards"><div className="info-card"><ShieldCheck size={20}/><div><b>Security first</b><p>SSH enrollment pins the router host key and encrypts stored credentials. Configuration changes are previewed, applied with automatic rollback, and audited.</p><span>SECURITY ROADMAP</span></div></div><div className="info-card blue"><Activity size={20}/><div><b>Persistent monitoring</b><p>{monitoring?"Server-side checks are enabled and continue independently of this browser.":"Monitoring is disabled. Enable it to begin scheduled, read-only SSH health checks."} Each cycle is bounded to five enrolled devices; check history is stored in PostgreSQL.</p><span>{monitoring?"SERVER MONITORING ON":"OPT-IN · READ-ONLY"}</span></div></div></div>}

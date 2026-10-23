@@ -237,6 +237,15 @@ func (s *radiusServer) loadClients(ctx context.Context) ([]radiusClient, error) 
 	return clients, nil
 }
 
+// clearUserFailures lifts a user's failure count and block, for when an administrator
+// re-enables the user or resets the password. Safe on nil.
+func (s *radiusServer) clearUserFailures(username string) {
+	if s == nil {
+		return
+	}
+	s.userAttempts.clear(username)
+}
+
 // invalidateClients makes the next packet reload the client list. Safe on nil.
 func (s *radiusServer) invalidateClients() {
 	if s == nil {
@@ -391,7 +400,11 @@ func (s *radiusServer) checkPassword(ctx context.Context, deviceID, username, pa
 		s.audit(ctx, deviceID, "radius.auth_accept", map[string]string{"username": username, "method": method})
 		return true
 	case matched:
-		s.reject(ctx, deviceID, username, method, radiusReasonDisabled, now)
+		// The password was right, so this is not guessing: count it against the user
+		// only (bounding audit volume from a phone that keeps retrying) and never
+		// against the AP, where it would lock out every other user.
+		s.userAttempts.recordFailure(username, now)
+		s.audit(ctx, deviceID, "radius.auth_reject", map[string]string{"username": username, "method": method, "reason": radiusReasonDisabled})
 	default:
 		s.reject(ctx, deviceID, username, method, radiusReasonCredentials, now)
 	}

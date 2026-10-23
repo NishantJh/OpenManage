@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 export const pages=[
  {path:"/",key:"overview",label:"Overview"},
  {path:"/devices",key:"devices",label:"Devices"},
+ {path:"/floor-plan",key:"floorplan",label:"Floor plan"},
  {path:"/configuration",key:"configuration",label:"Configuration"},
  {path:"/monitoring",key:"monitoring",label:"Monitoring"},
  {path:"/access",key:"access",label:"Access & security"},
