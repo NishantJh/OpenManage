@@ -40,6 +40,17 @@ These are new typed read operations (names `firmware_inventory`, similar), using
 | **C. Self-hosted ASU** | Yes (server plus queue) | Limited | Breaks the "no extra services" rule. Not recommended. |
 | **D. On-device `owut` / `auc`** | None | No | Quick path for official packages only; the device itself asks ASU. Weak control over verification. |
 
+### Online build services (checked 2026-10-23)
+
+| Service | Third-party packages (e.g. `luci-theme-fluent`) | Trust and cost |
+| --- | --- | --- |
+| **Official ASU**, `sysupgrade.openwrt.org` (API docs at `/docs/`) | No. It uses the official ImageBuilder and official feeds. | Run by the OpenWrt project. Free. Sees the device model and package list. I could not confirm from the README whether it signs images, so rely on its returned SHA-256 and `sysupgrade -T`. |
+| **Self-hosted ASU** ([openwrt/asu](https://github.com/openwrt/asu)) | Possibly. Forum reports describe an extra-feed allow list (`repository_allow_list`) and a signed index, but the feed must follow the official layout, and apk-format extra feeds were reported as not fully supported yet ([forum](https://forum.openwrt.org/t/how-to-add-self-compiled-packages-to-my-own-asu/247855)). Unverified; test before relying on it. | You control it, nothing leaves your network. Needs Podman and Redis (an extra service, against our rule), about 2 GB RAM and 50 GB disk. |
+| **Image Builder in GitHub Actions** (a workflow you own) | Yes: add `.ipk`/`.apk` files to the builder's local packages directory or a custom feed. | You control the workflow; GitHub sees the build. Free tier minutes apply. Community templates mostly build from source, which is slower than Image Builder. OpenManage would fetch the finished artifact and verify its hash. |
+| **Unofficial ASU servers** | Unknown | The ASU README says unofficial servers may run a modified ImageBuilder. I found no third-party service I would trust here; don't use one for firmware that runs on your router. |
+
+So no online service builds third-party packages for you without you running something yourself. For fluent, the realistic options are reinstall after flash (Phase 1) or your own Image Builder run (local container or GitHub Actions).
+
 Recommendation: **A first, B later and optional.** Phase 1 uses ASU for the official part and handles third-party packages after the flash (below). B is added only if Nishant wants fully offline builds or third-party packages inside the image. Build jobs would run as a separate optional builder container, started by Compose profile, never as a required service and never by giving OpenManage access to the Docker socket.
 
 Profile mapping: ASU needs release, target, profile and package list. The profile comes from `board_name` (commas replaced with underscores). To be confirmed in the lab for each supported model.
