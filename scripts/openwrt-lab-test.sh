@@ -397,6 +397,7 @@ api POST /api/network-users '{"username":"lab-wifi","password":"lab-wifi-passwor
 wifi_id="$(json 'print(d["id"])' < "$body")"
 api POST /api/network-users '{"username":"lab-locked","password":"lab-locked-password-1"}'
 [[ "$status" == 201 ]] || fail "creating a second network user returned HTTP $status"
+locked_id="$(json 'print(d["id"])' < "$body")"
 api POST "/api/auth/login" '{"username":"lab-wifi","password":"lab-wifi-password-1"}'
 [[ "$status" == 401 ]] || fail "a network user signed in to OpenManage (HTTP $status)"
 api POST "/api/devices/$device_id/radius-secret"
@@ -419,6 +420,18 @@ api PATCH "/api/network-users/$wifi_id" '{"disabled":false}'
 expect_probe accept "accepts a re-enabled user after rejections while disabled" "$radius_secret" lab-wifi lab-wifi-password-1
 for attempt in $(seq 1 10); do probe "$radius_secret" lab-locked wrong-password-123 >/dev/null; done
 expect_probe reject "blocks a user after repeated failures" "$radius_secret" lab-locked lab-locked-password-1
+api POST "/api/network-users/$locked_id/password" '{"password":"lab-locked-password-2"}'
+[[ "$status" == 200 ]] || fail "resetting a network user's password returned HTTP $status"
+expect_probe accept "accepts a blocked user right after a password reset" "$radius_secret" lab-locked lab-locked-password-2
+# Phones of disabled users retrying must not lock the AP out for everyone: 50
+# rejections of disabled users would reach the per-AP limit if they counted there.
+for n in 1 2 3 4 5; do
+  api POST /api/network-users "{\"username\":\"lab-off-$n\",\"password\":\"lab-off-password-$n\"}"
+  off_id="$(json 'print(d["id"])' < "$body")"
+  api PATCH "/api/network-users/$off_id" '{"disabled":true}'
+  for attempt in $(seq 1 10); do probe "$radius_secret" "lab-off-$n" "lab-off-password-$n" >/dev/null; done
+done
+expect_probe accept "keeps the AP open after many rejections of disabled users" "$radius_secret" lab-wifi lab-wifi-password-1
 api POST "/api/devices/$device_id/radius-secret"
 new_secret="$(json 'print(d["secret"])' < "$body")"
 expect_probe timeout "stops accepting a rotated-out secret" "$radius_secret" lab-wifi lab-wifi-password-1
@@ -426,8 +439,25 @@ expect_probe accept "accepts the rotated secret" "$new_secret" lab-wifi lab-wifi
 api GET /api/radius
 json 'assert len(d["clients"])==1 and d["dropped_packets"]>=4, d' < "$body"
 ! grep -q "$new_secret" "$body" || fail "RADIUS status returned the shared secret"
+# Run the AP commands from docs/radius-client-setup.md step 3 as written, so a guide
+# step that uci rejects fails here first. The lab router has no radio, so the
+# section is only checked, not brought up (no wifi reload).
+guide_ap_cmds="$(python3 - docs/radius-client-setup.md <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+section = text.split("## 3. Configure the AP", 1)[1].split("\n## ", 1)[0]
+block = re.search(r"```sh\n(.*?)```", section, re.S).group(1)
+print("\n".join(l for l in block.splitlines() if l.strip() != "wifi reload"))
+PY
+)"
+[[ "$guide_ap_cmds" == *"uci commit wireless"* ]] || fail "could not read the AP commands from the setup guide"
+guide_ap_cmds="${guide_ap_cmds//<secret from step 2>/$new_secret}"
+docker exec "$router" sh -c "set -e; touch /etc/config/wireless; $guide_ap_cmds" || fail "the setup guide's AP commands failed on OpenWrt"
+[[ "$(docker exec "$router" uci get wireless.omtest.encryption)" == wpa2 ]] || fail "the setup guide's AP commands did not configure WPA2-Enterprise"
+docker exec "$router" sh -c "uci delete wireless.omtest && uci commit wireless" || fail "the setup guide's undo command failed"
+echo "PASS: the setup guide's AP commands run on OpenWrt"
 radius_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action='radius.auth_accept'")"
-[[ "$radius_audit" == 4 ]] || fail "RADIUS accept audit events: $radius_audit (expected 4)"
+[[ "$radius_audit" == 6 ]] || fail "RADIUS accept audit events: $radius_audit (expected 6)"
 leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events" | grep -c -e lab-wifi-password -e lab-locked-password -e "$new_secret" -e "$radius_secret" || true)"
 [[ "$leaks" == 0 ]] || fail "a RADIUS password or secret reached the audit log"
 ! compose logs --no-color app | grep -q -e lab-wifi-password -e "$new_secret" || fail "a RADIUS password or secret reached the app log"
