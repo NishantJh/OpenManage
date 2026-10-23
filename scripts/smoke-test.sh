@@ -152,6 +152,21 @@ status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
 [[ "$status" == "204" ]] || { echo "ERROR: device deletion returned HTTP $status (expected 204)" >&2; exit 1; }
 echo "PASS: authenticated device deletion"
 
+# Browser check of sidebar navigation. Playwright is installed into a throwaway directory so the
+# web/ lockfile is untouched. OPENMANAGE_UI_CHROMIUM may point at an existing Chromium binary.
+if [[ "${OPENMANAGE_SKIP_UI_TEST:-0}" == 1 ]]; then
+  echo "SKIP: browser navigation test (OPENMANAGE_SKIP_UI_TEST=1)"
+else
+  command -v node >/dev/null || { echo "ERROR: node is required for the browser test (set OPENMANAGE_SKIP_UI_TEST=1 to skip)" >&2; exit 2; }
+  ui_dir="$(mktemp -d)"
+  trap 'rm -rf "$ui_dir"; cleanup' EXIT
+  (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0)
+  if [[ -z "${OPENMANAGE_UI_CHROMIUM:-}" ]]; then
+    (cd "$ui_dir" && npx playwright install chromium >/dev/null)
+  fi
+  (cd "$ui_dir" && node "$ROOT_DIR/scripts/ui-nav-test.mjs" "$base_url" admin "$admin_password")
+fi
+
 status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
   -X POST -b "$cookie_jar" -H "X-CSRF-Token: $csrf" "$base_url/api/auth/logout")"
 [[ "$status" == "204" ]] || { echo "ERROR: logout returned HTTP $status (expected 204)" >&2; exit 1; }
