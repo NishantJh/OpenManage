@@ -1,5 +1,5 @@
-// Command radius-probe sends one PAP Access-Request and prints accept, reject or
-// timeout. The OpenWrt lab copies it into the router container so the request
+// Command radius-probe sends one PAP Access-Request and prints accept, reject,
+// challenge or timeout. The OpenWrt lab copies it into the router container so the request
 // comes from the enrolled AP's address. It is a test tool, not part of the app.
 package main
 
@@ -24,7 +24,7 @@ func main() {
 	user := flag.String("user", "", "User-Name")
 	password := flag.String("password", "", "User-Password")
 	noMA := flag.Bool("no-message-authenticator", false, "omit Message-Authenticator")
-	eap := flag.Bool("eap", false, "add an EAP-Message attribute")
+	eap := flag.Bool("eap", false, "add an EAP-Response/Identity")
 	repeat := flag.Int("repeat", 1, "send the same request this many times")
 	flag.Parse()
 
@@ -78,6 +78,8 @@ func main() {
 		fmt.Println("accept")
 	case radius.CodeAccessReject:
 		fmt.Println("reject")
+	case radius.CodeAccessChallenge:
+		fmt.Println("challenge")
 	default:
 		fail(fmt.Errorf("unexpected reply code %d", last[0]))
 	}
