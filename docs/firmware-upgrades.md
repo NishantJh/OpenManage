@@ -97,6 +97,17 @@ Compatibility warnings before an upgrade: list third-party packages that are arc
 
 Out of scope: building packages from source, and a package store or search across the internet.
 
+## Common cases
+
+Checked with Nishant 2026-10-23. Sources for the claims below are forum posts, not official docs, so confirm each in the lab.
+
+1. **Swapping default packages** (for example `wpad-basic-*` to `wpad-openssl`, `dnsmasq` to `dnsmasq-full`). Replicate what the ASU clients do: read the installed package list from the device, add back any default packages the user removed, and send that to the server, which uses it nearly verbatim (per an OpenWrt developer on the forum). So the manifest records user-installed packages **and removed defaults**, and the build request carries both. The ASU API's diff-style package list and its `defaults` (uci-defaults) field are to be confirmed against the API docs.
+2. **Third-party LuCI apps and themes:** the package source registry above.
+3. **Proxy and VPN suites** (passwall, openclash and similar). Image Builder only assembles prebuilt packages, it does not compile anything, and ASU builds only from official feeds. So such a suite is supported only if the admin has a release file **built for the target release and architecture**, and its dependencies are in the official feeds (preflight checks both). Otherwise the upgrade plan shows it as "no build for the target release" and the admin decides. These suites are commonly rebuilt per release, so expect this to need attention at every release upgrade.
+4. **Out-of-tree kernel modules and drivers.** Not supported. A kernel module must match the exact kernel build it loads into, the official Image Builder keeps the official kernel, and a module built for another build will not load; forced installs have reportedly caused kernel panics. Preflight blocks any package that depends on an exact kernel version and is not from the official feeds, with a plain message.
+5. **Held package versions, custom files and scripts** (`rc.local`, hotplug scripts, certificates, `authorized_keys`): kept through the sysupgrade keep list (`/etc/sysupgrade.conf`). The upgrade plan shows that list so the admin can check it before flashing.
+6. **Packages on a USB drive (extroot):** out of scope for now. Devices using extroot are detected and the upgrade is refused with an explanation.
+
 ## Preserving and reapplying configuration
 
 - Default path: `sysupgrade` with config kept (`-k`, the default), which restores `/etc/config` and files listed in `/etc/sysupgrade.conf` and package keep lists.
