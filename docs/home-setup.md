@@ -2,6 +2,8 @@
 
 This walks through a fresh install on a Windows PC running Docker inside WSL2, enrolling an OpenWrt router and access points, and preparing for [Wi-Fi sign-in setup](radius-client-setup.md). On Linux, skip the WSL2 parts. Every step is reversible.
 
+This is the WSL2 test setup. The planned production host is Docker inside a Proxmox LXC, and most steps apply there; skip the WSL2-only sections.
+
 ## 1. Networking choices (WSL2 only, do this first)
 
 Access points send RADIUS over UDP 1812 to the OpenManage host, and OpenManage accepts a request only if its source address is the AP's own LAN address. Two things follow:
