@@ -23,12 +23,16 @@ env_file="$work/env"
 cookie_jar="$work/cookies"
 body="$work/body"
 
-compose() { docker compose --project-name "$project" --env-file "$env_file" "$@"; }
+# The override gives the app container a hosts entry that stands in for a home DNS record:
+# reverse DNS of 192.168.1.50 answers lab-ipad.lan (the container's /etc/hosts is read-only).
+override="$work/lab-override.yaml"
+compose() { docker compose --project-name "$project" --env-file "$env_file" -f compose.yaml -f "$override" "$@"; }
 cleanup() {
   docker rm -f "$router" >/dev/null 2>&1 || true
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$work"
 }
+printf 'services:\n  app:\n    extra_hosts:\n      - "lab-ipad.lan:192.168.1.50"\n' > "$override"
 trap cleanup EXIT
 fail() { echo "ERROR: $*" >&2; exit 1; }
 json() { python3 -c "import json,sys; d=json.load(sys.stdin); $1" "${@:2}"; }
@@ -207,8 +211,7 @@ SHIM
 chmod +x "$ip_bin"; echo "$ip_bin" > /tmp/ip-shim-path'
 docker exec -i "$router" sh -c "cat > /tmp/fake-neigh" <<< "192.168.1.50 dev eth0 lladdr $fake_mac REACHABLE
 192.168.1.99 dev eth0  FAILED"
-# Reverse DNS for that IP comes from the app container's hosts file.
-docker exec -u root "$(compose ps -q app)" sh -c 'echo "192.168.1.50 lab-ipad.lan" >> /etc/hosts'
+# Reverse DNS for 192.168.1.50 comes from the app container's hosts entry (see the override).
 set_fake_clients() { docker exec -i "$router" sh -c "cat > /tmp/fake-clients.json" <<< "$1"; }
 set_fake_clients "{\"freq\":5180,\"clients\":{\"$fake_mac\":{\"auth\":true,\"assoc\":true,\"authorized\":true,\"signal\":-58}}}"
 # dnsmasq lease line: expiry mac ip hostname client-id. The second line has no hostname.
