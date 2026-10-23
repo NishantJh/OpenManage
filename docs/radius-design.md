@@ -32,7 +32,7 @@ This is the main decision, because it fixes how passwords can be stored.
 | PEAPv0 with EAP-MSCHAPv2 | Every common client, usually the default choice in the client UI | Needs the NT hash (unsalted MD4 of the password), which is password-equivalent if the database leaks | TLS over EAP fragments, inner EAP, MSCHAPv2 challenge/response and the MPPE key derivation |
 | EAP-TLS | All clients, but each device needs a client certificate | No passwords | TLS only, plus certificate issuance and revocation |
 
-Recommendation: ship EAP-TTLS/PAP first, because it keeps passwords hashed with bcrypt and needs the least security-sensitive protocol code. Add PEAP-MSCHAPv2 only if a client that matters cannot do TTLS, and then store NT hashes encrypted with the existing AES-GCM key, never in plain form.
+Decision (Nishant, 2026-10-23): ship EAP-TTLS/PAP first, because it keeps passwords hashed with bcrypt and needs the least security-sensitive protocol code. Add PEAP-MSCHAPv2 only if a client that matters cannot do TTLS, and then store NT hashes encrypted with the existing AES-GCM key, never in plain form.
 
 ## Implementation outline
 
@@ -70,6 +70,6 @@ Each AP gets a random 32-byte secret, encoded as text, stored with AES-256-GCM b
 
 ## Open questions for Nishant
 
-1. EAP method: EAP-TTLS/PAP first (recommended), or PEAP-MSCHAPv2 because some clients need it?
+1. ~~EAP method~~: decided, EAP-TTLS/PAP first.
 2. Is `layeh.com/radius` acceptable as a dependency, or should packet encoding live in the repo?
 3. Which real clients should milestone 3 be tested on?
