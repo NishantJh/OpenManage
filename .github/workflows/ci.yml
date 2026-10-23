@@ -42,4 +42,9 @@ jobs:
         run: docker build -t openmanage:ci .
 
       - name: Run disposable end-to-end smoke test
+        # The browser navigation check runs in pr-validation.yml on GitHub-hosted runners.
+        # This runner lacks Chromium system libraries (libnspr4); remove the skip after
+        # `sudo npx playwright install-deps chromium` has been run on it.
+        env:
+          OPENMANAGE_SKIP_UI_TEST: "1"
         run: bash scripts/smoke-test.sh
