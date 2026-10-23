@@ -43,6 +43,7 @@ try {
     const hs = await headings();
     for (const h of p.has) assert.ok(hs.includes(h), `${p.label}: missing "${h}"`);
     for (const h of p.absent) assert.ok(!hs.includes(h), `${p.label}: "${h}" belongs to another page`);
+    if (p.path === "/") await page.getByText("Needs attention").waitFor();
     console.log("PASS: sidebar → " + p.label);
   };
 

@@ -17,6 +17,7 @@ import ConfigModal from "./ConfigModal";
 import SnapshotScheduleCard from "./SnapshotScheduleCard";
 import UsersSection from "./UsersSection";
 import WifiSection from "./WifiSection";
+import Attention from "./Attention";
 import FloorPlan from "./FloorPlan";
 import PasswordModal from "./PasswordModal";
 
@@ -65,6 +66,7 @@ export default function Dashboard({username,role,onLogout}:{username:string;role
  {page==="configuration"&&role==="admin"&&<WifiSection devices={devices} onChanged={()=>void loadAudit()}/>}
  {page==="devices"&&<FloorPlan devices={devices} role={role as Role} onChanged={()=>void loadAudit()}/>}
  {page==="access"&&<AuditLog audit={audit} auditLoading={auditLoading} auditError={auditError} onRefresh={()=>void loadAudit()}/>}
+ {page==="overview"&&<Attention devices={devices} monitoring={monitoring} history={monitorHistory} audit={audit} loading={loading}/>}
  {page==="overview"&&<div className="bottom-cards"><div className="info-card"><ShieldCheck size={20}/><div><b>Security first</b><p>SSH enrollment pins the router host key and encrypts stored credentials. Configuration changes are previewed, applied with automatic rollback, and audited.</p><span>SECURITY ROADMAP</span></div></div><div className="info-card blue"><Activity size={20}/><div><b>Persistent monitoring</b><p>{monitoring?"Server-side checks are enabled and continue independently of this browser.":"Monitoring is disabled. Enable it to begin scheduled, read-only SSH health checks."} Each cycle is bounded to five enrolled devices; check history is stored in PostgreSQL.</p><span>{monitoring?"SERVER MONITORING ON":"OPT-IN · READ-ONLY"}</span></div></div></div>}
  {page==="backups"&&<div className="bottom-cards"><SnapshotScheduleCard settings={savedSettings} isAdmin={role==="admin"} onSaved={s=>{setSavedSettings(s);void loadAudit()}}/></div>}
  {page==="configuration"&&role!=="admin"&&<div className="notice">Only administrators can change network configuration.</div>}
