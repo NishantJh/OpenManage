@@ -53,9 +53,9 @@ uci commit wireless
 wifi reload
 ```
 
-To use an existing interface instead, find its section name with `uci show wireless | grep =wifi-iface` (for example `default_radio0`) and use it in place of `omtest`, skipping the first four lines.
+To use an existing interface instead, find its section name with `uci show wireless | grep =wifi-iface` (for example `default_radio0`) and use it in place of `omtest`, skipping the first four lines. Save the current settings first with `cp /etc/config/wireless /root/wireless.before-radius`.
 
-To undo: `uci delete wireless.omtest; uci commit wireless; wifi reload`.
+To undo: `uci delete wireless.omtest; uci commit wireless; wifi reload`. If you changed an existing interface, restore it with `cp /root/wireless.before-radius /etc/config/wireless; wifi reload`.
 
 ## 4. Install the profile on the iPhone
 
@@ -85,4 +85,4 @@ If step 1 fails, check in this order:
 
 ## 6. Clean up
 
-Remove the test interface from the AP (`uci delete wireless.omtest; uci commit wireless; wifi reload`), and in the dashboard remove the AP's RADIUS secret. To turn RADIUS off, unset `OPENMANAGE_RADIUS_LISTEN`, remove the port mapping and restart. The CA is kept, so reinstalled profiles keep working when RADIUS is turned on again.
+Remove the test interface from the AP (`uci delete wireless.omtest; uci commit wireless; wifi reload`, or restore `/root/wireless.before-radius` if you changed an existing interface), and in the dashboard remove the AP's RADIUS secret. To turn RADIUS off, unset `OPENMANAGE_RADIUS_LISTEN`, remove the port mapping and restart. The CA is kept, so reinstalled profiles keep working when RADIUS is turned on again.
