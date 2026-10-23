@@ -125,6 +125,7 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 - [x] Validate real SSH checks against a disposable OpenWrt VM/device and exercise outage, bad credential, pinned-host-key mismatch, and restart recovery scenarios. (`scripts/openwrt-lab-test.sh`, OpenWrt 24.10.4 rootfs container.)
 - [x] Add a disposable OpenWrt VM/container smoke job (opt-in) so enrollment and monitoring are exercised against real OpenWrt in CI. (`.github/workflows/openwrt-lab.yml`: manual dispatch and weekly, GitHub-hosted.)
 - [ ] Add alert delivery after persistent monitoring is validated: one outbound webhook (ntfy/Gotify-compatible), no new service.
+- [ ] Wi-Fi floor plan and device location map (design: docs/device-location-map.md). Step 1 (floor plan: rooms and AP positions) is in progress; step 2 shows clients as green/red dots by the room of the AP they are connected to (24 h), with AP roaming history; precise location (RSSI fingerprinting) later.
 - Consider topology, IPAM, PKI/VPN, Wi-Fi planning, and larger-fleet features only when a concrete use case warrants them.
 
 ### 7. Built-in RADIUS for WPA-Enterprise

@@ -172,6 +172,8 @@ func main() {
 	mux.HandleFunc("GET /api/radius/apple-profile", a.downloadAppleWiFiProfile)
 	mux.HandleFunc("POST /api/devices/{id}/radius-secret", a.rotateRADIUSSecret)
 	mux.HandleFunc("DELETE /api/devices/{id}/radius-secret", a.deleteRADIUSSecret)
+	mux.HandleFunc("GET /api/floor-plan", a.getFloorPlan)
+	mux.HandleFunc("PUT /api/floor-plan", a.putFloorPlan)
 	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
 	mux.HandleFunc("PUT /api/monitoring/settings", a.updateMonitoringSettings)
 	mux.HandleFunc("GET /api/monitoring/history", a.listMonitoringHistory)
