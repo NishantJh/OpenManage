@@ -60,8 +60,9 @@ network="${project}_default"
 echo "Starting OpenWrt container ($openwrt_image) on $network ..."
 docker run -d --name "$router" --network "$network" "$openwrt_image" /sbin/init >/dev/null
 for attempt in $(seq 1 30); do
-  docker exec "$router" sh -c 'pgrep dropbear >/dev/null && ubus call system board >/dev/null' 2>/dev/null && break
-  [[ "$attempt" == 30 ]] && { docker logs "$router" | tail -20; fail "OpenWrt did not start dropbear and ubus"; }
+  # dropbear can be running before its init script has written the host key.
+  docker exec "$router" sh -c 'pgrep dropbear >/dev/null && test -s /etc/dropbear/dropbear_ed25519_host_key && ubus call system board >/dev/null' 2>/dev/null && break
+  [[ "$attempt" == 30 ]] && { docker logs "$router" | tail -20; fail "OpenWrt did not start dropbear (with its host key) and ubus"; }
   sleep 1
 done
 # docker cp keeps the host file owner (uid 1001 on GitHub runners); dropbear ignores
