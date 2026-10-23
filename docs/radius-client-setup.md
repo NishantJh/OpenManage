@@ -37,19 +37,25 @@ Never forward UDP 1812 from the internet.
 
 ## 3. Configure the AP
 
-On the AP (SSH), for the test SSID's wireless interface (`uci show wireless` lists them; here `wireless.test`):
+On the AP (SSH), add a separate wireless interface for the test so your everyday network is untouched. `omtest` is a new section name; `radio0` is the radio to use (`uci show wireless | grep =wifi-device` lists them, and `radio1` is usually 5 GHz):
 
 ```sh
-uci set wireless.test.ssid='Home-Secure'
-uci set wireless.test.encryption='wpa2'
-uci set wireless.test.auth_server='192.168.1.10'   # OpenManage host
-uci set wireless.test.auth_port='1812'
-uci set wireless.test.auth_secret='<secret from step 2>'
+uci set wireless.omtest=wifi-iface
+uci set wireless.omtest.device='radio0'
+uci set wireless.omtest.mode='ap'
+uci set wireless.omtest.network='lan'
+uci set wireless.omtest.ssid='Home-Secure'
+uci set wireless.omtest.encryption='wpa2'
+uci set wireless.omtest.auth_server='192.168.1.10'   # OpenManage host
+uci set wireless.omtest.auth_port='1812'
+uci set wireless.omtest.auth_secret='<secret from step 2>'
 uci commit wireless
 wifi reload
 ```
 
-To undo: restore the previous `encryption` and `key` and run `wifi reload`.
+To use an existing interface instead, find its section name with `uci show wireless | grep =wifi-iface` (for example `default_radio0`) and use it in place of `omtest`, skipping the first four lines.
+
+To undo: `uci delete wireless.omtest; uci commit wireless; wifi reload`.
 
 ## 4. Install the profile on the iPhone
 
@@ -79,4 +85,4 @@ If step 1 fails, check in this order:
 
 ## 6. Clean up
 
-Remove the test SSID settings from the AP, and in the dashboard remove the AP's RADIUS secret. To turn RADIUS off, unset `OPENMANAGE_RADIUS_LISTEN`, remove the port mapping and restart. The CA is kept, so reinstalled profiles keep working when RADIUS is turned on again.
+Remove the test interface from the AP (`uci delete wireless.omtest; uci commit wireless; wifi reload`), and in the dashboard remove the AP's RADIUS secret. To turn RADIUS off, unset `OPENMANAGE_RADIUS_LISTEN`, remove the port mapping and restart. The CA is kept, so reinstalled profiles keep working when RADIUS is turned on again.
