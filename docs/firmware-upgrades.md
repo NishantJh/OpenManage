@@ -73,24 +73,24 @@ Goal: adding an external package (for example the `luci-theme-fluent` theme) wor
 
 ### Package sources
 
-OpenManage keeps a **package source** registry (admin-managed, audited). A third-party package is only ever installed from a registered source, never from a free-form URL typed into an operation. Three kinds, matching the usual OpenWrt methods:
+Decision (Nishant, 2026-10-23): custom packages come from a **release file** (a direct `.ipk`/`.apk` URL, typically a GitHub release asset, which is how many LuCI themes ship) or an **upload**, and are installed **allow-untrusted**, meaning the package manager's signature check is skipped for that file. Custom feeds are not part of the first version.
 
-1. **Custom feed.** The same thing as a `customfeeds.conf` line (opkg) or an `/etc/apk/repositories.d/` entry (apk): feed URL plus its signing public key (usign key for opkg, apk key for apk). This is the preferred kind, because the package manager verifies signatures itself and handles dependencies and updates.
-2. **Release file.** A direct `.ipk`/`.apk` URL (typically a GitHub release asset, which is how many LuCI themes ship), pinned with a SHA-256. OpenManage downloads it, checks the hash, uploads it, and installs that one file. Hash-pinned, so a changed upstream file is refused until an admin re-pins it.
-3. **Uploaded file.** The admin uploads the package file in the UI; it is stored encrypted-at-rest in PostgreSQL with its hash (size capped). For packages with no public URL.
+OpenManage keeps a **package source** registry (admin-managed, audited). A package is only ever installed from a registered source, never from a free-form URL typed into an operation.
 
-**Adding a package** ("Install package" on a device, or on a group):
-- Choose a source and a package name. For a feed, OpenManage offers names from the feed's index; for a file, the name comes from the file's control data.
-- Preflight checks: package architecture is `all` or matches the device; dependencies are available (feed or official); free flash; package manager matches (`.ipk` for opkg, `.apk` for apk).
-- The install is a typed `package_install` operation. Signature checking stays on. For a file source on apk, the "untrusted" flag is used for that single hash-verified file only, never as a global setting.
-- On success the package and its source link are recorded in the device's manifest. From then on it is part of every upgrade plan.
+**Registering a source:**
+- Upload a file, or give a URL. For a URL, OpenManage downloads it once (https only, size capped, bounded timeout) and stores its own copy in PostgreSQL with the SHA-256 it computed. Later installs use the stored copy, so an upgrade does not depend on the upstream link still being alive or unchanged.
+- OpenManage reads the file's control data and shows the admin: name, version, architecture, dependencies, and whether it carries install scripts (`postinst`/`prerm`, which run as root on the router). The admin confirms before the source is saved. A new version is a new, separately confirmed source.
 
-**Packages already on the device** (installed by hand before OpenManage): the inventory marks them "third-party, source unknown". The admin resolves each one by attaching a source (feed, release file or upload). This is a one-time step and cannot be automated, because the package manager does not keep the original file. Packages from a custom feed already configured on the device are matched to a source automatically, once the admin registers that feed (OpenManage reads the feed lines and keys from the device to suggest it).
+**Installing** ("Install package" on a device or group): a typed `package_install` operation takes only a source id and the device. Preflight checks: architecture is `all` or matches the device; package format matches the manager (`.ipk` for opkg, `.apk` for apk); free flash; dependencies are satisfiable from the official feeds already configured on the device. OpenManage uploads the stored file to a fixed path under `/tmp`, checks its hash on the device, installs it, then removes it.
+
+**What allow-untrusted means here:** with `apk` it is the `--allow-untrusted` flag; installing a local `.ipk` with `opkg` is believed not to be signature-checked (to confirm in the lab). Integrity then rests only on the stored hash and on the admin having reviewed the file, and the package runs as root. To limit this: the flag is used for that single stored file only and never set as a global option; the audit trail records source, hash, device and who confirmed it; and the UI says plainly that the package is unsigned and trusted by the admin's choice.
+
+**Packages already on the device** (installed by hand before OpenManage): the inventory marks them "third-party, source unknown". The admin resolves each one by attaching a source (release file or upload). This is a one-time step and cannot be automated, because the package manager does not keep the original file. On `opkg`, a package from a custom feed the user configured by hand also shows as source unknown; the admin attaches the same kind of file source.
 
 ### Using sources during an upgrade
 
 1. **Reinstall after the flash** (Phase 2, default). Once the device is back, `package_install` reinstalls each third-party package from its source. Risk: the device briefly runs without the package (for a LuCI theme it falls back to the default theme), and the package must still suit the new release; a LuCI theme built for another LuCI version can fail to load.
-2. **Baked into the image** (Phase 4, self-hosted ASU mode only). Feed-kind sources are added to the ASU server's allow list, so the image already contains the package and no network is needed after flashing. Release-file and upload sources need a feed made from them first (to verify).
+2. **Baked into the image: not supported for file sources.** ASU can only add packages through a feed allow list, not single files, so file and upload sources are always reinstalled after the flash. Feed support (and baking) is a possible later addition.
 3. **uci-defaults first-boot script.** For small settings only (for example selecting the theme with `uci set luci.main.mediaurlbase`). Not a way to install packages, because the device may have no internet on first boot. Normally unnecessary because the config backup already restores settings.
 
 Compatibility warnings before an upgrade: list third-party packages that are architecture-independent (typical for LuCI themes) versus compiled, and warn when a source offers nothing for the target release (feed index has no match, or the file's declared dependencies do not fit).
@@ -128,8 +128,7 @@ New operations (names indicative):
 | `firmware_stage` | write | Upload the verified image to a fixed path under `/tmp` |
 | `firmware_check` | read | `sysupgrade -T` on the staged image |
 | `firmware_flash` | write, disruptive | Start `sysupgrade` detached; the connection will drop |
-| `package_install` | write | Install a named package from a registered source (feed, hash-pinned file, or upload); parameters are source id and package name only |
-| `package_source_inventory` | read | Read configured feeds and keys on a device to suggest sources |
+| `package_install` | write | Install a package from a registered source (stored release file or upload, allow-untrusted); parameters are source id only |
 
 Write operations audit transactionally (a Section 2 rule). A job state machine in PostgreSQL (`planned`, `built`, `staged`, `flashing`, `verifying`, `done`, `needs_attention`) survives restarts, with no worker service: the existing server process drives it, like the monitoring loop. Migrations are additive.
 
@@ -138,14 +137,14 @@ Write operations audit transactionally (a Section 2 rule). A job state machine i
 1. **Inventory and plan-only.** Capture manifests, show the package diff and what an upgrade would do. No writes.
 2. **Single-device upgrade via ASU**, reinstalling third-party packages afterward, with backup, verification, and drift review. Test on real hardware and in the OpenWrt lab where possible (the lab is a container; flashing itself cannot be tested there).
 3. **Staged rollout** with canary and concurrency limits.
-4. **Optional self-hosted ASU mode:** the build-server URL setting and the setup script, with extra feeds so third-party packages can be built in.
+4. **Optional self-hosted ASU mode:** the build-server URL setting and the setup script, with optional extra feeds (not needed for release-file or upload packages, which are reinstalled after the flash).
 
 ## Open questions for Nishant
 
 1. (Decided) Public ASU by default, self-hosted ASU optional. Is the privacy note shown at first use enough?
-2. How are third-party packages like `luci-theme-fluent` installed today (custom feed, or a downloaded `.ipk`/`.apk`)? That decides whether reinstall-after-flash is enough.
+2. Which third-party packages do you use today besides `luci-theme-fluent`? Any with install scripts or compiled code?
 3. Which devices matter first, and do they have physical access if a flash fails? Any dual-partition devices?
 4. Is `opkg` (24.10) enough, or do you want `apk` (25.x) support from the start?
 5. Are large release jumps in scope, or only same-release and next-release upgrades?
 6. (Decided) The setup script targets Debian (and Ubuntu) only at first.
-7. Is the three-kind source registry (feed, release file, upload) the right shape, or do you only need feeds and release files?
+7. (Decided) Release file or upload, installed allow-untrusted; feeds later if ever.
