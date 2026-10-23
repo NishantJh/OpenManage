@@ -15,7 +15,7 @@ Access points send RADIUS over UDP 1812 to the OpenManage host, and OpenManage a
   networkingMode=mirrored
   ```
 
-  Then `wsl --shutdown` from PowerShell and reopen WSL. Allow inbound RADIUS through the Hyper-V firewall (PowerShell as administrator):
+  Then `wsl --shutdown` from PowerShell and reopen WSL. Allow inbound RADIUS through the Hyper-V firewall (PowerShell as administrator). Despite the name, this is the firewall Windows 11 applies to WSL2 by default (WSL 2.0.9 or later); it does not need the Hyper-V feature installed. The ID below is WSL's own:
 
   ```powershell
   New-NetFirewallHyperVRule -Name OpenManageRADIUS -DisplayName "OpenManage RADIUS" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol UDP -LocalPorts 1812
@@ -92,4 +92,4 @@ Error codes on enrollment are explained in the dialog; `host_key_mismatch` means
 
 Now continue with [Wi-Fi sign-in setup](radius-client-setup.md) from step 2 (Wi-Fi user and AP secret). The AP's `auth_server` is the PC's LAN address.
 
-If the AP's requests do not arrive (no audit event when the phone tries to join), check from WSL2 with `sudo tcpdump -ni any udp port 1812` while the phone joins. Nothing at all means the Hyper-V firewall or mirrored mode is not in effect; packets arriving while the dashboard's "Ignored packets" count rises means the source address or secret does not match the device's inventory entry.
+If the AP's requests do not arrive (no audit event when the phone tries to join), check from WSL2 with `sudo tcpdump -ni any udp port 1812` while the phone joins. Nothing at all means the firewall rule above or mirrored mode is not in effect; packets arriving while the dashboard's "Ignored packets" count rises means the source address or secret does not match the device's inventory entry.
