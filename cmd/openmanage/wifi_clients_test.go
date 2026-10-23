@@ -118,3 +118,23 @@ func TestParseWifiClientsNamesFromLeases(t *testing.T) {
 		t.Fatalf("unsafe or malformed lease names must be dropped: %v", bad)
 	}
 }
+
+func TestLeaseCacheNamesAcrossDevices(t *testing.T) {
+	var c leaseCache
+	c.set("router", map[string]string{"aa:bb:cc:11:22:33": "nishants-iphone"})
+	c.set("ap", nil)
+	if got := c.lookup("aa:bb:cc:11:22:33"); got != "nishants-iphone" {
+		t.Fatalf("lookup = %q", got)
+	}
+	if got := c.lookup("de:ad:be:ef:00:01"); got != "" {
+		t.Fatalf("unknown MAC should have no name, got %q", got)
+	}
+	c.set("router", nil)
+	if got := c.lookup("aa:bb:cc:11:22:33"); got != "" {
+		t.Fatalf("a device that reports no leases must drop its names, got %q", got)
+	}
+	out := "##leases\naa:bb:cc:11:22:33 x\n" + sampleClients
+	if got := parseDHCPLeases(leaseSection(out)); got["aa:bb:cc:11:22:33"] != "x" {
+		t.Fatalf("unexpected lease section %q", leaseSection(out))
+	}
+}

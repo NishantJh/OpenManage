@@ -214,6 +214,9 @@ api PATCH "/api/wifi-clients/$client_id" '{"label":"lab phone"}'
 [[ "$status" == 204 ]] || fail "labelling a client returned HTTP $status"
 # The client leaves: the next poll (one interval later) records a disconnect.
 set_fake_clients '{"freq":5180,"clients":{}}'
+# The router also renames the device in its leases. The client is no longer on the AP, so
+# the new name can only arrive through the lease path, not through the hostapd list.
+docker exec -i "$router" sh -c "cat > /tmp/dhcp.leases" <<< "4102444800 $fake_mac 192.168.1.50 lab-iphone-renamed 01:$fake_mac"
 for attempt in $(seq 1 100); do
   api GET /api/wifi-clients
   [[ "$(json 'print(d[0]["connected"])' < "$body")" == False ]] && break
@@ -221,6 +224,12 @@ for attempt in $(seq 1 100); do
   sleep 1
 done
 json 'assert d[0]["label"]=="lab phone", d' < "$body"
+for attempt in $(seq 1 100); do
+  api GET /api/wifi-clients
+  [[ "$(json 'print(d[0]["name"])' < "$body")" == lab-iphone-renamed ]] && break
+  [[ "$attempt" == 100 ]] && { cat "$body" >&2; fail "a changed DHCP lease name did not reach a tracked client"; }
+  sleep 1
+done
 api GET "/api/wifi-client-events?client=$client_id"
 json 'assert [e["kind"] for e in d]==["disconnect","connect"] and d[1]["signal_dbm"]==-58 and d[0]["from_device_id"]==sys.argv[1], d' "$device_id" < "$body"
 ! grep -q "11:22:33" "$body" || fail "client history leaked the full MAC address"

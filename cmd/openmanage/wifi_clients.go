@@ -161,6 +161,43 @@ func classifyAssociation(prev *clientState, deviceID string) string {
 	return ""
 }
 
+// leaseCache holds the hostnames each enrolled device's DHCP server last reported, so a
+// client seen on one AP can be named from the lease file of a different router. In
+// memory: after a restart every device is simply polled once.
+type leaseCache struct {
+	mu    sync.Mutex
+	names map[string]map[string]string // device ID -> MAC -> hostname
+}
+
+func (c *leaseCache) set(deviceID string, leases map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.names == nil {
+		c.names = map[string]map[string]string{}
+	}
+	if len(leases) == 0 {
+		delete(c.names, deviceID)
+		return
+	}
+	c.names[deviceID] = leases
+}
+
+func (c *leaseCache) lookup(mac string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, leases := range c.names {
+		if name := leases[mac]; name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+// leaseSection is the part of the operation's output before the first hostapd section.
+func leaseSection(output string) string {
+	return strings.Split("\n"+output, "\n@@ ")[0]
+}
+
 // pollTracker remembers when each AP was last polled. In memory: after a restart
 // every AP is simply polled once.
 type pollTracker struct {
@@ -221,8 +258,36 @@ func (a *app) pollWifiClients(parent context.Context, deviceID string) {
 	if result.Status != "ok" {
 		return // unknown, not "disconnected": leave the recorded state alone
 	}
-	if err := a.applyClientPoll(ctx, deviceID, parseWifiClients(result.Output)); err != nil {
+	leases := parseDHCPLeases(leaseSection(result.Output))
+	a.leaseNames.set(deviceID, leases)
+	clients := parseWifiClients(result.Output)
+	for i := range clients {
+		if clients[i].Name == "" {
+			clients[i].Name = a.leaseNames.lookup(clients[i].MAC)
+		}
+	}
+	if err := a.applyClientPoll(ctx, deviceID, clients); err != nil {
 		log.Printf("client tracking could not store results for device %s", deviceID)
+	}
+	a.applyLeaseNames(ctx, leases)
+}
+
+// applyLeaseNames names clients that are already tracked from one device's leases. It
+// never creates a client: a lease alone (a wired PC, say) is not a Wi-Fi client.
+func (a *app) applyLeaseNames(ctx context.Context, leases map[string]string) {
+	if len(leases) == 0 {
+		return
+	}
+	key, err := encryptionKey()
+	if err != nil {
+		return
+	}
+	for mac, name := range leases {
+		if _, err := a.db.Exec(ctx, `UPDATE wifi_clients SET dhcp_name=$2 WHERE client_key=$1 AND dhcp_name <> $2`,
+			clientKey(key, mac), name); err != nil {
+			log.Printf("client tracking could not store DHCP names")
+			return
+		}
 	}
 }
 
