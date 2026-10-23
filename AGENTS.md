@@ -39,6 +39,7 @@ Frontend: cd web && npm ci && npm run build
 Backend: go test ./...
 Formatting: gofmt -w cmd/openmanage/*.go; gofmt -l cmd/openmanage/*.go
 Container: docker build -t openmanage:local .
+Browser navigation check: scripts/ui-nav-test.mjs (run by scripts/smoke-test.sh; needs Node and Chromium)
 
 CI prepares embedded frontend assets before running Go tests and building the Docker image. Do not interpret a standalone local Docker build failure as an application defect until the required generated assets are prepared.
 
