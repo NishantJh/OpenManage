@@ -27,15 +27,21 @@ type monitoringSettings struct {
 	IntervalSeconds int  `json:"interval_seconds"`
 	// SnapshotsEnabled turns on scheduled configuration snapshots, independently of
 	// health monitoring; SnapshotIntervalSeconds is how often each device is exported.
-	SnapshotsEnabled        bool      `json:"snapshots_enabled"`
-	SnapshotIntervalSeconds int       `json:"snapshot_interval_seconds"`
-	UpdatedAt               time.Time `json:"updated_at"`
+	SnapshotsEnabled        bool `json:"snapshots_enabled"`
+	SnapshotIntervalSeconds int  `json:"snapshot_interval_seconds"`
+	// ClientTrackingEnabled turns on Wi-Fi client tracking for the device location
+	// map; ClientPollIntervalSeconds is how often each AP is asked for its clients.
+	ClientTrackingEnabled     bool      `json:"client_tracking_enabled"`
+	ClientPollIntervalSeconds int       `json:"client_poll_interval_seconds"`
+	UpdatedAt                 time.Time `json:"updated_at"`
 }
 
-const monitoringSettingsColumns = `enabled, interval_seconds, snapshots_enabled, snapshot_interval_seconds, updated_at`
+const monitoringSettingsColumns = `enabled, interval_seconds, snapshots_enabled, snapshot_interval_seconds,
+	client_tracking_enabled, client_poll_interval_seconds, updated_at`
 
 func scanMonitoringSettings(row pgx.Row, s *monitoringSettings) error {
-	return row.Scan(&s.Enabled, &s.IntervalSeconds, &s.SnapshotsEnabled, &s.SnapshotIntervalSeconds, &s.UpdatedAt)
+	return row.Scan(&s.Enabled, &s.IntervalSeconds, &s.SnapshotsEnabled, &s.SnapshotIntervalSeconds,
+		&s.ClientTrackingEnabled, &s.ClientPollIntervalSeconds, &s.UpdatedAt)
 }
 
 type monitoringCheck struct {
@@ -66,10 +72,12 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	// The snapshot fields are optional so older clients keep the current values.
 	var in struct {
-		Enabled                 bool  `json:"enabled"`
-		IntervalSeconds         int   `json:"interval_seconds"`
-		SnapshotsEnabled        *bool `json:"snapshots_enabled"`
-		SnapshotIntervalSeconds *int  `json:"snapshot_interval_seconds"`
+		Enabled                   bool  `json:"enabled"`
+		IntervalSeconds           int   `json:"interval_seconds"`
+		SnapshotsEnabled          *bool `json:"snapshots_enabled"`
+		SnapshotIntervalSeconds   *int  `json:"snapshot_interval_seconds"`
+		ClientTrackingEnabled     *bool `json:"client_tracking_enabled"`
+		ClientPollIntervalSeconds *int  `json:"client_poll_interval_seconds"`
 	}
 	if err := decodeJSONBody(w, r, monitoringBodyLimit, &in); err != nil {
 		if errors.Is(err, errTrailingJSON) {
@@ -87,6 +95,10 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "snapshot interval must be between 900 and 86400 seconds")
 		return
 	}
+	if in.ClientPollIntervalSeconds != nil && (*in.ClientPollIntervalSeconds < clientPollMin || *in.ClientPollIntervalSeconds > clientPollMax) {
+		writeError(w, http.StatusBadRequest, "client poll interval must be between 60 and 600 seconds")
+		return
+	}
 	user := r.Context().Value(userContextKey).(authUser)
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
@@ -97,13 +109,17 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 	var settings monitoringSettings
 	err = scanMonitoringSettings(tx.QueryRow(r.Context(), `UPDATE monitoring_settings
 		SET enabled=$1, interval_seconds=$2, snapshots_enabled=COALESCE($3, snapshots_enabled),
-			snapshot_interval_seconds=COALESCE($4, snapshot_interval_seconds), updated_at=NOW()
+			snapshot_interval_seconds=COALESCE($4, snapshot_interval_seconds),
+			client_tracking_enabled=COALESCE($5, client_tracking_enabled),
+			client_poll_interval_seconds=COALESCE($6, client_poll_interval_seconds), updated_at=NOW()
 		WHERE id=TRUE
-		RETURNING `+monitoringSettingsColumns, in.Enabled, in.IntervalSeconds, in.SnapshotsEnabled, in.SnapshotIntervalSeconds), &settings)
+		RETURNING `+monitoringSettingsColumns, in.Enabled, in.IntervalSeconds, in.SnapshotsEnabled, in.SnapshotIntervalSeconds,
+		in.ClientTrackingEnabled, in.ClientPollIntervalSeconds), &settings)
 	if err == nil {
 		err = insertAuditEvent(r.Context(), tx, user.ID, "monitoring.settings.update", "monitoring", "settings",
 			map[string]any{"enabled": settings.Enabled, "interval_seconds": settings.IntervalSeconds,
-				"snapshots_enabled": settings.SnapshotsEnabled, "snapshot_interval_seconds": settings.SnapshotIntervalSeconds})
+				"snapshots_enabled": settings.SnapshotsEnabled, "snapshot_interval_seconds": settings.SnapshotIntervalSeconds,
+				"client_tracking_enabled": settings.ClientTrackingEnabled, "client_poll_interval_seconds": settings.ClientPollIntervalSeconds})
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -176,6 +192,7 @@ func (a *app) pruneMonitoringHistory(parent context.Context) {
 	defer cancel()
 	// Keep a bounded, useful history without requiring a separate maintenance service.
 	_, _ = a.db.Exec(ctx, "DELETE FROM monitoring_checks WHERE finished_at < NOW() - INTERVAL '30 days'")
+	a.pruneWifiClients(ctx)
 }
 
 // runDueMonitoringChecks runs due health checks and, separately opt-in, due
@@ -216,6 +233,9 @@ func (a *app) runDueMonitoringChecks(ctx context.Context) {
 	}
 	if settings.SnapshotsEnabled {
 		a.runSnapshotBatch(ctx, lockConn, settings)
+	}
+	if settings.ClientTrackingEnabled {
+		a.runClientBatch(ctx, lockConn, settings)
 	}
 }
 
