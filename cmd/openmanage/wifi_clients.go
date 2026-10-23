@@ -37,12 +37,12 @@ const (
 )
 
 // wifiClientsOperation reads the hostapd association tables and the DHCP lease file
-// (for device names). The command is fixed: it prints the first leases, then lists the
+// (MAC and hostname only, at most 256 lines, for device names). The command is fixed: it prints those, then lists the
 // hostapd ubus objects and asks each for its clients, nothing else.
 var wifiClientsOperation = operation{
 	Name: "wifi_clients", Label: "Wi-Fi clients", Class: operationRead, Roles: readOnlyRoles,
 	Timeout: healthCheckTimeout, OutputLimit: 64 * 1024, Audit: auditBestEffort,
-	command: `echo "##leases"; head -n 512 /tmp/dhcp.leases 2>/dev/null; for n in $(ubus list 'hostapd.*'); do echo "@@ $n"; ubus call "$n" get_clients; done`,
+	command: `echo "##leases"; awk 'length($4)>0 && length($4)<=60 && $4!="*" {print $2, $4}' /tmp/dhcp.leases 2>/dev/null | head -n 256; for n in $(ubus list 'hostapd.*'); do echo "@@ $n"; ubus call "$n" get_clients; done`,
 }
 
 var hostapdObjectPattern = regexp.MustCompile(`^hostapd\.[A-Za-z0-9_.-]{1,32}$`)
@@ -56,7 +56,8 @@ type polledClient struct {
 
 var leaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$`)
 
-// parseDHCPLeases reads dnsmasq lease lines ("expiry mac ip hostname clientid") from the
+// parseDHCPLeases reads "mac hostname" lines (the operation trims dnsmasq's lease file to
+// those two fields to keep the output small) from the
 // text before the first hostapd section. Hostnames come from the clients themselves, so
 // anything that is not a plain hostname is dropped.
 func parseDHCPLeases(preamble string) map[string]string {
@@ -67,11 +68,11 @@ func parseDHCPLeases(preamble string) map[string]string {
 	}
 	for _, line := range strings.Split(body, "\n") {
 		f := strings.Fields(line)
-		if len(f) < 4 || !leaseNamePattern.MatchString(f[3]) {
+		if len(f) != 2 || !leaseNamePattern.MatchString(f[1]) {
 			continue
 		}
-		if mac, ok := normalizeMAC(f[1]); ok {
-			names[mac] = f[3]
+		if mac, ok := normalizeMAC(f[0]); ok {
+			names[mac] = f[1]
 		}
 	}
 	return names

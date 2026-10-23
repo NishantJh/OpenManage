@@ -104,8 +104,8 @@ func TestPollTracker(t *testing.T) {
 }
 
 func TestParseWifiClientsNamesFromLeases(t *testing.T) {
-	out := "##leases\n1700000000 AA:BB:CC:11:22:33 192.168.1.50 nishants-iphone 01:aa:bb:cc:11:22:33\n" +
-		"1700000000 de:ad:be:ef:00:01 192.168.1.51 * 01:de:ad:be:ef:00:01\n" + sampleClients
+	out := "##leases\nAA:BB:CC:11:22:33 nishants-iphone\n" +
+		"de:ad:be:ef:00:01 *\n" + sampleClients
 	byMAC := map[string]string{}
 	for _, c := range parseWifiClients(out) {
 		byMAC[c.MAC] = c.Name
@@ -113,7 +113,7 @@ func TestParseWifiClientsNamesFromLeases(t *testing.T) {
 	if byMAC["aa:bb:cc:11:22:33"] != "nishants-iphone" || byMAC["de:ad:be:ef:00:01"] != "" {
 		t.Fatalf("unexpected names: %v", byMAC)
 	}
-	bad := parseDHCPLeases("##leases\n1 aa:bb:cc:11:22:33 10.0.0.2 <script> x\n1 aa:bb:cc:11:22:34 10.0.0.3 ok\n")
+	bad := parseDHCPLeases("##leases\naa:bb:cc:11:22:33 <script>\naa:bb:cc:11:22:34 ok\n")
 	if len(bad) != 1 || bad["aa:bb:cc:11:22:34"] != "ok" {
 		t.Fatalf("unsafe or malformed lease names must be dropped: %v", bad)
 	}
