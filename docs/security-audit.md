@@ -7,21 +7,23 @@
 
 OpenManage has useful foundations: session tokens are random and stored as hashes, passwords use bcrypt, state-changing API requests require a CSRF cookie/header match, SSH host keys are pinned to an independently supplied fingerprint, SSH private keys are encrypted at rest, enrollment is constrained to private IP literals/TCP 22, and the Compose app runs read-only with dropped Linux capabilities and no-new-privileges.
 
-It is still early-development software and should not be treated as a production management plane. LAN availability is a deployment requirement, but direct HTTP must be understood as an explicitly less-secure mode. The highest-priority gaps are server-side role enforcement, best-effort audit writes for several state changes, and lack of login rate limiting. PR #13 also exposed and remediated known Go standard-library and dependency vulnerabilities by upgrading to Go 1.26.x and patched pgx, x/crypto, and x/text versions; the follow-up vulnerability scan passed. Dependency lockfiles and actual restore testing are still outstanding.
+It is still early-development software and should not be treated as a production management plane. LAN availability is a deployment requirement, but direct HTTP must be understood as an explicitly less-secure mode. The highest-priority gaps are server-side role enforcement, best-effort audit writes for several state changes, and lack of login rate limiting. PR #13 also exposed and remediated known Go standard-library and dependency vulnerabilities by upgrading to Go 1.26.x and patched pgx, x/crypto, and x/text versions; the follow-up vulnerability scan passed. Dependency lockfiles and the restore drill are now done (OM-SAF-05 and OM-SAF-06).
 
 ## Findings
 
 ### OM-SAF-01 — Inconsistent API role enforcement
 
-**Severity: High — remediated in PR #10; post-merge CI verification pending**
+**Severity: High — remediated in PR #10**
 
 The database defines `admin`, `operator`, and `readonly` roles. The initial audit found that device create/delete and audit listing lacked route-level role checks. PR #10 added server-side checks: only admin/operator can create or delete inventory, only admin can list audit events, and enrollment remains admin-only. Tests cover denied roles before database access. Recheck the post-merge CI and retain regression tests.
 
-Tracking: [PR #10](https://github.com/NishantJh/OpenManage/pull/10) is merged; post-merge CI is being verified.
+Tracking: [PR #10](https://github.com/NishantJh/OpenManage/pull/10) is merged, and the denied-role regression tests stay in the suite. Status 2026-10-23: verified in code; every write and audit route uses `requireAnyRole`.
 
 ### OM-SAF-02 — Direct HTTP does not protect credentials or session cookies in transit
 
 **Severity: High when used on an untrusted/shared network; deployment-dependent**
+
+**Status 2026-10-23: partly addressed; still open.** The Compose binding defaults to loopback and LAN access is an explicit choice. The cookie-secure default is still `false`, so HTTPS deployments must set `OPENMANAGE_COOKIE_SECURE=true`.
 
 The default cookie setting is `OPENMANAGE_COOKIE_SECURE=false`, which is necessary for direct HTTP but means the browser can send the session cookie over cleartext HTTP. HttpOnly and SameSite do not encrypt traffic. A LAN-reachable port must therefore be restricted to a trusted network; use HTTPS through a trusted reverse proxy and set `OPENMANAGE_COOKIE_SECURE=true` for routine use. Never port-forward this service to the public internet.
 
@@ -49,7 +51,11 @@ The repository has no committed Go `go.sum` and no frontend `package-lock.json` 
 
 ### OM-SAF-06 — Backup procedure has not been recovery-tested
 
-**Severity: Medium**
+**Severity: Medium — remediated 2026-10-22**
+
+Status: the drill passed on WSL2 (see the drill record in [backup-recovery.md](backup-recovery.md)). Re-run it on the production host, and after any schema, backup, or key-handling change.
+
+The original finding follows.
 
 The coupled PostgreSQL dump and `OPENMANAGE_ENCRYPTION_KEY` recovery procedure is documented. It has not been proven by a successful isolated restore and credential-decryption check. Run a restore exercise on a disposable stack, verify inventory/audit data and a known enrolled credential, and record the application/database versions and recovery time. Never use the first restore test on production data.
 
@@ -67,7 +73,7 @@ The enrollment body is limited to 32 KiB and the HTTP server has read-header, re
 
 The lab test (`scripts/openwrt-lab-test.sh`) found and fixed two bugs. When dropbear offered both RSA and Ed25519 host keys, Go negotiated RSA, so an Ed25519 pin always failed. A router with a blank root password let SSH "none" auth through, so enrollment "verified" any key; it now fails with `key_not_verified`.
 
-Enrollment restricts targets to private IP literals, TCP/22, independently pinned SHA-256 host keys, and SSH key authentication before persistence. The private key is encrypted with AES-256-GCM and excluded from API responses/audit details. Tests still need to cover SSH authentication/fingerprint failures, re-enrollment preserving existing credentials after failure, and database/audit failure rollback. Keep arbitrary remote command execution disabled until the typed operation engine and its policy checks are implemented.
+Enrollment restricts targets to private IP literals, TCP/22, independently pinned SHA-256 host keys, and SSH key authentication before persistence. The private key is encrypted with AES-256-GCM and excluded from API responses/audit details. Status 2026-10-23: those tests are in place (PR #34), and the real-OpenWrt lab exercises enrollment and monitoring. The original finding follows: tests were then needed for SSH authentication and fingerprint failures, re-enrollment preserving existing credentials after failure, and database/audit failure rollback. Keep arbitrary remote command execution disabled until the typed operation engine and its policy checks are implemented.
 
 ## Positive controls observed
 
@@ -79,6 +85,8 @@ Enrollment restricts targets to private IP literals, TCP/22, independently pinne
 - CI intentionally avoids running untrusted fork pull-request code on the self-hosted WSL2 runner.
 
 ## Required order of work
+
+Status 2026-10-23: items 1 to 6 are done (see the findings above). Item 7 is complete for read-only operations and the first controlled write (hostname); later writes stay behind the same typed-operation and rollback controls.
 
 1. [In progress verification] Enforce API role permissions (merged in PR #10; confirm post-merge CI).
 2. Enable trusted-LAN access and document HTTPS/firewall deployment choices without implying that HTTP is encrypted.

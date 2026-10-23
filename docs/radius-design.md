@@ -1,6 +1,6 @@
 # Built-in RADIUS: design
 
-Status: agreed 2026-10-23. Milestone 2 (PAP lab listener) is implemented. Milestone 3: EAP-TTLS/PAP is implemented and passes `eapol_test` in the lab (keys verified); the real-client test (iPhone) is pending.
+Status: agreed 2026-10-23. Milestone 2 is implemented for PAP; MAC authentication is not yet. Milestone 3: EAP-TTLS/PAP is implemented and passes `eapol_test` in the lab (keys verified); the real-client test (iPhone) is pending.
 
 ## Goal
 

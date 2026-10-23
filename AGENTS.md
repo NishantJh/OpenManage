@@ -14,7 +14,7 @@ Read plan.md before planning work. Use this file as the repository-specific oper
 
 - Backend: Go HTTP server, PostgreSQL via pgx, SQL migrations embedded under cmd/openmanage/migrations/.
 - Frontend: React + TypeScript under web/; built assets are copied into cmd/openmanage/web/dist/ by CI and embedded in the Go app.
-- Deployment: compose.yaml, Dockerfile, .env.example. Keep the single-app + PostgreSQL baseline lightweight.
+- Deployment: compose.yaml, Dockerfile, .env.example. The production target is Docker Compose inside a Proxmox LXC; WSL2 is the test environment. Keep the single-app + PostgreSQL baseline lightweight.
 - Do not add Redis, a separate worker, or another runtime service without a specific requirement and documented trade-off.
 - Use additive, restart-safe migrations where possible. Explain how old and new app versions interact with each migration and whether rollback loses data.
 - Keep API errors sanitized. Never log credentials, session tokens, private keys, encryption keys, CSRF tokens, or sensitive command output.

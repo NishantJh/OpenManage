@@ -6,15 +6,19 @@ This is the roadmap and source of truth for sequencing work. Keep it short and u
 
 Build a lightweight, self-hosted control plane for OpenWrt, inspired by useful OpenWISP concepts but implemented around Go, PostgreSQL, and a React/TypeScript UI. Keep the default deployment small; do not add Redis or another service unless a demonstrated requirement justifies it.
 
-## Priority (agreed 2026-10-22)
+Production target: Docker Compose inside a Proxmox LXC. WSL2 is the test environment (the OpenWrt lab, the restore drill, and the [home setup guide](docs/home-setup.md)), not the production host.
 
-Finish the remaining Section 0 and 1 items first; most are small. Then extract the shared operations engine (Section 2) and move on to product work in order: read-only configuration, then controlled writes, then built-in RADIUS. PRs that do not map to a roadmap item get a plan entry first, or are parked as drafts or closed.
+## Priority (agreed 2026-10-22, updated 2026-10-23)
+
+Hardening (Sections 0 and 1) and the operations engine, read-only configuration, and first controlled write (Sections 2 and 3) are largely done. Built-in RADIUS (Section 7) is the active product work, with user management and the hostname write already in place. Remaining safety-audit items, alerts, and the deferred items below come after it. PRs that do not map to a roadmap item get a plan entry first, or are parked as drafts or closed.
 
 ## Current baseline
 
-- Go HTTP API and React/TypeScript UI, served by one app process; PostgreSQL persists inventory and security data.
+- Go HTTP API and React/TypeScript UI, served by one app process; PostgreSQL persists inventory, users, audit events, encrypted credentials, encrypted configuration snapshots, and monitoring history.
 - Administrator bootstrap, session authentication, CSRF protection, security headers, and an audit log are implemented.
 - Device inventory CRUD and the audit activity UI are implemented.
+- User management (admin, operator, and readonly roles), read-only health checks, opt-in monitoring and scheduled snapshots with drift detection, and one controlled write (system hostname with timed rollback) are implemented.
+- Built-in RADIUS is implemented at lab stage: opt-in, EAP-TTLS with inner PAP and plain PAP, off unless `OPENMANAGE_RADIUS_LISTEN` is set.
 - SSH enrollment API verifies an independently verified SHA-256 host-key fingerprint and SSH public-key authentication before storing the private key encrypted with AES-256-GCM.
 - Enrollment is admin-only, limited to private IP literals on TCP/22, and requires OPENMANAGE_ENCRYPTION_KEY.
 - Enrollment does not install or rotate router-side authorized keys, run remote commands, or push configuration.
@@ -28,19 +32,19 @@ Finish the remaining Section 0 and 1 items first; most are small. Then extract t
 - [x] Add handler/integration-style tests for enrollment success, bad host fingerprint, failed SSH authentication, re-enrollment preserving old credentials on failure, and persistence/audit failures (merged in PR #34).
 - [x] Make inventory create/delete and login/logout audit writes atomic with their corresponding state changes; mandatory audit failure must fail the action (merged in PR #15; post-merge CI, security checks, and CodeQL passed).
 - [x] Add bounded login rate limiting with safe peer-address parsing, no trust in forwarded headers, and Retry-After responses (merged; post-merge verification tracked as OM-SAF-04 in docs/security-audit.md).
-- [ ] Complete the safety-audit findings in docs/security-audit.md before treating this as a routine LAN management plane.
+- [ ] Complete the safety-audit findings in docs/security-audit.md before treating this as a routine LAN management plane. OM-SAF-01, 03, 04, 05, 06, 07 and 08 are remediated; OM-SAF-02 (direct HTTP and cookie-secure defaults) is partly addressed and stays open until HTTPS is the documented default.
 - [x] Format Go sources and make CI reject unformatted Go files.
 - [x] Reject malformed device IDs before database queries.
 - [x] Add an enrollment request body-size cap and test malformed/oversized enrollment payloads.
 - [x] Verify request-size and timeout behavior across all API handlers (per-endpoint body caps, single-object decoding, field-length limits, and a per-request API deadline below the server write timeout).
 - [x] Improve dependency reproducibility: generated `go.sum` and `web/package-lock.json` were committed in PR #32 (generator run [39588749075](https://github.com/NishantJh/OpenManage/actions/runs/39588749075)); post-merge main CI passed ([run 39816060882](https://github.com/NishantJh/OpenManage/actions/runs/39816060882)). CI and PR validation use `npm ci` and `go mod tidy -diff`, and the Dockerfile builds from the lockfiles with `npm ci` and `go mod verify`.
 - [x] Document the PostgreSQL and OPENMANAGE_ENCRYPTION_KEY backup/restore procedure; recovery testing remains an operator task.
-- [ ] Run and record a disposable-stack restore exercise, including verification that an enrolled credential decrypts with the restored key.
+- [x] Run and record a disposable-stack restore exercise, including verification that an enrolled credential decrypts with the restored key (passed 2026-10-22 on WSL2; drill record in docs/backup-recovery.md). Re-run it on the production LXC host before go-live.
 - [x] Default the Compose port binding to `127.0.0.1:8080`; LAN access becomes an explicit `OPENMANAGE_PORT` choice.
 
 Exit criteria: tests cover critical enrollment failure paths; credential changes cannot commit without their audit event; CI passes on the PR head and after merge.
 
-### 1. Enrollment UX and device lifecycle — in progress
+### 1. Enrollment UX and device lifecycle — done
 
 - [x] Add an admin-only enrollment form with independent host-key fingerprint verification guidance.
 - [x] Keep private-key material out of local storage, logs, audit details, analytics, and API responses; clear form state after submission and on close.
@@ -71,7 +75,7 @@ Design notes:
 
 Exit criteria: health checks are reliable, resource-bounded, auditable, and use the same policy/execution boundary intended for later controlled writes.
 
-### 3. Versioned configuration workflows
+### 3. Versioned configuration workflows — in progress
 
 Start read-only: capture configuration snapshots (`uci export`), encrypted at rest because they can contain Wi-Fi keys and other secrets, then detect drift between snapshots. Only then add writes, starting with one narrow setting on a single device. Prefer OpenWrt's rpcd `uci apply` with `rollback` and `confirm` for timed rollback.
 
@@ -125,7 +129,6 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 - [x] Validate real SSH checks against a disposable OpenWrt VM/device and exercise outage, bad credential, pinned-host-key mismatch, and restart recovery scenarios. (`scripts/openwrt-lab-test.sh`, OpenWrt 24.10.4 rootfs container.)
 - [x] Add a disposable OpenWrt VM/container smoke job (opt-in) so enrollment and monitoring are exercised against real OpenWrt in CI. (`.github/workflows/openwrt-lab.yml`: manual dispatch and weekly, GitHub-hosted.)
 - [ ] Add alert delivery after persistent monitoring is validated: one outbound webhook (ntfy/Gotify-compatible), no new service.
-- [ ] Wi-Fi floor plan and device location map (design: docs/device-location-map.md). Step 1 (floor plan: rooms and AP positions) is in progress; step 2 shows clients as green/red dots by the room of the AP they are connected to (24 h), with AP roaming history; precise location (RSSI fingerprinting) later.
 - Consider topology, IPAM, PKI/VPN, Wi-Fi planning, and larger-fleet features only when a concrete use case warrants them.
 
 ### 7. Built-in RADIUS for WPA-Enterprise
@@ -134,10 +137,27 @@ RADIUS is built into the Go application rather than run as a separate FreeRADIUS
 
 - [x] Design doc: scope, EAP methods, server certificate handling, per-AP shared-secret storage, threat model. ([docs/radius-design.md](docs/radius-design.md); EAP-TTLS/PAP first, `layeh.com/radius` for packet encoding.)
 - [ ] Opt-in UDP 1812 listener in the app with PAP and MAC authentication for a lab, per-AP secrets encrypted at rest, rate limiting, and audit. (PAP, secrets, rate limits, audit and the dashboard section done; MAC authentication remains.)
-- [ ] PEAP or TTLS with a server certificate, tested against real phone and laptop clients. (EAP-TTLS/PAP done and tested with `eapol_test`; iPhone test pending.)
+- [ ] EAP-TTLS with a server certificate, tested against real phone and laptop clients. (EAP-TTLS/PAP done and tested with `eapol_test`; iPhone test pending; Android and Windows untested. PEAP-MSCHAPv2 only if a needed client cannot use TTLS.)
 - [ ] Push AP RADIUS configuration through the Section 3 configuration workflow.
 
 Exit criteria: a client can join a managed AP with per-user credentials, failures are audited without logging secrets, and the listener is off unless enabled.
+
+### 8. Device location map — active
+
+Show each client device as a dot on a persistent Wi-Fi floor plan. Design: [device-location-map.md](docs/device-location-map.md) (approved 2026-10-23). Placement is room-of-connected-AP only; finer position (multi-AP fingerprinting) is a later goal.
+
+- [x] PR 1 (#68): rebase and reduce #26 to floor plan and AP placement only (DB-persisted, audited, on current main). Close #25 and #26 once it merges.
+- [ ] PR 2: client tracking backend. `wifi_ap_list` and `wifi_clients` as typed operations, opt-in `client_tracking_enabled` (off by default), 5 min default poll, adjustable from 60 s up to 10 min if 5 min is too noisy, 24 h hard cap on current-state rows, and a migration.
+- [ ] PR 3: roaming history in `wifi_client_roams` (AP changes with RSSI, 30 days by default, minimum 24 h, configurable). Lab test with `get_clients`; a 60 s poll may be needed for roam tests.
+- [ ] PR 4: UI with green/red dots, legend, labels, hide and "Clear client data".
+- [ ] Privacy: keyed-hash identity, masked MACs, reveal audited, never logged. Feature off by default.
+- [ ] Optional later: manual room pin and fingerprinting calibration.
+
+## Deferred and optional items
+
+- SSH key ciphertext is bound to a fixed domain label (`sshKeyAAD`), not to the device. Binding it to the device is deferred to the encryption-key rotation work in Section 4, because existing ciphertext must be re-encrypted in the same change.
+- PostgreSQL 18 is optional and not scheduled; Compose currently uses `postgres:17-alpine`.
+- RADIUS client coverage: the iPhone test is pending; Android and Windows are untested. MAC authentication remains open in Section 7.
 
 ## Delivery rules
 

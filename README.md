@@ -2,11 +2,11 @@
 
 A lightweight, self-hosted control plane for OpenWrt devices. OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the same Go process. Docker Compose is the initial deployment target.
 
-> **Early development:** inventory, authentication, user management, audit UI/API, SSH enrollment, read-only health checks, opt-in persistent monitoring, encrypted configuration snapshots with drift detection, and one controlled configuration change (hostname, with automatic rollback) are implemented. Broader configuration changes, router-side SSH key installation/rotation, RADIUS, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet.
+> **Early development:** inventory, authentication, user management, audit UI/API, SSH enrollment, read-only health checks, opt-in persistent monitoring, encrypted configuration snapshots with drift detection, and one controlled configuration change (hostname, with automatic rollback) are implemented. Broader configuration changes, router-side SSH key installation/rotation, production RADIUS, and firmware upgrades are not yet available. Built-in RADIUS is at lab stage and off by default. Do not expose OpenManage to the public internet.
 
 ## Project status at a glance
 
-Last updated: 2026-10-22. This section is a quick summary of what works now and what comes next. See [plan.md](plan.md) for the detailed roadmap and [open pull requests](https://github.com/NishantJh/OpenManage/pulls) for work in review.
+Last updated: 2026-10-23. This section is a quick summary of what works now and what comes next. See [plan.md](plan.md) for the detailed roadmap and [open pull requests](https://github.com/NishantJh/OpenManage/pulls) for work in review.
 
 ### Implemented
 
@@ -19,18 +19,19 @@ Last updated: 2026-10-22. This section is a quick summary of what works now and 
 - Enrollment constrained to private IP addresses and TCP/22.
 - Read-only health checks, opt-in scheduled configuration snapshots with drift flags, and opt-in, server-side persistent monitoring with bounded concurrency and 30-day history, run through a typed operation engine. Device model and firmware are filled in from what the router reports.
 - Atomic audit logging for key state changes and bounded login rate limiting.
+- One controlled configuration write (system hostname) with a 60-second rollback unless verified over a fresh SSH connection.
+- Opt-in built-in RADIUS at lab stage: EAP-TTLS with inner PAP and plain PAP, Wi-Fi (network) user and per-AP secret management, and an Apple setup profile.
 - Committed Go and npm lockfiles; CI installs with `npm ci` and fails if dependency metadata drifts.
 
 ### Next
 
-The current priority is to finish the remaining hardening and enrollment work, then build product features on a shared, typed operations engine. In order:
+The active work is built-in RADIUS, then the remaining hardening. In order:
 
-1. **Finish hardening:** enrollment failure-path tests, request-size and timeout checks on every handler, clearer enrollment errors in the UI, a real-OpenWrt smoke test, and a recorded backup/restore exercise. See [the safety audit](docs/security-audit.md).
-2. **Shared operations engine:** move health checks and monitoring onto typed, policy-checked operations; fill in model/firmware automatically.
-3. **Read-only configuration:** encrypted configuration snapshots and drift detection.
-4. **Controlled configuration changes:** preview/diff, explicit confirmation, apply with timed rollback, verification, and audit, starting with one setting on one device.
-5. **Built-in RADIUS:** WPA-Enterprise authentication inside the Go app, with no separate RADIUS container.
-6. **Later:** alerts, SSH key lifecycle and encryption-key rotation, then firmware upgrades with canary rollout and honest recovery limits.
+1. **Built-in RADIUS:** the iPhone client test, MAC authentication, and pushing AP RADIUS settings through the configuration workflow. Android and Windows clients are untested. See [the RADIUS design](docs/radius-design.md).
+2. **Device location map:** a persistent Wi-Fi floor plan with client dots showing the room of the connected AP, plus 30-day roaming history. Client tracking is opt-in. See [the design](docs/device-location-map.md).
+3. **Configuration changes:** further settings on the same engine (for example Wi-Fi SSID or channel), each with a lab rollback test.
+4. **Hardening:** the remaining [safety audit](docs/security-audit.md) items, including HTTPS as the documented default, and a re-run of the restore drill on the production host.
+5. **Later:** alert delivery, SSH key lifecycle and encryption-key rotation (with device-bound key ciphertext), then firmware upgrades with canary rollout and honest recovery limits.
 
 ## Design principles
 
@@ -56,7 +57,7 @@ The current priority is to finish the remaining hardening and enrollment work, t
 
 7. Open `https://<your-openmanage-hostname>` through the HTTPS proxy, or `http://<server-lan-ip>:8080` only if you deliberately chose direct HTTP on a trusted LAN.
 
-On Windows with WSL2, or for the full path from install to enrolled devices, see [Home setup](docs/home-setup.md).
+On Windows with WSL2, or for the full path from install to enrolled devices, see [Home setup](docs/home-setup.md). The WSL2 setup is a test environment; the planned production host is Docker inside a Proxmox LXC.
 
 The app runs its SQL migration at startup. PostgreSQL data is persisted in the `openmanage_db` volume. Back up the database and securely preserve `OPENMANAGE_ENCRYPTION_KEY` together; see [Backup and recovery](docs/backup-recovery.md) before upgrades or enrolling devices.
 
@@ -73,11 +74,15 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 - `GET /api/devices/{id}/config-snapshots` — administrator-only; lists snapshot metadata, newest first.
 - `GET /api/devices/{id}/config-snapshots/{snapshot}/changes` — administrator-only; lists UCI paths added, removed or changed since the previous snapshot. Values of secret-looking options (keys, passwords, secrets, tokens) are redacted, and the raw configuration is never returned.
 - `POST /api/devices/{id}/config-snapshots/{snapshot}/acknowledge` — administrator-only; marks drift up to and including this snapshot as reviewed, so the device no longer reports `config_drift`.
+- `GET /api/auth/me` returns the signed-in user; `POST /api/auth/logout` ends the session.
 - `POST /api/auth/password` — changes the caller's own password (JSON `current_password`, `new_password`, 12–72 bytes). Other sessions of that user are signed out; wrong current passwords count towards the login rate limit.
 - `GET /api/users` — administrator-only; lists users with role and disabled state.
 - `POST /api/users` — administrator-only; creates a user from JSON `username`, `role` (`admin`, `operator`, `readonly`) and `password`.
 - `PATCH /api/users/{id}` — administrator-only; changes `role` and/or `disabled`. Either change signs the user out. The last active administrator cannot be demoted or disabled. Users are disabled rather than deleted so the audit trail keeps its names.
 - `POST /api/users/{id}/password` — administrator-only; sets a user's password and signs them out.
+- `GET /api/network-users`, `POST /api/network-users`, `PATCH /api/network-users/{id}`, `POST /api/network-users/{id}/password` — administrator-only; manage Wi-Fi (network) users, which are separate from OpenManage logins.
+- `GET /api/radius` — administrator-only; RADIUS listener and certificate status. `GET /api/radius/ca.pem` downloads the RADIUS CA, and `GET /api/radius/apple-profile` generates the Apple Wi-Fi setup profile (both administrator-only).
+- `POST /api/devices/{id}/radius-secret` generates or rotates an AP's RADIUS shared secret, shown once; `DELETE /api/devices/{id}/radius-secret` removes it. Both are administrator-only.
 - `GET /api/config-settings` — administrator-only; lists the settings OpenManage can change (currently `system.hostname`).
 - `POST /api/devices/{id}/config-changes` — administrator-only; previews a change from JSON `setting` and `value`. Reads the device's current value and changes nothing. A preview is valid for 10 minutes.
 - `POST /api/devices/{id}/config-changes/{change}/apply` — administrator-only; applies a preview through rpcd with `uci apply` rollback armed, verifies the new value over a fresh SSH connection, then confirms. The result's `status` is `applied`, `rolled_back` (verification failed; the old value is restored) or `failed` (nothing was applied, for example because the value changed since the preview or another apply is pending).
@@ -90,7 +95,7 @@ All API routes except `/api/healthz` and `/api/auth/login` require an authentica
 
 ## Built-in RADIUS (lab stage)
 
-OpenManage can answer RADIUS requests (EAP-TTLS with inner PAP, and plain PAP) from enrolled APs so that Wi-Fi users ("network users", separate from OpenManage logins) can be checked against it. It is off unless `OPENMANAGE_RADIUS_LISTEN` is set (for example `:1812`) together with `OPENMANAGE_ENCRYPTION_KEY`, and Compose then needs a `ports` entry that binds UDP 1812 to the LAN address only. Administrators manage Wi-Fi users and give each AP a shared secret in the dashboard's "Wi-Fi sign-in" section; the secret is shown once and stored encrypted. Requests are accepted only from that device's inventory address and must carry a valid Message-Authenticator. Failures are rate-limited per user and per AP and audited without passwords. When RADIUS is first enabled, OpenManage generates a private CA and a server certificate for `radius.openmanage.home.arpa` (keys encrypted like SSH keys); the dashboard shows the CA fingerprint and offers the CA for download. EAP-TTLS uses TLS 1.2 with that certificate; set clients to inner method PAP, trust the downloaded CA and expect that server name. It is tested with `eapol_test` in the lab; real-device testing is in progress. See [the RADIUS design](docs/radius-design.md). For iPhone, iPad and Mac, the dashboard generates a setup profile; see [Wi-Fi sign-in setup](docs/radius-client-setup.md) for the AP configuration and the device test checklist. Never forward UDP 1812 from the internet.
+OpenManage can answer RADIUS requests (EAP-TTLS with inner PAP, and plain PAP) from enrolled APs so that Wi-Fi users ("network users", separate from OpenManage logins) can be checked against it. It is off unless `OPENMANAGE_RADIUS_LISTEN` is set (for example `:1812`) together with `OPENMANAGE_ENCRYPTION_KEY`, and Compose then needs a `ports` entry that binds UDP 1812 to the LAN address only. Administrators manage Wi-Fi users and give each AP a shared secret in the dashboard's "Wi-Fi sign-in" section; the secret is shown once and stored encrypted. Requests are accepted only from that device's inventory address and must carry a valid Message-Authenticator. Failures are rate-limited per user and per AP and audited without passwords. When RADIUS is first enabled, OpenManage generates a private CA and a server certificate for `radius.openmanage.home.arpa` (keys encrypted like SSH keys); the dashboard shows the CA fingerprint and offers the CA for download. EAP-TTLS uses TLS 1.2 with that certificate; set clients to inner method PAP, trust the downloaded CA and expect that server name. It is tested with `eapol_test` in the lab. The iPhone test is pending; Android and Windows are untested. See [the RADIUS design](docs/radius-design.md). For iPhone, iPad and Mac, the dashboard generates a setup profile; see [Wi-Fi sign-in setup](docs/radius-client-setup.md) for the AP configuration and the device test checklist. Never forward UDP 1812 from the internet.
 
 ## Resource profile
 
