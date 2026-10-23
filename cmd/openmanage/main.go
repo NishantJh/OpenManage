@@ -37,6 +37,8 @@ type app struct {
 	secureCookie bool
 	// snapshotRetry holds back scheduled snapshots of devices that just failed.
 	snapshotRetry retryTracker
+	// clientPolls remembers when each AP was last asked for its Wi-Fi clients.
+	clientPolls pollTracker
 	// radius is nil unless OPENMANAGE_RADIUS_LISTEN is set.
 	radius *radiusServer
 }
@@ -174,6 +176,10 @@ func main() {
 	mux.HandleFunc("DELETE /api/devices/{id}/radius-secret", a.deleteRADIUSSecret)
 	mux.HandleFunc("GET /api/floor-plan", a.getFloorPlan)
 	mux.HandleFunc("PUT /api/floor-plan", a.putFloorPlan)
+	mux.HandleFunc("GET /api/wifi-clients", a.listWifiClients)
+	mux.HandleFunc("PATCH /api/wifi-clients/{id}", a.updateWifiClient)
+	mux.HandleFunc("DELETE /api/wifi-clients", a.clearWifiClients)
+	mux.HandleFunc("GET /api/wifi-client-events", a.listWifiClientEvents)
 	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
 	mux.HandleFunc("PUT /api/monitoring/settings", a.updateMonitoringSettings)
 	mux.HandleFunc("GET /api/monitoring/history", a.listMonitoringHistory)
