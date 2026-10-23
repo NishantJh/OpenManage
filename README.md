@@ -1,6 +1,6 @@
-# OpenManage: a self-hosted OpenWrt manager
+# OpenManage: a self-hosted OpenWrt manager for multiple devices
 
-Manage your OpenWrt routers and access points from one lightweight, self-hosted web app: inventory, health, configuration history, safe changes, Wi-Fi users, and a Wi-Fi floor plan.
+OpenManage is a lightweight, self-hosted web app for managing several OpenWrt routers and access points from one place: inventory, health, configuration history, safe changes, Wi-Fi users, and a Wi-Fi floor plan. It is a single Go binary with PostgreSQL, so it is a small alternative to heavier OpenWISP-style deployments.
 
 [![CI](https://github.com/NishantJh/OpenManage/actions/workflows/ci.yml/badge.svg)](https://github.com/NishantJh/OpenManage/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/NishantJh/OpenManage/actions/workflows/codeql.yml/badge.svg)](https://github.com/NishantJh/OpenManage/actions/workflows/codeql.yml)
@@ -18,6 +18,16 @@ OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the sa
 - **Wi-Fi floor plan:** rooms and AP placement, with opt-in client tracking and roaming history. Client dots on the map are in progress.
 
 > **Early development:** broader configuration changes, router-side SSH key installation/rotation, production RADIUS, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet. See the status summary below.
+
+## OpenManage and OpenWISP
+
+[OpenWISP](https://openwisp.org) is a mature, modular open-source suite for managing OpenWrt networks. It covers far more than OpenManage does today, and it is the better choice if you need its wider feature set. OpenManage is aimed at people who want a smaller, single-app tool:
+
+- **Lighter to run:** one Go binary and one PostgreSQL database. There is no Redis, worker, or other runtime service in the default deployment.
+- **No software installed on routers:** OpenManage connects over SSH with a pinned host-key fingerprint and runs a fixed set of typed, read-only checks or reviewed changes.
+- **Narrower scope:** OpenManage does not yet offer templates, zero-touch provisioning, network topology, VPN/PKI management, or firmware upgrades. Its configuration changes are limited to a few settings so far.
+
+Check each project's documentation for current requirements before choosing between them.
 
 ## Project status at a glance
 
