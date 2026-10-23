@@ -195,8 +195,9 @@ type eapSession struct {
 	deviceID string
 	identity string
 	// station is the supplicant's Calling-Station-Id (its MAC address), if the AP sent one.
-	station   string
-	created   time.Time
+	station string
+	created time.Time
+	// lastSeen is guarded by eapSessions.mu, which prunes and evicts by it.
 	lastSeen  time.Time
 	lastReqID byte
 	// lastChallenge is resent if the supplicant repeats its previous response.
@@ -358,6 +359,12 @@ func (t *eapSessions) get(state, deviceID string, now time.Time) *eapSession {
 	return e
 }
 
+func (t *eapSessions) touch(e *eapSession, now time.Time) {
+	t.mu.Lock()
+	e.lastSeen = now
+	t.mu.Unlock()
+}
+
 func (t *eapSessions) remove(state string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -402,7 +409,7 @@ func (s *radiusServer) handleEAP(ctx context.Context, deviceID string, packet *r
 	if msg.id != e.lastReqID {
 		return eapFailure(msg.id)
 	}
-	e.lastSeen = now
+	s.eap.touch(e, now)
 	code, attrs, finished := s.continueEAP(ctx, e, packet, msg, stateAttr)
 	if finished {
 		s.eap.remove(state)
