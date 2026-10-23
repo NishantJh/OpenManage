@@ -80,7 +80,7 @@ func TestEncodeRADIUSReplyIsSigned(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, code := range []radius.Code{radius.CodeAccessAccept, radius.CodeAccessReject} {
-		reply, err := encodeRADIUSReply(request, code)
+		reply, err := encodeRADIUSReply(request, code, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -8,7 +8,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-for tool in docker curl python3 ssh-keygen go openssl; do
+for tool in docker curl python3 ssh-keygen go openssl eapol_test; do
   command -v "$tool" >/dev/null || { echo "ERROR: $tool is required" >&2; exit 2; }
 done
 docker compose version >/dev/null
@@ -338,7 +338,7 @@ expect_probe accept "accepts a valid network user" "$radius_secret" lab-wifi lab
 expect_probe accept "answers a retransmission with the same reply" "$radius_secret" lab-wifi lab-wifi-password-1 -repeat 3
 expect_probe reject "rejects a wrong password" "$radius_secret" lab-wifi wrong-password-123
 expect_probe reject "rejects an unknown user" "$radius_secret" lab-nobody lab-wifi-password-1
-expect_probe reject "rejects EAP until EAP-TTLS is supported" "$radius_secret" lab-wifi lab-wifi-password-1 -eap
+expect_probe challenge "answers an EAP identity with an EAP-TTLS challenge" "$radius_secret" lab-wifi lab-wifi-password-1 -eap
 expect_probe timeout "drops a request without Message-Authenticator" "$radius_secret" lab-wifi lab-wifi-password-1 -no-message-authenticator
 expect_probe timeout "drops a request signed with the wrong secret" "wrong-$radius_secret" lab-wifi lab-wifi-password-1
 api PATCH "/api/network-users/$wifi_id" '{"disabled":true}'
@@ -359,6 +359,50 @@ radius_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT
 leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events" | grep -c -e lab-wifi-password -e lab-locked-password -e "$new_secret" -e "$radius_secret" || true)"
 [[ "$leaks" == 0 ]] || fail "a RADIUS password or secret reached the audit log"
 ! compose logs --no-color app | grep -q -e lab-wifi-password -e "$new_secret" || fail "a RADIUS password or secret reached the app log"
+
+# EAP-TTLS/PAP with wpa_supplicant's eapol_test, run on the host: requests come from
+# the Docker network gateway, so that address is enrolled as a second RADIUS client.
+gateway="$(docker network inspect "$network" -f '{{(index .IPAM.Config 0).Gateway}}')"
+api POST /api/devices "{\"name\":\"lab-eapol\",\"address\":\"$gateway\"}"
+[[ "$status" == 201 ]] || fail "adding the eapol_test client returned HTTP $status"
+eapol_device="$(json 'print(d["id"])' < "$body")"
+api POST "/api/devices/$eapol_device/radius-secret"
+eapol_secret="$(json 'print(d["secret"])' < "$body")"
+ttls_conf() { # identity password phase2 domain
+  cat > "$work/ttls.conf" <<CONF
+network={
+  key_mgmt=WPA-EAP
+  eap=TTLS
+  identity="$1"
+  anonymous_identity="anonymous"
+  password="$2"
+  phase2="$3"
+  ca_cert="$work/radius-ca.pem"
+  domain_match="$4"
+}
+CONF
+}
+expect_ttls() { # success|failure label identity password phase2 [domain]
+  ttls_conf "$3" "$4" "$5" "${6:-radius.openmanage.home.arpa}"
+  if eapol_test -c "$work/ttls.conf" -a "$app_ip" -s "$eapol_secret" -t 15 > "$work/eapol.log" 2>&1; then
+    [[ "$1" == success ]] || fail "EAP-TTLS $2: authentication succeeded unexpectedly"
+    grep -q "MPPE keys OK: 1  mismatch: 0" "$work/eapol.log" || fail "EAP-TTLS $2: MPPE keys missing or wrong"
+  else
+    [[ "$1" == failure ]] || { tail -30 "$work/eapol.log" >&2; fail "EAP-TTLS $2: authentication failed"; }
+    grep -q "CTRL-EVENT-EAP-FAILURE" "$work/eapol.log" || fail "EAP-TTLS $2: no EAP failure (timeout?)"
+  fi
+  echo "PASS: EAP-TTLS $2"
+}
+expect_ttls success "authenticates a network user and delivers matching MPPE keys" lab-wifi lab-wifi-password-1 "auth=PAP"
+expect_ttls failure "rejects a wrong inner password" lab-wifi wrong-password-123 "auth=PAP"
+expect_ttls failure "rejects an inner method other than PAP" lab-wifi lab-wifi-password-1 "autheap=MSCHAPV2"
+expect_ttls failure "is refused by a client expecting another server name" lab-wifi lab-wifi-password-1 "auth=PAP" other.example
+ttls_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT string_agg(details->>'reason', ',' ORDER BY id) FROM audit_events WHERE action='radius.auth_reject' AND details->>'method'='eap-ttls'")"
+[[ "$ttls_audit" == "bad_credentials,inner_method_not_pap,tls_failed" ]] || fail "EAP-TTLS reject audit: $ttls_audit"
+! compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events" | grep -q -e lab-wifi-password -e "$eapol_secret" \
+  || fail "an EAP-TTLS password or secret reached the audit log"
+echo "PASS: EAP-TTLS failures are audited with a reason and no secrets"
+
 api DELETE "/api/devices/$device_id/radius-secret"
 [[ "$status" == 200 ]] || fail "removing the RADIUS secret returned HTTP $status"
 expect_probe timeout "ignores a device whose secret was removed" "$new_secret" lab-wifi lab-wifi-password-1

@@ -60,6 +60,8 @@ type radiusServer struct {
 	// missing Message-Authenticator, malformed, or over the in-flight limit.
 	dropped atomic.Int64
 
+	eap eapSessions
+
 	replayMu sync.Mutex
 	replay   map[string]replayEntry
 
@@ -157,12 +159,17 @@ func (s *radiusServer) handle(ctx context.Context, raw []byte, addr net.Addr) []
 	if cached, seen := s.replayLookup(replayKey); seen {
 		return cached
 	}
-	accept := s.authenticate(ctx, deviceID, packet)
-	code := radius.CodeAccessReject
-	if accept {
-		code = radius.CodeAccessAccept
+	var reply []byte
+	if _, eap := packet.Attributes.Lookup(rfc2869.EAPMessage_Type); eap {
+		code, attrs := s.handleEAP(ctx, deviceID, packet)
+		reply, err = encodeRADIUSReply(packet, code, attrs)
+	} else {
+		code := radius.CodeAccessReject
+		if s.authenticate(ctx, deviceID, packet) {
+			code = radius.CodeAccessAccept
+		}
+		reply, err = encodeRADIUSReply(packet, code, nil)
 	}
-	reply, err := encodeRADIUSReply(packet, code)
 	if err != nil {
 		log.Printf("radius: encode reply: %v", err)
 		s.replayForget(replayKey)
@@ -269,9 +276,9 @@ func validMessageAuthenticator(raw, secret []byte) bool {
 
 // encodeRADIUSReply builds a reply carrying Message-Authenticator as its first
 // attribute, computed over the reply with the request authenticator in place.
-func encodeRADIUSReply(request *radius.Packet, code radius.Code) ([]byte, error) {
+func encodeRADIUSReply(request *radius.Packet, code radius.Code, attrs radius.Attributes) ([]byte, error) {
 	reply := request.Response(code)
-	reply.Attributes = radius.Attributes{{Type: rfc2869.MessageAuthenticator_Type, Attribute: make([]byte, 16)}}
+	reply.Attributes = append(radius.Attributes{{Type: rfc2869.MessageAuthenticator_Type, Attribute: make([]byte, 16)}}, attrs...)
 	unsigned, err := reply.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -321,13 +328,20 @@ func (s *radiusServer) replayForget(key string) {
 // Reasons recorded in the audit log. The client only ever sees Access-Reject.
 const (
 	radiusReasonInvalid     = "invalid_request"
-	radiusReasonEAP         = "eap_not_supported"
 	radiusReasonCredentials = "bad_credentials"
 	radiusReasonDisabled    = "disabled"
+	radiusReasonEAPMethod   = "eap_method_rejected"
+	radiusReasonInnerMethod = "inner_method_not_pap"
+	radiusReasonTLS         = "tls_failed"
+	radiusReasonEAPLimit    = "eap_session_limit"
 )
 
-// authenticate checks a PAP request. Unknown users, wrong passwords and disabled
-// users all cost one bcrypt comparison and get the same Access-Reject.
+const (
+	radiusMethodPAP  = "pap"
+	radiusMethodTTLS = "eap-ttls"
+)
+
+// authenticate checks a plain PAP request (no EAP).
 func (s *radiusServer) authenticate(ctx context.Context, deviceID string, packet *radius.Packet) bool {
 	now := time.Now()
 	if blocked, _ := s.clientAttempts.isBlocked(deviceID, now); blocked {
@@ -337,13 +351,27 @@ func (s *radiusServer) authenticate(ctx context.Context, deviceID string, packet
 	if names, err := rfc2865.UserName_GetStrings(packet); err == nil && len(names) == 1 && validUsername.MatchString(names[0]) {
 		username = names[0]
 	}
-	if _, eap := packet.Attributes.Lookup(rfc2869.EAPMessage_Type); eap {
-		s.reject(ctx, deviceID, username, radiusReasonEAP, now)
+	passwords, err := rfc2865.UserPassword_GetStrings(packet)
+	if err != nil || username == "" || len(passwords) != 1 {
+		s.reject(ctx, deviceID, username, radiusMethodPAP, radiusReasonInvalid, now)
 		return false
 	}
-	passwords, err := rfc2865.UserPassword_GetStrings(packet)
-	if err != nil || username == "" || len(passwords) != 1 || passwords[0] == "" || len(passwords[0]) > maxNewPasswordLength {
-		s.reject(ctx, deviceID, username, radiusReasonInvalid, now)
+	return s.checkPassword(ctx, deviceID, username, passwords[0], radiusMethodPAP)
+}
+
+// checkPassword verifies a network user's password for PAP and for the inner PAP
+// of EAP-TTLS. Unknown users, wrong passwords and disabled users all cost one
+// bcrypt comparison and are rejected the same way.
+func (s *radiusServer) checkPassword(ctx context.Context, deviceID, username, password, method string) bool {
+	now := time.Now()
+	if blocked, _ := s.clientAttempts.isBlocked(deviceID, now); blocked {
+		return false
+	}
+	if !validUsername.MatchString(username) || password == "" || len(password) > maxNewPasswordLength {
+		if !validUsername.MatchString(username) {
+			username = ""
+		}
+		s.reject(ctx, deviceID, username, method, radiusReasonInvalid, now)
 		return false
 	}
 	if blocked, _ := s.userAttempts.isBlocked(username, now); blocked {
@@ -351,33 +379,33 @@ func (s *radiusServer) authenticate(ctx context.Context, deviceID string, packet
 	}
 	var hash string
 	var disabled bool
-	err = s.db.QueryRow(ctx, `SELECT password_hash, disabled_at IS NOT NULL FROM network_users WHERE username=$1`,
+	err := s.db.QueryRow(ctx, `SELECT password_hash, disabled_at IS NOT NULL FROM network_users WHERE username=$1`,
 		username).Scan(&hash, &disabled)
 	if err != nil {
 		hash, disabled = dummyPasswordHash(), false
 	}
-	matched := bcrypt.CompareHashAndPassword([]byte(hash), []byte(passwords[0])) == nil && err == nil
+	matched := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil && err == nil
 	switch {
 	case matched && !disabled:
 		s.userAttempts.clear(username)
-		s.audit(ctx, deviceID, "radius.auth_accept", map[string]string{"username": username})
+		s.audit(ctx, deviceID, "radius.auth_accept", map[string]string{"username": username, "method": method})
 		return true
 	case matched:
-		s.reject(ctx, deviceID, username, radiusReasonDisabled, now)
+		s.reject(ctx, deviceID, username, method, radiusReasonDisabled, now)
 	default:
-		s.reject(ctx, deviceID, username, radiusReasonCredentials, now)
+		s.reject(ctx, deviceID, username, method, radiusReasonCredentials, now)
 	}
 	return false
 }
 
 // reject counts a failure against the AP and user and audits it. Rejections while
 // blocked are not audited, so the rate limits also bound audit volume.
-func (s *radiusServer) reject(ctx context.Context, deviceID, username, reason string, now time.Time) {
+func (s *radiusServer) reject(ctx context.Context, deviceID, username, method, reason string, now time.Time) {
 	s.clientAttempts.recordFailure(deviceID, now)
 	if username != "" {
 		s.userAttempts.recordFailure(username, now)
 	}
-	s.audit(ctx, deviceID, "radius.auth_reject", map[string]string{"username": username, "reason": reason})
+	s.audit(ctx, deviceID, "radius.auth_reject", map[string]string{"username": username, "method": method, "reason": reason})
 }
 
 func (s *radiusServer) audit(ctx context.Context, deviceID, action string, details map[string]string) {
