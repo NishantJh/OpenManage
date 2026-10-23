@@ -16,3 +16,6 @@ export type NetworkUser={id:string;username:string;created_at:string;disabled:bo
 export type RadiusClient={device_id:string;device_name:string;address:string;created_at:string;rotated_at:string};
 export type RadiusCertificate={ca_fingerprint_sha256:string;ca_not_after:string;server_name:string;server_not_after:string};
 export type RadiusStatus={enabled:boolean;listen_addr:string;dropped_packets:number;clients:RadiusClient[];certificate:RadiusCertificate|null};
+export type FloorRoom={id:string;name:string;x:number;y:number;w:number;h:number};
+export type FloorPlacement={device_id:string;x:number;y:number};
+export type FloorPlan={rooms:FloorRoom[];placements:FloorPlacement[];updated_at?:string};
