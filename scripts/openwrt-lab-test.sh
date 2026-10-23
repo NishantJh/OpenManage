@@ -177,6 +177,61 @@ scheduled_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SEL
 [[ "$scheduled_audit" == 1 ]] || fail "scheduled drift was not audited as a system action"
 echo "PASS: scheduled snapshots notice drift without a manual capture"
 
+# Wi-Fi client tracking. The OpenWrt rootfs container has no radio, so a ubus shim
+# answers only the hostapd calls with a fixture file; every other call reaches the real
+# ubus. This exercises the SSH operation, the parser and the PostgreSQL paths, but not
+# real hostapd output.
+fake_mac="aa:bb:cc:11:22:33"
+docker exec "$router" sh -c 'ubus_bin="$(command -v ubus)" && mv "$ubus_bin" "$ubus_bin.real" && cat > "$ubus_bin" <<SHIM
+#!/bin/sh
+if [ "\$1" = list ] && [ "\$2" = "hostapd.*" ]; then echo hostapd.phy0-ap0; exit 0; fi
+if [ "\$1" = call ] && [ "\$2" = hostapd.phy0-ap0 ] && [ "\$3" = get_clients ]; then cat /tmp/fake-clients.json; exit 0; fi
+exec "$ubus_bin.real" "\$@"
+SHIM
+chmod +x "$ubus_bin"'
+set_fake_clients() { docker exec "$router" sh -c "cat > /tmp/fake-clients.json" <<< "$1"; }
+set_fake_clients "{\"freq\":5180,\"clients\":{\"$fake_mac\":{\"auth\":true,\"assoc\":true,\"authorized\":true,\"signal\":-58}}}"
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":30}'
+[[ "$status" == 400 ]] || fail "a 30 s client poll interval was accepted (HTTP $status)"
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":60}'
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "enabling client tracking returned HTTP $status"; }
+for attempt in $(seq 1 40); do
+  api GET /api/wifi-clients
+  [[ "$(json 'print(len(d))' < "$body")" == 1 ]] && break
+  [[ "$attempt" == 40 ]] && { cat "$body" >&2; fail "client tracking did not record the fixture client"; }
+  sleep 1
+done
+json 'c=d[0]; assert c["connected"] and c["signal_dbm"]==-58 and c["interface"]=="phy0-ap0" and c["device_id"]==sys.argv[1], c; assert c["mac_hint"]=="aa:bb:cc:••:••:••" and c["label"]=="" and not c["hidden"], c' "$device_id" < "$body"
+! grep -q "11:22:33" "$body" || fail "client list leaked the full MAC address"
+client_id="$(json 'print(d[0]["id"])' < "$body")"
+mac_leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM wifi_clients WHERE position(convert_to('$fake_mac','UTF8') in mac_ciphertext)>0 OR mac_hint LIKE '%11:22:33%'")"
+[[ "$mac_leaks" == 0 ]] || fail "client MAC found in plaintext in PostgreSQL"
+echo "PASS: a client associated to the AP is tracked, with its MAC masked and encrypted at rest"
+api PATCH "/api/wifi-clients/$client_id" '{"label":"lab phone"}'
+[[ "$status" == 204 ]] || fail "labelling a client returned HTTP $status"
+# The client leaves: the next poll (one interval later) records a disconnect.
+set_fake_clients '{"freq":5180,"clients":{}}'
+for attempt in $(seq 1 100); do
+  api GET /api/wifi-clients
+  [[ "$(json 'print(d[0]["connected"])' < "$body")" == False ]] && break
+  [[ "$attempt" == 100 ]] && { cat "$body" >&2; fail "client tracking did not notice the client leaving"; }
+  sleep 1
+done
+json 'assert d[0]["label"]=="lab phone", d' < "$body"
+api GET "/api/wifi-client-events?client=$client_id"
+json 'assert [e["kind"] for e in d]==["disconnect","connect"] and d[1]["signal_dbm"]==-58 and d[0]["from_device_id"]==sys.argv[1], d' "$device_id" < "$body"
+! grep -q "11:22:33" "$body" || fail "client history leaked the full MAC address"
+echo "PASS: a client leaving the AP shows as disconnected (red) and the history records connect and disconnect"
+api DELETE /api/wifi-clients
+[[ "$status" == 204 ]] || fail "clearing client data returned HTTP $status"
+api GET /api/wifi-clients
+json 'assert d==[], d' < "$body"
+api GET /api/wifi-client-events
+json 'assert d==[], d' < "$body"
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":false}'
+[[ "$status" == 200 ]] || fail "disabling client tracking returned HTTP $status"
+echo "PASS: clearing client data removes clients and history"
+
 # Controlled configuration change: preview, apply with rpcd rollback armed, verify
 # over a fresh connection, confirm.
 router_hostname() { docker exec "$router" uci get system.@system[0].hostname; }
