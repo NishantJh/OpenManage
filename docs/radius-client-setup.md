@@ -4,6 +4,8 @@ This guide turns on OpenManage's RADIUS server, points one OpenWrt access point 
 
 ## What you need
 
+Starting from scratch? [Home setup](home-setup.md) covers installing OpenManage (including WSL2 networking on Windows), enrolling the AP, and turning on RADIUS.
+
 - OpenManage running with `OPENMANAGE_ENCRYPTION_KEY` set, and the AP already added to the inventory with its LAN IP address (the same address the AP will send RADIUS requests from).
 - An OpenWrt AP with a full `wpad` package. The `wpad-basic-*` builds may lack WPA-Enterprise; check with `opkg list-installed | grep wpad` and install `wpad-mbedtls` (or `wpad-openssl`) if needed.
 - A test SSID you can change freely. Do not convert your everyday network until the test passes.
