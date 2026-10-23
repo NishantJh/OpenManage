@@ -189,7 +189,7 @@ if [ "\$1" = call ] && [ "\$2" = hostapd.phy0-ap0 ] && [ "\$3" = get_clients ]; 
 exec "$ubus_bin.real" "\$@"
 SHIM
 chmod +x "$ubus_bin"'
-set_fake_clients() { docker exec "$router" sh -c "cat > /tmp/fake-clients.json" <<< "$1"; }
+set_fake_clients() { docker exec -i "$router" sh -c "cat > /tmp/fake-clients.json" <<< "$1"; }
 set_fake_clients "{\"freq\":5180,\"clients\":{\"$fake_mac\":{\"auth\":true,\"assoc\":true,\"authorized\":true,\"signal\":-58}}}"
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":30}'
 [[ "$status" == 400 ]] || fail "a 30 s client poll interval was accepted (HTTP $status)"
