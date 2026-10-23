@@ -26,6 +26,7 @@ func main() {
 	noMA := flag.Bool("no-message-authenticator", false, "omit Message-Authenticator")
 	eap := flag.Bool("eap", false, "add an EAP-Response/Identity")
 	repeat := flag.Int("repeat", 1, "send the same request this many times")
+	station := flag.String("station", "", "Calling-Station-Id (the client MAC address)")
 	flag.Parse()
 
 	request := radius.New(radius.CodeAccessRequest, []byte(*secret))
@@ -34,6 +35,9 @@ func main() {
 	}
 	rfc2865.UserName_SetString(request, *user)
 	rfc2865.UserPassword_SetString(request, *password)
+	if *station != "" {
+		rfc2865.CallingStationID_SetString(request, *station)
+	}
 	if *eap {
 		request.Add(rfc2869.EAPMessage_Type, []byte{2, 0, 0, 5, 1})
 	}
