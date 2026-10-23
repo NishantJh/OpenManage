@@ -1,8 +1,23 @@
-# OpenManage
+# OpenManage: a self-hosted OpenWrt manager
 
-A lightweight, self-hosted control plane for OpenWrt devices. OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the same Go process. Docker Compose is the initial deployment target.
+Manage your OpenWrt routers and access points from one lightweight, self-hosted web app: inventory, health, configuration history, safe changes, Wi-Fi users, and a Wi-Fi floor plan.
 
-> **Early development:** inventory, authentication, user management, audit UI/API, SSH enrollment, read-only health checks, opt-in persistent monitoring, encrypted configuration snapshots with drift detection, and one controlled configuration change (hostname, with automatic rollback) are implemented. Broader configuration changes, router-side SSH key installation/rotation, production RADIUS, and firmware upgrades are not yet available. Built-in RADIUS is at lab stage and off by default. Do not expose OpenManage to the public internet.
+[![CI](https://github.com/NishantJh/OpenManage/actions/workflows/ci.yml/badge.svg)](https://github.com/NishantJh/OpenManage/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/NishantJh/OpenManage/actions/workflows/codeql.yml/badge.svg)](https://github.com/NishantJh/OpenManage/actions/workflows/codeql.yml)
+
+OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the same Go process. Docker Compose is the initial deployment target.
+
+## Features
+
+- **Inventory and SSH enrollment:** add devices, pin the SSH host-key fingerprint you verified, and store the management key encrypted at rest.
+- **Health and monitoring:** read-only health checks, plus opt-in persistent monitoring with 30 days of history.
+- **Configuration snapshots and drift:** encrypted `uci export` snapshots, change review with secrets redacted, and optional scheduled captures.
+- **Controlled changes:** the system hostname can be changed with a preview, a timed rollback, and verification over a fresh SSH connection.
+- **Users and audit:** admin, operator, and read-only roles, with an audit trail of key actions.
+- **Built-in RADIUS (lab stage):** EAP-TTLS and PAP for Wi-Fi users, per-AP shared secrets, and an Apple setup profile. Off by default.
+- **Wi-Fi floor plan:** rooms and AP placement, with opt-in client tracking and roaming history. Client dots on the map are in progress.
+
+> **Early development:** broader configuration changes, router-side SSH key installation/rotation, production RADIUS, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet. See the status summary below.
 
 ## Project status at a glance
 
@@ -28,7 +43,7 @@ Last updated: 2026-10-23. This section is a quick summary of what works now and 
 The active work is built-in RADIUS, then the remaining hardening. In order:
 
 1. **Built-in RADIUS:** the iPhone client test, MAC authentication, and pushing AP RADIUS settings through the configuration workflow. Android and Windows clients are untested. See [the RADIUS design](docs/radius-design.md).
-2. **Device location map:** a persistent Wi-Fi floor plan with client dots showing the room of the connected AP, plus 30-day roaming history. Client tracking is opt-in. See [the design](docs/device-location-map.md).
+2. **Device location map:** the floor plan and client tracking backend with 30-day roaming history are merged (client tracking is opt-in). Still to do: the client dots on the floor plan and a lab test against real hostapd. See [the design](docs/device-location-map.md).
 3. **Configuration changes:** further settings on the same engine (for example Wi-Fi SSID or channel), each with a lab rollback test.
 4. **Hardening:** the remaining [safety audit](docs/security-audit.md) items, including HTTPS as the documented default, and a re-run of the restore drill on the production host.
 5. **Later:** alert delivery, SSH key lifecycle and encryption-key rotation (with device-bound key ciphertext), then firmware upgrades with canary rollout and honest recovery limits.
