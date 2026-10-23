@@ -36,7 +36,7 @@ Decision (Nishant, 2026-10-23): ship EAP-TTLS/PAP first, because it keeps passwo
 
 ## Implementation outline
 
-- RADIUS packet encoding: use `layeh.com/radius` (packet format, Message-Authenticator, attribute dictionaries) after checking its licence (MPL-2.0) and maintenance, or a small in-repo encoder if that dependency is not acceptable. The RADIUS layer is simple; EAP is the risk.
+- RADIUS packet encoding (decided 2026-10-23): use `layeh.com/radius` (packet format, Message-Authenticator, attribute dictionaries) after checking its licence (MPL-2.0) and maintenance, or a small in-repo encoder if that dependency is not acceptable. The RADIUS layer is simple; EAP is the risk.
 - EAP state machine in Go, keyed by RADIUS `State`, with a bounded number of concurrent conversations per AP and a short idle timeout.
 - TLS: Go's `crypto/tls` running over an in-memory `net.Conn` that is fed by EAP-TTLS fragments (handling the length flag, more-fragments flag and ACKs). TLS 1.2 is required for broad client support; TLS 1.3 for EAP (RFC 9190/9427) can be enabled when clients support it.
 - Key material: derive MS-MPPE-Send-Key and MS-MPPE-Recv-Key from the TLS exporter as RFC 5281 specifies, and send them encrypted with the AP's shared secret. This is the part most likely to be wrong in a way that only shows up on real clients, so it gets tests against `eapol_test` (from wpa_supplicant) in the lab before any phone test.
@@ -71,5 +71,5 @@ Each AP gets a random 32-byte secret, encoded as text, stored with AES-256-GCM b
 ## Open questions for Nishant
 
 1. ~~EAP method~~: decided, EAP-TTLS/PAP first.
-2. Is `layeh.com/radius` acceptable as a dependency, or should packet encoding live in the repo?
+2. ~~Packet library~~: decided, use `layeh.com/radius` behind a small wrapper.
 3. Which real clients should milestone 3 be tested on?
