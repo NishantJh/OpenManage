@@ -147,7 +147,7 @@ Exit criteria: a client can join a managed AP with per-user credentials, failure
 Show each client device as a dot on a persistent Wi-Fi floor plan. Design: [device-location-map.md](docs/device-location-map.md) (approved 2026-10-23). Placement is room-of-connected-AP only; finer position (multi-AP fingerprinting) is a later goal.
 
 - [ ] PR 1: rebase and reduce #26 to floor plan and AP placement only (DB-persisted, audited, on current main). Close #25 and #26 once it merges.
-- [ ] PR 2: client tracking backend. `wifi_ap_list` and `wifi_clients` as typed operations, opt-in `client_tracking_enabled` (off by default), 5 min default poll with a 60 s minimum, 24 h hard cap on current-state rows, and a migration.
+- [ ] PR 2: client tracking backend. `wifi_ap_list` and `wifi_clients` as typed operations, opt-in `client_tracking_enabled` (off by default), 5 min default poll, adjustable from 60 s up to 10 min if 5 min is too noisy, 24 h hard cap on current-state rows, and a migration.
 - [ ] PR 3: roaming history in `wifi_client_roams` (AP changes with RSSI, 30 days by default, minimum 24 h, configurable). Lab test with `get_clients`; a 60 s poll may be needed for roam tests.
 - [ ] PR 4: UI with green/red dots, legend, labels, hide and "Clear client data".
 - [ ] Privacy: keyed-hash identity, masked MACs, reveal audited, never logged. Feature off by default.

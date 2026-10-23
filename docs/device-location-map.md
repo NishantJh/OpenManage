@@ -71,4 +71,4 @@ Start with room-of-connected-AP; more precise location (fingerprinting) is a rea
 - Add `wifi_client_roams` (client_key, from_device, to_device, signal_dbm, at): one row each time a client's associated AP changes, plus first connect/disconnect events. Kept 30 days (matches monitoring history), shown as a per-client timeline ("iPhone: Hall AP -> Bedroom AP, 21:04").
 - Also store RSSI with each association change so later fingerprinting has data to learn from.
 - Privacy: still keyed-hash identity and masked MACs; "Clear client data" wipes both tables. Roam history retention is a documented, configurable setting (default 30 days, minimum 24 h).
-- Defaults assumed until told otherwise: 5 min poll (60 s min), #25/#26 closed after the rebased floor plan lands. Note a 5 min poll can miss quick roams; roam tests may want a 60 s poll.
+- Defaults: 5 min poll, adjustable from 60 s up to 10 min if 5 min is too noisy (Nishant, 2026-10-23), #25/#26 closed after the rebased floor plan lands. Note a 5 min poll can miss quick roams; roam tests may want a 60 s poll.
