@@ -8,7 +8,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-for tool in docker curl python3 ssh-keygen go; do
+for tool in docker curl python3 ssh-keygen go openssl; do
   command -v "$tool" >/dev/null || { echo "ERROR: $tool is required" >&2; exit 2; }
 done
 docker compose version >/dev/null
@@ -315,6 +315,13 @@ expect_probe() { # expected label secret user password [flags...]
 }
 api GET /api/radius
 json 'assert d["enabled"] and d["listen_addr"]==":1812" and d["clients"]==[], d' < "$body"
+ca_fp="$(json 'c=d["certificate"]; assert c["server_name"]=="radius.openmanage.home.arpa", c; print(c["ca_fingerprint_sha256"])' < "$body")"
+curl --silent --fail -o "$work/radius-ca.pem" -b "$cookie_jar" "$base_url/api/radius/ca.pem" || fail "CA certificate download failed"
+[[ "$(openssl x509 -in "$work/radius-ca.pem" -noout -fingerprint -sha256 | cut -d= -f2)" == "$ca_fp" ]] \
+  || fail "downloaded CA certificate does not match the reported fingerprint"
+! compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT encode(ca_key_ciphertext,'escape') || encode(server_key_ciphertext,'escape') FROM radius_certificate" | grep -q "PRIVATE KEY" \
+  || fail "RADIUS certificate keys are stored unencrypted"
+echo "PASS: RADIUS generates a CA and server certificate and offers the CA for download"
 expect_probe timeout "ignores a device without a secret" not-a-secret lab-wifi lab-wifi-password-1
 api POST /api/network-users '{"username":"lab-wifi","password":"lab-wifi-password-1"}'
 [[ "$status" == 201 ]] || fail "creating a network user returned HTTP $status"
@@ -377,6 +384,9 @@ make_due; wait_check online "a healthy device as online"
 docker compose --project-name "$project" --env-file "$env_file" restart app >/dev/null
 for attempt in $(seq 1 30); do curl --silent --fail "$base_url/api/healthz" >/dev/null 2>&1 && break; sleep 1; done
 make_due; wait_check online "checks again after an app restart"
+api GET /api/radius
+json 'assert d["certificate"]["ca_fingerprint_sha256"]==sys.argv[1], d' "$ca_fp" < "$body"
+echo "PASS: RADIUS keeps its certificate across an app restart"
 
 docker exec "$router" rm /etc/dropbear/authorized_keys
 make_due; wait_check error "a revoked credential as an error, not offline"

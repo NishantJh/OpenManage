@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/tls"
 	"errors"
 	"log"
 	"net"
@@ -48,6 +49,8 @@ type radiusServer struct {
 	key []byte
 	// addr is the configured listen address, shown to administrators.
 	addr string
+	// cert is the server's TLS identity for EAP-TTLS.
+	cert tls.Certificate
 
 	sem            chan struct{}
 	wg             sync.WaitGroup
@@ -82,9 +85,9 @@ type replayEntry struct {
 	expires time.Time
 }
 
-func newRADIUSServer(db *pgxpool.Pool, key []byte, addr string) *radiusServer {
+func newRADIUSServer(db *pgxpool.Pool, key []byte, addr string, cert tls.Certificate) *radiusServer {
 	return &radiusServer{
-		db: db, key: key, addr: addr,
+		db: db, key: key, addr: addr, cert: cert,
 		sem: make(chan struct{}, radiusMaxInFlight),
 		userAttempts: newLoginRateLimiter(radiusUserFailureLimit, radiusFailureWindow,
 			radiusBlockDuration, loginLimiterMaxEntries),

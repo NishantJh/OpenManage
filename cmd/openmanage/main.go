@@ -168,6 +168,7 @@ func main() {
 	mux.HandleFunc("PATCH /api/network-users/{id}", a.updateNetworkUser)
 	mux.HandleFunc("POST /api/network-users/{id}/password", a.resetNetworkUserPassword)
 	mux.HandleFunc("GET /api/radius", a.getRADIUSStatus)
+	mux.HandleFunc("GET /api/radius/ca.pem", a.downloadRADIUSCA)
 	mux.HandleFunc("POST /api/devices/{id}/radius-secret", a.rotateRADIUSSecret)
 	mux.HandleFunc("DELETE /api/devices/{id}/radius-secret", a.deleteRADIUSSecret)
 	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
@@ -183,7 +184,12 @@ func main() {
 		if listenErr != nil {
 			log.Fatalf("RADIUS listener: %v", listenErr)
 		}
-		a.radius = newRADIUSServer(pool, key, addr)
+		cert, info, certErr := ensureRADIUSCertificate(ctx, pool, key)
+		if certErr != nil {
+			log.Fatalf("RADIUS certificate: %v", certErr)
+		}
+		log.Printf("RADIUS CA fingerprint %s; server certificate valid until %s", info.CAFingerprint, info.ServerNotAfter.Format(time.DateOnly))
+		a.radius = newRADIUSServer(pool, key, addr, cert)
 		log.Printf("RADIUS listening on udp %s", addr)
 		go func() {
 			defer close(radiusDone)
