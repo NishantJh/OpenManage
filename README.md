@@ -57,7 +57,7 @@ The active work is built-in RADIUS, then the remaining hardening. In order:
 
 7. Open `https://<your-openmanage-hostname>` through the HTTPS proxy, or `http://<server-lan-ip>:8080` only if you deliberately chose direct HTTP on a trusted LAN.
 
-On Windows with WSL2, or for the full path from install to enrolled devices, see [Home setup](docs/home-setup.md). The WSL2 setup is a test environment; the planned production host is Docker inside a Proxmox LXC.
+For the full path from install to enrolled devices on a Proxmox LXC, see [Home setup](docs/home-setup.md).
 
 The app runs its SQL migration at startup. PostgreSQL data is persisted in the `openmanage_db` volume. Back up the database and securely preserve `OPENMANAGE_ENCRYPTION_KEY` together; see [Backup and recovery](docs/backup-recovery.md) before upgrades or enrolling devices.
 
