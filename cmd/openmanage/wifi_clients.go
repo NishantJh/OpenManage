@@ -36,13 +36,16 @@ const (
 	clientMaxPerInterface = 256
 )
 
-// wifiClientsOperation reads the hostapd association tables and the DHCP lease file
-// (MAC and hostname only, at most 256 lines, for device names). The command is fixed: it prints those, then lists the
-// hostapd ubus objects and asks each for its clients, nothing else.
+// wifiClientsOperation reads the hostapd association tables, plus two small side tables
+// used only for naming devices: the DHCP lease file (MAC and hostname) and the IPv4
+// neighbour table (MAC and IP). Both are capped at 256 lines. The command is fixed: it
+// prints those, then lists the hostapd ubus objects and asks each for its clients.
 var wifiClientsOperation = operation{
 	Name: "wifi_clients", Label: "Wi-Fi clients", Class: operationRead, Roles: readOnlyRoles,
 	Timeout: healthCheckTimeout, OutputLimit: 64 * 1024, Audit: auditBestEffort,
-	command: `echo "##leases"; awk 'length($4)>0 && length($4)<=60 && $4!="*" {print $2, $4}' /tmp/dhcp.leases 2>/dev/null | head -n 256; for n in $(ubus list 'hostapd.*'); do echo "@@ $n"; ubus call "$n" get_clients; done`,
+	command: `echo "##leases"; awk 'length($4)>0 && length($4)<=60 && $4!="*" {print $2, $4}' /tmp/dhcp.leases 2>/dev/null | head -n 256; ` +
+		`echo "##neigh"; ip -4 neigh show 2>/dev/null | awk '$4=="lladdr" {print $5, $1}' | head -n 256; ` +
+		`for n in $(ubus list 'hostapd.*'); do echo "@@ $n"; ubus call "$n" get_clients; done`,
 }
 
 var hostapdObjectPattern = regexp.MustCompile(`^hostapd\.[A-Za-z0-9_.-]{1,32}$`)
@@ -51,31 +54,44 @@ type polledClient struct {
 	MAC       string
 	Interface string
 	Signal    *int
-	Name      string // DHCP hostname, empty if the router has none
+	Name      string // DHCP or reverse DNS hostname, empty when none is known
 }
 
 var leaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$`)
 
-// parseDHCPLeases reads "mac hostname" lines (the operation trims dnsmasq's lease file to
-// those two fields to keep the output small) from the
-// text before the first hostapd section. Hostnames come from the clients themselves, so
-// anything that is not a plain hostname is dropped.
-func parseDHCPLeases(preamble string) map[string]string {
-	names := map[string]string{}
-	_, body, ok := strings.Cut(preamble, "##leases\n")
-	if !ok {
-		return names
-	}
-	for _, line := range strings.Split(body, "\n") {
-		f := strings.Fields(line)
-		if len(f) != 2 || !leaseNamePattern.MatchString(f[1]) {
+// parsePreamble reads the "##leases" and "##neigh" side tables the operation prints before
+// the first hostapd section. Both are "MAC value" lines. Hostnames come from the clients
+// themselves, so anything that is not a plain hostname is dropped; neighbour addresses
+// must be IPv4 literals.
+func parsePreamble(preamble string) (leases map[string]string, neigh map[string]string) {
+	leases, neigh = map[string]string{}, map[string]string{}
+	section := ""
+	for _, line := range strings.Split(preamble, "\n") {
+		switch line = strings.TrimSpace(line); line {
+		case "##leases", "##neigh":
+			section = line
 			continue
 		}
-		if mac, ok := normalizeMAC(f[0]); ok {
-			names[mac] = f[1]
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		mac, ok := normalizeMAC(f[0])
+		if !ok {
+			continue
+		}
+		switch section {
+		case "##leases":
+			if leaseNamePattern.MatchString(f[1]) {
+				leases[mac] = f[1]
+			}
+		case "##neigh":
+			if ip := net.ParseIP(f[1]); ip != nil && ip.To4() != nil {
+				neigh[mac] = ip.String()
+			}
 		}
 	}
-	return names
+	return leases, neigh
 }
 
 // parseWifiClients turns the operation's output into associated clients. Malformed
@@ -84,9 +100,7 @@ func parseWifiClients(output string) []polledClient {
 	var out []polledClient
 	seen := map[string]bool{}
 	interfaces := 0
-	parts := strings.Split("\n"+output, "\n@@ ")
-	leases := parseDHCPLeases(parts[0])
-	for _, section := range parts[1:] {
+	for _, section := range strings.Split("\n"+output, "\n@@ ")[1:] {
 		name, body, _ := strings.Cut(section, "\n")
 		name = strings.TrimSpace(name)
 		if !hostapdObjectPattern.MatchString(name) || interfaces >= clientMaxInterfaces {
@@ -116,7 +130,7 @@ func parseWifiClients(output string) []polledClient {
 			if sig != nil && (*sig > 0 || *sig < -127) {
 				sig = nil
 			}
-			out = append(out, polledClient{MAC: mac, Interface: strings.TrimPrefix(name, "hostapd."), Signal: sig, Name: leases[mac]})
+			out = append(out, polledClient{MAC: mac, Interface: strings.TrimPrefix(name, "hostapd."), Signal: sig})
 		}
 	}
 	return out
@@ -249,6 +263,8 @@ func (a *app) pollWifiClients(parent context.Context, deviceID string) {
 	if err != nil {
 		return
 	}
+	var dhcpHost bool
+	_ = a.db.QueryRow(ctx, `SELECT dhcp_host FROM devices WHERE id=$1`, deviceID).Scan(&dhcpHost)
 	session, err := openDeviceSession(ctx, target, healthCheckTimeout)
 	if err != nil {
 		return
@@ -258,18 +274,61 @@ func (a *app) pollWifiClients(parent context.Context, deviceID string) {
 	if result.Status != "ok" {
 		return // unknown, not "disconnected": leave the recorded state alone
 	}
-	leases := parseDHCPLeases(leaseSection(result.Output))
+	leases, neigh := parsePreamble(leaseSection(result.Output))
+	if !dhcpHost {
+		leases = nil // only the DHCP host's lease file is trusted for names
+	}
 	a.leaseNames.set(deviceID, leases)
 	clients := parseWifiClients(result.Output)
+	pending := map[string]string{} // MAC -> IP for clients no DHCP host has named
 	for i := range clients {
-		if clients[i].Name == "" {
-			clients[i].Name = a.leaseNames.lookup(clients[i].MAC)
+		if name := a.leaseNames.lookup(clients[i].MAC); name != "" {
+			clients[i].Name = name
+		} else if ip := neigh[clients[i].MAC]; ip != "" {
+			pending[clients[i].MAC] = ip
 		}
 	}
 	if err := a.applyClientPoll(ctx, deviceID, clients); err != nil {
 		log.Printf("client tracking could not store results for device %s", deviceID)
 	}
 	a.applyLeaseNames(ctx, leases)
+	// Reverse DNS runs after the poll is stored, with its own budget, so a slow resolver
+	// can never cost a poll its results.
+	a.applyLeaseNames(parent, a.reverseNames(parent, pending))
+}
+
+// reverseNames looks up the IPs of unnamed clients. At most rdnsMaxPerPoll uncached
+// lookups run per poll, four at a time, within rdnsPollBudget.
+func (a *app) reverseNames(parent context.Context, pending map[string]string) map[string]string {
+	if len(pending) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(parent, rdnsPollBudget)
+	defer cancel()
+	var (
+		mu    sync.Mutex
+		wg    sync.WaitGroup
+		out   = map[string]string{}
+		slots = make(chan struct{}, 4)
+		n     = 0
+	)
+	for mac, ip := range pending {
+		if n++; n > rdnsMaxPerPoll {
+			break
+		}
+		slots <- struct{}{}
+		wg.Add(1)
+		go func(mac, ip string) {
+			defer func() { <-slots; wg.Done() }()
+			if name := a.rdns.name(ctx, ip); name != "" {
+				mu.Lock()
+				out[mac] = name
+				mu.Unlock()
+			}
+		}(mac, ip)
+	}
+	wg.Wait()
+	return out
 }
 
 // applyLeaseNames names clients that are already tracked from one device's leases. It

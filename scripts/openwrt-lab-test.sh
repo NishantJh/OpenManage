@@ -190,9 +190,29 @@ if [ "\$1" = call ] && [ "\$2" = hostapd.phy0-ap0 ] && [ "\$3" = get_clients ]; 
 exec "$ubus_bin.real" "\$@"
 SHIM
 chmod +x "$ubus_bin"'
+# The same trick for the neighbour table (`ip -4 neigh show`), which the AP reads to learn
+# a client's IP for reverse DNS. If the image has no ip binary the shim stands alone.
+docker exec "$router" sh -c '
+ip_bin="$(command -v ip || true)"
+if [ -n "$ip_bin" ]; then ip_target="$(readlink -f "$ip_bin")"; mv "$ip_bin" "$ip_bin.real"; else ip_bin=/usr/sbin/ip; ip_target=; fi
+cat > "$ip_bin" <<SHIM
+#!/bin/sh
+if [ "\$1 \$2 \$3" = "-4 neigh show" ]; then cat /tmp/fake-neigh; exit 0; fi
+case "$ip_target" in
+  "") exit 1;;
+  *busybox*) exec "$ip_target" ip "\$@";;
+  *) exec "$ip_target" "\$@";;
+esac
+SHIM
+chmod +x "$ip_bin"; echo "$ip_bin" > /tmp/ip-shim-path'
+docker exec -i "$router" sh -c "cat > /tmp/fake-neigh" <<< "192.168.1.50 dev eth0 lladdr $fake_mac REACHABLE
+192.168.1.99 dev eth0  FAILED"
+# Reverse DNS for that IP comes from the app container's hosts file.
+docker exec -u root "$(compose ps -q app)" sh -c 'echo "192.168.1.50 lab-ipad.lan" >> /etc/hosts'
 set_fake_clients() { docker exec -i "$router" sh -c "cat > /tmp/fake-clients.json" <<< "$1"; }
 set_fake_clients "{\"freq\":5180,\"clients\":{\"$fake_mac\":{\"auth\":true,\"assoc\":true,\"authorized\":true,\"signal\":-58}}}"
 # dnsmasq lease line: expiry mac ip hostname client-id. The second line has no hostname.
+# The router is not marked as the DHCP host yet, so this file must be ignored for now.
 docker exec -i "$router" sh -c "cat > /tmp/dhcp.leases" <<< "4102444800 $fake_mac 192.168.1.50 lab-iphone 01:$fake_mac
 4102444800 de:ad:be:ef:00:09 192.168.1.51 * 01:de:ad:be:ef:00:09"
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":30}'
@@ -201,16 +221,31 @@ api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"clie
 [[ "$status" == 200 ]] || { cat "$body" >&2; fail "enabling client tracking returned HTTP $status"; }
 for attempt in $(seq 1 40); do
   api GET /api/wifi-clients
-  [[ "$(json 'print(len(d))' < "$body")" == 1 ]] && break
-  [[ "$attempt" == 40 ]] && { cat "$body" >&2; fail "client tracking did not record the fixture client"; }
+  [[ "$(json 'print(len(d)==1 and d[0]["name"]=="lab-ipad")' < "$body")" == True ]] && break
+  [[ "$attempt" == 40 ]] && { cat "$body" >&2; fail "client tracking did not record the fixture client with its reverse DNS name"; }
   sleep 1
 done
-json 'c=d[0]; assert c["connected"] and c["signal_dbm"]==-58 and c["interface"]=="phy0-ap0" and c["device_id"]==sys.argv[1], c; assert c["mac_hint"]=="aa:bb:cc:••:••:••" and c["label"]=="" and c["name"]=="lab-iphone" and not c["hidden"], c' "$device_id" < "$body"
+json 'c=d[0]; assert c["connected"] and c["signal_dbm"]==-58 and c["interface"]=="phy0-ap0" and c["device_id"]==sys.argv[1], c; assert c["mac_hint"]=="aa:bb:cc:••:••:••" and c["label"]=="" and c["name"]=="lab-ipad" and not c["hidden"], c' "$device_id" < "$body"
 ! grep -q "11:22:33" "$body" || fail "client list leaked the full MAC address"
 client_id="$(json 'print(d[0]["id"])' < "$body")"
 mac_leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM wifi_clients WHERE position(convert_to('$fake_mac','UTF8') in mac_ciphertext)>0 OR mac_hint LIKE '%11:22:33%'")"
 [[ "$mac_leaks" == 0 ]] || fail "client MAC found in plaintext in PostgreSQL"
-echo "PASS: a client associated to the AP is tracked, named from the DHCP lease, with its MAC masked and encrypted at rest"
+echo "PASS: a client associated to the AP is tracked and named by reverse DNS, with its MAC masked and encrypted at rest"
+# Device roles: an AP by default; the lease file counts only once the device is the DHCP host.
+api GET "/api/devices/$device_id"
+json 'assert d["role"]=="access_point" and d["dhcp_host"] is False, d' < "$body"
+api PATCH "/api/devices/$device_id" '{"role":"switch"}'
+[[ "$status" == 400 ]] || fail "an invalid device role was accepted (HTTP $status)"
+api PATCH "/api/devices/$device_id" '{"role":"router","dhcp_host":true}'
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "setting the device role returned HTTP $status"; }
+json 'assert d["role"]=="router" and d["dhcp_host"] is True, d' < "$body"
+for attempt in $(seq 1 100); do
+  api GET /api/wifi-clients
+  [[ "$(json 'print(d[0]["name"])' < "$body")" == lab-iphone ]] && break
+  [[ "$attempt" == 100 ]] && { cat "$body" >&2; fail "the DHCP host's lease name did not replace the reverse DNS name"; }
+  sleep 1
+done
+echo "PASS: the DHCP host's lease names a client, and its lease file was ignored until it was marked as the DHCP host"
 api PATCH "/api/wifi-clients/$client_id" '{"label":"lab phone"}'
 [[ "$status" == 204 ]] || fail "labelling a client returned HTTP $status"
 # The client leaves: the next poll (one interval later) records a disconnect.
@@ -246,6 +281,7 @@ api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"clie
 echo "PASS: clearing client data removes clients and history"
 # Remove the shim so later sections (the forced-rollback wrapper) see the real ubus.
 docker exec "$router" sh -c 'ubus_bin="$(command -v ubus)" && mv "$ubus_bin.real" "$ubus_bin" && rm -f /tmp/fake-clients.json'
+docker exec "$router" sh -c 'p="$(cat /tmp/ip-shim-path)"; if [ -e "$p.real" ]; then mv "$p.real" "$p"; else rm -f "$p"; fi; rm -f /tmp/ip-shim-path /tmp/fake-neigh /tmp/dhcp.leases'
 
 # Controlled configuration change: preview, apply with rpcd rollback armed, verify
 # over a fresh connection, confirm.

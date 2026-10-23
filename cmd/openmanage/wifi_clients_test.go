@@ -103,19 +103,23 @@ func TestPollTracker(t *testing.T) {
 	}
 }
 
-func TestParseWifiClientsNamesFromLeases(t *testing.T) {
-	out := "##leases\nAA:BB:CC:11:22:33 nishants-iphone\n" +
-		"de:ad:be:ef:00:01 *\n" + sampleClients
-	byMAC := map[string]string{}
+func TestParsePreamble(t *testing.T) {
+	out := "##leases\nAA:BB:CC:11:22:33 nishants-iphone\nde:ad:be:ef:00:01 <script>\n" +
+		"##neigh\naa:bb:cc:11:22:33 192.168.1.50\nde:ad:be:ef:00:01 not-an-ip\nde:ad:be:ef:00:02 fe80::1\n" + sampleClients
+	leases, neigh := parsePreamble(leaseSection(out))
+	if len(leases) != 1 || leases["aa:bb:cc:11:22:33"] != "nishants-iphone" {
+		t.Fatalf("unexpected leases: %v", leases)
+	}
+	if len(neigh) != 1 || neigh["aa:bb:cc:11:22:33"] != "192.168.1.50" {
+		t.Fatalf("unexpected neighbours: %v", neigh)
+	}
 	for _, c := range parseWifiClients(out) {
-		byMAC[c.MAC] = c.Name
+		if c.Name != "" {
+			t.Fatalf("parseWifiClients must not name clients, got %q for %s", c.Name, c.MAC)
+		}
 	}
-	if byMAC["aa:bb:cc:11:22:33"] != "nishants-iphone" || byMAC["de:ad:be:ef:00:01"] != "" {
-		t.Fatalf("unexpected names: %v", byMAC)
-	}
-	bad := parseDHCPLeases("##leases\naa:bb:cc:11:22:33 <script>\naa:bb:cc:11:22:34 ok\n")
-	if len(bad) != 1 || bad["aa:bb:cc:11:22:34"] != "ok" {
-		t.Fatalf("unsafe or malformed lease names must be dropped: %v", bad)
+	if l, n := parsePreamble(""); len(l) != 0 || len(n) != 0 {
+		t.Fatal("empty output should have no side tables")
 	}
 }
 
@@ -132,9 +136,5 @@ func TestLeaseCacheNamesAcrossDevices(t *testing.T) {
 	c.set("router", nil)
 	if got := c.lookup("aa:bb:cc:11:22:33"); got != "" {
 		t.Fatalf("a device that reports no leases must drop its names, got %q", got)
-	}
-	out := "##leases\naa:bb:cc:11:22:33 x\n" + sampleClients
-	if got := parseDHCPLeases(leaseSection(out)); got["aa:bb:cc:11:22:33"] != "x" {
-		t.Fatalf("unexpected lease section %q", leaseSection(out))
 	}
 }
