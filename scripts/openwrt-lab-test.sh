@@ -557,6 +557,34 @@ ttls_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT s
   || fail "an EAP-TTLS password or secret reached the audit log"
 echo "PASS: EAP-TTLS failures are audited with a reason and no secrets"
 
+# The phone-side checklist, simulated: rejoin, repeated joins, abandoned handshakes
+# (a phone toggling Wi-Fi), disable and re-enable, and a password reset.
+ttls_conf lab-wifi lab-wifi-password-1 "auth=PAP" radius.openmanage.home.arpa
+eapol_test -c "$work/ttls.conf" -a "$app_ip" -s "$eapol_secret" -t 15 -r 3 > "$work/eapol.log" 2>&1 \
+  || { tail -30 "$work/eapol.log" >&2; fail "EAP-TTLS reauthentication failed"; }
+grep -q "MPPE keys OK: 4  mismatch: 0" "$work/eapol.log" || fail "EAP-TTLS reauthentication: expected 4 joins with matching keys"
+echo "PASS: EAP-TTLS rejoins three more times in one run"
+for n in $(seq 1 10); do expect_ttls success "join $n of 10 in a row" lab-wifi lab-wifi-password-1 "auth=PAP" >/dev/null; done
+echo "PASS: EAP-TTLS accepts 10 joins in a row"
+# eapol_test's Calling-Station-Id is its default MAC 02:00:00:00:00:01.
+for n in $(seq 1 12); do "$work/radius-probe" -server "$app_ip:1812" -secret "$eapol_secret" -user anonymous -password x -eap -station 02-00-00-00-00-01 >/dev/null; done
+expect_ttls success "joins after 12 abandoned handshakes from the same phone" lab-wifi lab-wifi-password-1 "auth=PAP"
+for n in $(seq 1 12); do "$work/radius-probe" -server "$app_ip:1812" -secret "$eapol_secret" -user anonymous -password x -eap >/dev/null; done
+expect_ttls success "joins after 12 abandoned handshakes without a station id" lab-wifi lab-wifi-password-1 "auth=PAP"
+api PATCH "/api/network-users/$wifi_id" '{"disabled":true}'
+[[ "$status" == 200 ]] || fail "disabling the network user returned HTTP $status"
+for n in $(seq 1 12); do expect_ttls failure "disabled user attempt $n" lab-wifi lab-wifi-password-1 "auth=PAP" >/dev/null; done
+echo "PASS: EAP-TTLS rejects a disabled user"
+api PATCH "/api/network-users/$wifi_id" '{"disabled":false}'
+expect_ttls success "accepts a re-enabled user after 12 rejections" lab-wifi lab-wifi-password-1 "auth=PAP"
+api POST "/api/network-users/$wifi_id/password" '{"password":"lab-wifi-password-2"}'
+[[ "$status" == 200 ]] || fail "resetting the network user's password returned HTTP $status"
+expect_ttls failure "rejects the old password after a reset" lab-wifi lab-wifi-password-1 "auth=PAP"
+expect_ttls success "accepts the new password after a reset" lab-wifi lab-wifi-password-2 "auth=PAP"
+ttls_reasons="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT string_agg(DISTINCT details->>'reason', ',') FROM audit_events WHERE action='radius.auth_reject' AND details->>'method'='eap-ttls'")"
+[[ "$ttls_reasons" == "bad_credentials,disabled,inner_method_not_pap,tls_failed" ]] || fail "EAP-TTLS reject reasons after the checklist: $ttls_reasons"
+echo "PASS: EAP-TTLS checklist rejects were audited as disabled or bad_credentials, never eap_session_limit"
+
 api DELETE "/api/devices/$device_id/radius-secret"
 [[ "$status" == 200 ]] || fail "removing the RADIUS secret returned HTTP $status"
 expect_probe timeout "ignores a device whose secret was removed" "$new_secret" lab-wifi lab-wifi-password-1

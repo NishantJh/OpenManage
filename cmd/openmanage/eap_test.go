@@ -204,3 +204,46 @@ func FuzzParseInnerPAP(f *testing.F) {
 		}
 	})
 }
+
+func TestEAPSessionsReplaceAbandoned(t *testing.T) {
+	var table eapSessions
+	now := time.Now()
+	add := func(device, station string, at time.Time) string {
+		t.Helper()
+		state, ok := table.add(&eapSession{deviceID: device, station: station, created: at, lastSeen: at, conn: newEAPConn()}, at)
+		if !ok {
+			t.Fatalf("add %s/%s refused", device, station)
+		}
+		return state
+	}
+	// A phone that restarts its handshake replaces its own old conversation.
+	first := add("ap1", "AA-BB-CC-DD-EE-01", now)
+	for i := 0; i < 2*eapMaxSessionsPerClient; i++ {
+		add("ap1", "AA-BB-CC-DD-EE-01", now.Add(time.Duration(i)*time.Millisecond))
+	}
+	if table.get(first, "ap1", now) != nil {
+		t.Fatal("old conversation from the same station was kept")
+	}
+	if got := table.perClient["ap1"]; got != 1 {
+		t.Fatalf("ap1 sessions = %d, want 1", got)
+	}
+	// Without a station, a full AP drops its least recently active conversation.
+	var noStation []string
+	for i := 0; i < eapMaxSessionsPerClient; i++ {
+		noStation = append(noStation, add("ap2", "", now.Add(time.Duration(i)*time.Second)))
+	}
+	add("ap2", "", now.Add(10*time.Second))
+	if table.get(noStation[0], "ap2", now.Add(10*time.Second)) != nil {
+		t.Fatal("oldest conversation on a full AP was kept")
+	}
+	if table.get(noStation[1], "ap2", now.Add(10*time.Second)) == nil {
+		t.Fatal("newer conversation was dropped")
+	}
+	if got := table.perClient["ap2"]; got != eapMaxSessionsPerClient {
+		t.Fatalf("ap2 sessions = %d, want %d", got, eapMaxSessionsPerClient)
+	}
+	// Another AP's stations are never touched.
+	if got := table.perClient["ap1"]; got != 1 {
+		t.Fatalf("ap1 sessions = %d after ap2 traffic, want 1", got)
+	}
+}

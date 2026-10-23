@@ -191,9 +191,11 @@ func (eapAddr) String() string  { return "eap" }
 
 // eapSession is one EAP-TTLS conversation with one supplicant through one AP.
 type eapSession struct {
-	mu        sync.Mutex
-	deviceID  string
-	identity  string
+	mu       sync.Mutex
+	deviceID string
+	identity string
+	// station is the supplicant's Calling-Station-Id (its MAC address), if the AP sent one.
+	station   string
 	created   time.Time
 	lastSeen  time.Time
 	lastReqID byte
@@ -311,6 +313,27 @@ func (t *eapSessions) add(e *eapSession, now time.Time) (string, bool) {
 		t.byState, t.perClient = map[string]*eapSession{}, map[string]int{}
 	}
 	t.prune(now)
+	// A phone that toggles Wi-Fi or walks away mid-handshake leaves its old
+	// conversation behind. A new Identity from the same station replaces it, and a
+	// full AP gives up its least recently active conversation, so abandoned
+	// handshakes never lock out the next join.
+	var oldestState string
+	var oldest *eapSession
+	for state, o := range t.byState {
+		if o.deviceID != e.deviceID {
+			continue
+		}
+		if e.station != "" && o.station == e.station {
+			t.removeLocked(state, o)
+			continue
+		}
+		if oldest == nil || o.lastSeen.Before(oldest.lastSeen) {
+			oldestState, oldest = state, o
+		}
+	}
+	if t.perClient[e.deviceID] >= eapMaxSessionsPerClient && oldest != nil {
+		t.removeLocked(oldestState, oldest)
+	}
 	if len(t.byState) >= eapMaxSessions || t.perClient[e.deviceID] >= eapMaxSessionsPerClient {
 		return "", false
 	}
@@ -362,7 +385,8 @@ func (s *radiusServer) handleEAP(ctx context.Context, deviceID string, packet *r
 	}
 	stateAttr, hasState := packet.Attributes.Lookup(rfc2865.State_Type)
 	if !hasState {
-		return s.startEAP(ctx, deviceID, msg, now)
+		station := rfc2865.CallingStationID_GetString(packet)
+		return s.startEAP(ctx, deviceID, station, msg, now)
 	}
 	state := string(stateAttr)
 	e := s.eap.get(state, deviceID, now)
@@ -394,7 +418,7 @@ func eapFailure(id byte) (radius.Code, radius.Attributes) {
 
 // startEAP handles EAP-Response/Identity by opening a session and sending the
 // EAP-TTLS start request.
-func (s *radiusServer) startEAP(ctx context.Context, deviceID string, msg eapPacket, now time.Time) (radius.Code, radius.Attributes) {
+func (s *radiusServer) startEAP(ctx context.Context, deviceID, station string, msg eapPacket, now time.Time) (radius.Code, radius.Attributes) {
 	if msg.typ != eapTypeIdentity {
 		return eapFailure(msg.id)
 	}
@@ -402,7 +426,7 @@ func (s *radiusServer) startEAP(ctx context.Context, deviceID string, msg eapPac
 	if validUsername.MatchString(string(msg.data)) {
 		identity = string(msg.data)
 	}
-	e := &eapSession{deviceID: deviceID, identity: identity, created: now, lastSeen: now, conn: newEAPConn(), lastReqID: msg.id + 1}
+	e := &eapSession{deviceID: deviceID, identity: identity, station: station, created: now, lastSeen: now, conn: newEAPConn(), lastReqID: msg.id + 1}
 	state, ok := s.eap.add(e, now)
 	if !ok {
 		s.reject(ctx, deviceID, "", radiusMethodTTLS, radiusReasonEAPLimit, now)
