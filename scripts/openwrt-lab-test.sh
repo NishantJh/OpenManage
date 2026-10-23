@@ -8,7 +8,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-for tool in docker curl python3 ssh-keygen; do
+for tool in docker curl python3 ssh-keygen go; do
   command -v "$tool" >/dev/null || { echo "ERROR: $tool is required" >&2; exit 2; }
 done
 docker compose version >/dev/null
@@ -43,6 +43,7 @@ OPENMANAGE_ADMIN_PASSWORD=lab-admin-password-123
 OPENMANAGE_COOKIE_SECURE=false
 OPENMANAGE_ENCRYPTION_KEY=$(python3 -c 'import base64,secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())')
 OPENMANAGE_PORT=127.0.0.1:$port
+OPENMANAGE_RADIUS_LISTEN=:1812
 EOF
 
 echo "Starting disposable OpenManage stack on 127.0.0.1:$port ..."
@@ -298,6 +299,62 @@ users_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT 
 ! compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events WHERE resource_type='user'" | grep -q "lab-operator-pass" \
   || fail "a password reached the audit log"
 echo "PASS: user management creates, demotes and disables users, revokes their sessions, and keeps one administrator"
+
+# Built-in RADIUS (PAP lab listener). The probe runs inside the router container so
+# requests come from the enrolled device's address.
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$work/radius-probe" ./scripts/radius-probe
+docker cp "$work/radius-probe" "$router:/tmp/radius-probe"
+app_ip="$(docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$(compose ps -q app)")"
+probe() { # secret user password [flags...] -> prints accept/reject/timeout
+  docker exec "$router" /tmp/radius-probe -server "$app_ip:1812" -secret "$1" -user "$2" -password "$3" "${@:4}"
+}
+expect_probe() { # expected label secret user password [flags...]
+  local got; got="$(probe "${@:3}")"
+  [[ "$got" == "$1" ]] || fail "$2: RADIUS probe got '$got' (expected $1)"
+  echo "PASS: RADIUS $2"
+}
+api GET /api/radius
+json 'assert d["enabled"] and d["listen_addr"]==":1812" and d["clients"]==[], d' < "$body"
+expect_probe timeout "ignores a device without a secret" not-a-secret lab-wifi lab-wifi-password-1
+api POST /api/network-users '{"username":"lab-wifi","password":"lab-wifi-password-1"}'
+[[ "$status" == 201 ]] || fail "creating a network user returned HTTP $status"
+wifi_id="$(json 'print(d["id"])' < "$body")"
+api POST /api/network-users '{"username":"lab-locked","password":"lab-locked-password-1"}'
+[[ "$status" == 201 ]] || fail "creating a second network user returned HTTP $status"
+api POST "/api/auth/login" '{"username":"lab-wifi","password":"lab-wifi-password-1"}'
+[[ "$status" == 401 ]] || fail "a network user signed in to OpenManage (HTTP $status)"
+api POST "/api/devices/$device_id/radius-secret"
+[[ "$status" == 200 ]] || fail "creating a RADIUS secret returned HTTP $status"
+radius_secret="$(json 'print(d["secret"])' < "$body")"
+[[ ${#radius_secret} == 64 ]] || fail "unexpected RADIUS secret length"
+expect_probe accept "accepts a valid network user" "$radius_secret" lab-wifi lab-wifi-password-1
+expect_probe accept "answers a retransmission with the same reply" "$radius_secret" lab-wifi lab-wifi-password-1 -repeat 3
+expect_probe reject "rejects a wrong password" "$radius_secret" lab-wifi wrong-password-123
+expect_probe reject "rejects an unknown user" "$radius_secret" lab-nobody lab-wifi-password-1
+expect_probe reject "rejects EAP until EAP-TTLS is supported" "$radius_secret" lab-wifi lab-wifi-password-1 -eap
+expect_probe timeout "drops a request without Message-Authenticator" "$radius_secret" lab-wifi lab-wifi-password-1 -no-message-authenticator
+expect_probe timeout "drops a request signed with the wrong secret" "wrong-$radius_secret" lab-wifi lab-wifi-password-1
+api PATCH "/api/network-users/$wifi_id" '{"disabled":true}'
+[[ "$status" == 200 ]] || fail "disabling a network user returned HTTP $status"
+expect_probe reject "rejects a disabled network user" "$radius_secret" lab-wifi lab-wifi-password-1
+api PATCH "/api/network-users/$wifi_id" '{"disabled":false}'
+for attempt in $(seq 1 10); do probe "$radius_secret" lab-locked wrong-password-123 >/dev/null; done
+expect_probe reject "blocks a user after repeated failures" "$radius_secret" lab-locked lab-locked-password-1
+api POST "/api/devices/$device_id/radius-secret"
+new_secret="$(json 'print(d["secret"])' < "$body")"
+expect_probe timeout "stops accepting a rotated-out secret" "$radius_secret" lab-wifi lab-wifi-password-1
+expect_probe accept "accepts the rotated secret" "$new_secret" lab-wifi lab-wifi-password-1
+api GET /api/radius
+json 'assert len(d["clients"])==1 and d["dropped_packets"]>=4, d' < "$body"
+! grep -q "$new_secret" "$body" || fail "RADIUS status returned the shared secret"
+radius_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action='radius.auth_accept'")"
+[[ "$radius_audit" == 3 ]] || fail "RADIUS accept audit events: $radius_audit (expected 3)"
+leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events" | grep -c -e lab-wifi-password -e lab-locked-password -e "$new_secret" -e "$radius_secret" || true)"
+[[ "$leaks" == 0 ]] || fail "a RADIUS password or secret reached the audit log"
+! compose logs --no-color app | grep -q -e lab-wifi-password -e "$new_secret" || fail "a RADIUS password or secret reached the app log"
+api DELETE "/api/devices/$device_id/radius-secret"
+[[ "$status" == 200 ]] || fail "removing the RADIUS secret returned HTTP $status"
+expect_probe timeout "ignores a device whose secret was removed" "$new_secret" lab-wifi lab-wifi-password-1
 
 # Monitoring scenarios. Clearing this device's history makes it due on the next
 # 15-second scheduler poll instead of waiting a full interval.

@@ -7,6 +7,7 @@ toolchain go1.27.3
 require (
 	github.com/jackc/pgx/v5 v5.11.0
 	golang.org/x/crypto v0.58.0
+	layeh.com/radius v0.0.0-20231213012653-1006025d24f8
 )
 
 require (

@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -36,6 +37,8 @@ type app struct {
 	secureCookie bool
 	// snapshotRetry holds back scheduled snapshots of devices that just failed.
 	snapshotRetry retryTracker
+	// radius is nil unless OPENMANAGE_RADIUS_LISTEN is set.
+	radius *radiusServer
 }
 
 type contextKey string
@@ -160,9 +163,35 @@ func main() {
 	mux.HandleFunc("POST /api/users", a.createUser)
 	mux.HandleFunc("PATCH /api/users/{id}", a.updateUser)
 	mux.HandleFunc("POST /api/users/{id}/password", a.resetUserPassword)
+	mux.HandleFunc("GET /api/network-users", a.listNetworkUsers)
+	mux.HandleFunc("POST /api/network-users", a.createNetworkUser)
+	mux.HandleFunc("PATCH /api/network-users/{id}", a.updateNetworkUser)
+	mux.HandleFunc("POST /api/network-users/{id}/password", a.resetNetworkUserPassword)
+	mux.HandleFunc("GET /api/radius", a.getRADIUSStatus)
+	mux.HandleFunc("POST /api/devices/{id}/radius-secret", a.rotateRADIUSSecret)
+	mux.HandleFunc("DELETE /api/devices/{id}/radius-secret", a.deleteRADIUSSecret)
 	mux.HandleFunc("GET /api/monitoring/settings", a.getMonitoringSettings)
 	mux.HandleFunc("PUT /api/monitoring/settings", a.updateMonitoringSettings)
 	mux.HandleFunc("GET /api/monitoring/history", a.listMonitoringHistory)
+	radiusDone := make(chan struct{})
+	if addr := strings.TrimSpace(env("OPENMANAGE_RADIUS_LISTEN", "")); addr != "" {
+		key, keyErr := encryptionKey()
+		if keyErr != nil {
+			log.Fatalf("RADIUS listener: %v", keyErr)
+		}
+		conn, listenErr := net.ListenPacket("udp", addr)
+		if listenErr != nil {
+			log.Fatalf("RADIUS listener: %v", listenErr)
+		}
+		a.radius = newRADIUSServer(pool, key, addr)
+		log.Printf("RADIUS listening on udp %s", addr)
+		go func() {
+			defer close(radiusDone)
+			a.radius.serve(ctx, conn)
+		}()
+	} else {
+		close(radiusDone)
+	}
 	monitorDone := make(chan struct{})
 	go func() {
 		defer close(monitorDone)
@@ -196,6 +225,11 @@ func main() {
 	case <-monitorDone:
 	case <-monitorWait.Done():
 		log.Printf("monitoring scheduler did not stop before timeout")
+	}
+	select {
+	case <-radiusDone:
+	case <-monitorWait.Done():
+		log.Printf("RADIUS listener did not stop before timeout")
 	}
 }
 
@@ -517,6 +551,7 @@ func (a *app) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete device and record audit event")
 		return
 	}
+	a.radius.invalidateClients()
 	w.WriteHeader(http.StatusNoContent)
 }
 
