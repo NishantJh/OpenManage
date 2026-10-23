@@ -114,3 +114,6 @@ tr.selected td{background:#1a1e2a}
 .fp-place{display:flex;gap:8px;margin-top:4px}.fp-place select{flex:1;height:34px}
 @media(max-width:900px){.fp-grid{grid-template-columns:1fr}}
 @media(max-width:560px){.fp-edit-head{display:none}.fp-edit-row{grid-template-columns:1fr 1fr 30px}.fp-edit-row input:first-child{grid-column:1/-1}.fp-edit-row .fp-icon{grid-column:3}.fp-toolbar{padding:11px 12px}}
+
+.fp-handle{fill:#8d78f5;stroke:#0c0f15;stroke-width:.06;cursor:nwse-resize;opacity:.85}
+.fp-handle:hover{opacity:1}

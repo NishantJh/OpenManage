@@ -39,6 +39,8 @@ type app struct {
 	snapshotRetry retryTracker
 	// clientPolls remembers when each AP was last asked for its Wi-Fi clients.
 	clientPolls pollTracker
+	// leaseNames holds DHCP hostnames per device so any router's leases can name a client.
+	leaseNames leaseCache
 	// radius is nil unless OPENMANAGE_RADIUS_LISTEN is set.
 	radius *radiusServer
 }

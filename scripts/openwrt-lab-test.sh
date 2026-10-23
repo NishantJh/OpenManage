@@ -192,6 +192,9 @@ SHIM
 chmod +x "$ubus_bin"'
 set_fake_clients() { docker exec -i "$router" sh -c "cat > /tmp/fake-clients.json" <<< "$1"; }
 set_fake_clients "{\"freq\":5180,\"clients\":{\"$fake_mac\":{\"auth\":true,\"assoc\":true,\"authorized\":true,\"signal\":-58}}}"
+# dnsmasq lease line: expiry mac ip hostname client-id. The second line has no hostname.
+docker exec -i "$router" sh -c "cat > /tmp/dhcp.leases" <<< "4102444800 $fake_mac 192.168.1.50 lab-iphone 01:$fake_mac
+4102444800 de:ad:be:ef:00:09 192.168.1.51 * 01:de:ad:be:ef:00:09"
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":30}'
 [[ "$status" == 400 ]] || fail "a 30 s client poll interval was accepted (HTTP $status)"
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":60}'
@@ -202,16 +205,19 @@ for attempt in $(seq 1 40); do
   [[ "$attempt" == 40 ]] && { cat "$body" >&2; fail "client tracking did not record the fixture client"; }
   sleep 1
 done
-json 'c=d[0]; assert c["connected"] and c["signal_dbm"]==-58 and c["interface"]=="phy0-ap0" and c["device_id"]==sys.argv[1], c; assert c["mac_hint"]=="aa:bb:cc:••:••:••" and c["label"]=="" and not c["hidden"], c' "$device_id" < "$body"
+json 'c=d[0]; assert c["connected"] and c["signal_dbm"]==-58 and c["interface"]=="phy0-ap0" and c["device_id"]==sys.argv[1], c; assert c["mac_hint"]=="aa:bb:cc:••:••:••" and c["label"]=="" and c["name"]=="lab-iphone" and not c["hidden"], c' "$device_id" < "$body"
 ! grep -q "11:22:33" "$body" || fail "client list leaked the full MAC address"
 client_id="$(json 'print(d[0]["id"])' < "$body")"
 mac_leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM wifi_clients WHERE position(convert_to('$fake_mac','UTF8') in mac_ciphertext)>0 OR mac_hint LIKE '%11:22:33%'")"
 [[ "$mac_leaks" == 0 ]] || fail "client MAC found in plaintext in PostgreSQL"
-echo "PASS: a client associated to the AP is tracked, with its MAC masked and encrypted at rest"
+echo "PASS: a client associated to the AP is tracked, named from the DHCP lease, with its MAC masked and encrypted at rest"
 api PATCH "/api/wifi-clients/$client_id" '{"label":"lab phone"}'
 [[ "$status" == 204 ]] || fail "labelling a client returned HTTP $status"
 # The client leaves: the next poll (one interval later) records a disconnect.
 set_fake_clients '{"freq":5180,"clients":{}}'
+# The router also renames the device in its leases. The client is no longer on the AP, so
+# the new name can only arrive through the lease path, not through the hostapd list.
+docker exec -i "$router" sh -c "cat > /tmp/dhcp.leases" <<< "4102444800 $fake_mac 192.168.1.50 lab-iphone-renamed 01:$fake_mac"
 for attempt in $(seq 1 100); do
   api GET /api/wifi-clients
   [[ "$(json 'print(d[0]["connected"])' < "$body")" == False ]] && break
@@ -219,6 +225,12 @@ for attempt in $(seq 1 100); do
   sleep 1
 done
 json 'assert d[0]["label"]=="lab phone", d' < "$body"
+for attempt in $(seq 1 100); do
+  api GET /api/wifi-clients
+  [[ "$(json 'print(d[0]["name"])' < "$body")" == lab-iphone-renamed ]] && break
+  [[ "$attempt" == 100 ]] && { cat "$body" >&2; fail "a changed DHCP lease name did not reach a tracked client"; }
+  sleep 1
+done
 api GET "/api/wifi-client-events?client=$client_id"
 json 'assert [e["kind"] for e in d]==["disconnect","connect"] and d[1]["signal_dbm"]==-58 and d[0]["from_device_id"]==sys.argv[1], d' "$device_id" < "$body"
 ! grep -q "11:22:33" "$body" || fail "client history leaked the full MAC address"
