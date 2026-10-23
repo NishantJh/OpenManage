@@ -160,6 +160,7 @@ func TestRADIUSEndpointsRequireAdmin(t *testing.T) {
 		{http.MethodPost, "/api/network-users/x/password", `{"password":"long enough password"}`, a.resetNetworkUserPassword},
 		{http.MethodGet, "/api/radius", "", a.getRADIUSStatus},
 		{http.MethodGet, "/api/radius/ca.pem", "", a.downloadRADIUSCA},
+		{http.MethodGet, "/api/radius/apple-profile?ssid=x", "", a.downloadAppleWiFiProfile},
 		{http.MethodPost, "/api/devices/x/radius-secret", "", a.rotateRADIUSSecret},
 		{http.MethodDelete, "/api/devices/x/radius-secret", "", a.deleteRADIUSSecret},
 	} {
