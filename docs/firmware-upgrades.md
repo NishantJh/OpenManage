@@ -51,7 +51,19 @@ These are new typed read operations (names `firmware_inventory`, similar), using
 
 So no online service builds third-party packages for you without you running something yourself. For fluent, the realistic options are reinstall after flash (Phase 1) or your own Image Builder run (local container or GitHub Actions).
 
-Recommendation: **A first, B later and optional.** Phase 1 uses ASU for the official part and handles third-party packages after the flash (below). B is added only if Nishant wants fully offline builds or third-party packages inside the image. Build jobs would run as a separate optional builder container, started by Compose profile, never as a required service and never by giving OpenManage access to the Docker socket.
+Decision (Nishant, 2026-10-23): **public ASU is the default** (official packages, third-party ones reinstalled after the flash). **Self-hosted ASU is an optional mode** for users who want to run their own server, kept entirely outside the OpenManage stack so the core still has no extra services. A local Image Builder (B) is not planned unless the self-hosted mode proves insufficient. OpenManage never gets access to the Docker or Podman socket.
+
+### Optional self-hosted ASU mode
+
+- **Setting:** an administrator-set "build server URL" (default `https://sysupgrade.openwrt.org`). OpenManage only speaks the ASU HTTP API to it, so the same code serves both modes. The URL must be `https` or an explicitly allowed private address, and is validated like other inventory addresses (bounded timeouts, no redirects to other hosts).
+- **One-command setup:** a script in the repo (for example `scripts/asu-server-setup.sh`) the user runs on a Linux machine, such as a separate VM or LXC, never inside the OpenManage container. Spec:
+  - Checks: Linux, root or sudo, enough RAM and disk (ASU documents about 2 GB RAM and 50 GB disk as the minimum), and a container runtime. Installs Podman and podman-compose if missing, on Debian/Ubuntu first.
+  - Fetches a **pinned** ASU release (tag and checksum recorded in the script), writes the compose and config files, creates the Podman socket link and isolated build network that ASU requires, and starts the stack (server, Redis, worker).
+  - Optionally takes extra feeds: `--feed URL --feed-key KEY_FILE` adds the feed to the server's allow list, so third-party packages can be built in. This is the part to test first: forum reports say extra-feed support exists but apk-format feeds are incomplete.
+  - Idempotent (safe to re-run), prints the final URL, and offers `--uninstall`. Binds to a private interface by default and prints a warning before exposing it, because ASU has no authentication of its own (to check); a reverse proxy with TLS is recommended.
+  - Never prints or stores secrets; any signing key it generates for a custom feed stays on that machine.
+- **Trust:** the self-hosted server builds the images, so OpenManage's trust in an image equals trust in that machine. The same hash and `sysupgrade -T` checks apply. Nothing about the devices leaves the user's network.
+- **Out of scope here:** the script itself (spec only for now), and managing the ASU server from OpenManage.
 
 Profile mapping: ASU needs release, target, profile and package list. The profile comes from `board_name` (commas replaced with underscores). To be confirmed in the lab for each supported model.
 
@@ -105,13 +117,13 @@ Write operations audit transactionally (a Section 2 rule). A job state machine i
 1. **Inventory and plan-only.** Capture manifests, show the package diff and what an upgrade would do. No writes.
 2. **Single-device upgrade via ASU**, reinstalling third-party packages afterward, with backup, verification, and drift review. Test on real hardware and in the OpenWrt lab where possible (the lab is a container; flashing itself cannot be tested there).
 3. **Staged rollout** with canary and concurrency limits.
-4. **Optional local Image Builder** for baked-in third-party packages and offline builds.
+4. **Optional self-hosted ASU mode:** the build-server URL setting and the setup script, with extra feeds so third-party packages can be built in.
 
 ## Open questions for Nishant
 
-1. Is public ASU acceptable (model and package list sent to openwrt.org), or must builds be local?
+1. (Decided) Public ASU by default, self-hosted ASU optional. Is the privacy note shown at first use enough?
 2. How are third-party packages like `luci-theme-fluent` installed today (custom feed, or a downloaded `.ipk`/`.apk`)? That decides whether reinstall-after-flash is enough.
 3. Which devices matter first, and do they have physical access if a flash fails? Any dual-partition devices?
 4. Is `opkg` (24.10) enough, or do you want `apk` (25.x) support from the start?
 5. Are large release jumps in scope, or only same-release and next-release upgrades?
-6. For Phase 4, is a separate optional builder container acceptable?
+6. For the setup script: Debian/Ubuntu only at first, or other distributions too?

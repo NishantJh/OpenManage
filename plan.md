@@ -160,7 +160,7 @@ Not scheduled; starts after the sections above are done and tested. Goal: build 
 - [ ] Phase 1: package and feed inventory, plan-only package diff (read-only).
 - [ ] Phase 2: single-device upgrade through the ASU API, third-party packages reinstalled afterward, encrypted config backup, post-reboot verification and drift review.
 - [ ] Phase 3: staged rollout (canary, concurrency limit, stop on failure).
-- [ ] Phase 4 (optional): local Image Builder in an optional container, for packages baked into the image.
+- [ ] Phase 4 (optional): self-hosted ASU mode. A build-server URL setting plus a single setup script for a separate Linux machine (outside the OpenManage stack), with extra feeds for third-party packages. Public ASU stays the default. Decided by Nishant 2026-10-23.
 
 ## Deferred and optional items
 
