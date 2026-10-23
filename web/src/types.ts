@@ -19,5 +19,5 @@ export type RadiusStatus={enabled:boolean;listen_addr:string;dropped_packets:num
 export type FloorRoom={id:string;name:string;x:number;y:number;w:number;h:number};
 export type FloorPlacement={device_id:string;x:number;y:number};
 export type FloorPlan={rooms:FloorRoom[];placements:FloorPlacement[];updated_at?:string};
-export type WifiClient={id:string;label:string;mac_hint:string;hidden:boolean;device_id:string;interface:string;signal_dbm:number|null;connected:boolean;connected_since?:string;last_seen:string};
+export type WifiClient={id:string;label:string;name:string;mac_hint:string;hidden:boolean;device_id:string;interface:string;signal_dbm:number|null;connected:boolean;connected_since?:string;last_seen:string};
 export type WifiClientEvent={id:number;client_id:string;label:string;mac_hint:string;kind:"connect"|"roam"|"disconnect";from_device_id:string|null;to_device_id:string|null;signal_dbm:number|null;at:string};
