@@ -231,6 +231,8 @@ json 'assert d==[], d' < "$body"
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":false}'
 [[ "$status" == 200 ]] || fail "disabling client tracking returned HTTP $status"
 echo "PASS: clearing client data removes clients and history"
+# Remove the shim so later sections (the forced-rollback wrapper) see the real ubus.
+docker exec "$router" sh -c 'ubus_bin="$(command -v ubus)" && mv "$ubus_bin.real" "$ubus_bin" && rm -f /tmp/fake-clients.json'
 
 # Controlled configuration change: preview, apply with rpcd rollback armed, verify
 # over a fresh connection, confirm.
