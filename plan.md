@@ -142,11 +142,21 @@ RADIUS is built into the Go application rather than run as a separate FreeRADIUS
 
 Exit criteria: a client can join a managed AP with per-user credentials, failures are audited without logging secrets, and the listener is off unless enabled.
 
+### 8. Device location map — active
+
+Show each client device as a dot on a persistent Wi-Fi floor plan. Design: [device-location-map.md](docs/device-location-map.md) (approved 2026-10-23). Placement is room-of-connected-AP only; finer position (multi-AP fingerprinting) is a later goal.
+
+- [ ] PR 1: rebase and reduce #26 to floor plan and AP placement only (DB-persisted, audited, on current main). Close #25 and #26 once it merges.
+- [ ] PR 2: client tracking backend. `wifi_ap_list` and `wifi_clients` as typed operations, opt-in `client_tracking_enabled` (off by default), 5 min default poll with a 60 s minimum, 24 h hard cap on current-state rows, and a migration.
+- [ ] PR 3: roaming history in `wifi_client_roams` (AP changes with RSSI, 30 days by default, minimum 24 h, configurable). Lab test with `get_clients`; a 60 s poll may be needed for roam tests.
+- [ ] PR 4: UI with green/red dots, legend, labels, hide and "Clear client data".
+- [ ] Privacy: keyed-hash identity, masked MACs, reveal audited, never logged. Feature off by default.
+- [ ] Optional later: manual room pin and fingerprinting calibration.
+
 ## Deferred and optional items
 
 - SSH key ciphertext is bound to a fixed domain label (`sshKeyAAD`), not to the device. Binding it to the device is deferred to the encryption-key rotation work in Section 4, because existing ciphertext must be re-encrypted in the same change.
 - PostgreSQL 18 is optional and not scheduled; Compose currently uses `postgres:17-alpine`.
-- Wi-Fi planner (PRs #25 and #26) is parked as drafts. Revisit after alert delivery in Section 6 is validated; it is not on the RADIUS path.
 - RADIUS client coverage: the iPhone test is pending; Android and Windows are untested. MAC authentication remains open in Section 7.
 
 ## Delivery rules

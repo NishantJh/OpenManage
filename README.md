@@ -28,9 +28,10 @@ Last updated: 2026-10-23. This section is a quick summary of what works now and 
 The active work is built-in RADIUS, then the remaining hardening. In order:
 
 1. **Built-in RADIUS:** the iPhone client test, MAC authentication, and pushing AP RADIUS settings through the configuration workflow. Android and Windows clients are untested. See [the RADIUS design](docs/radius-design.md).
-2. **Configuration changes:** further settings on the same engine (for example Wi-Fi SSID or channel), each with a lab rollback test.
-3. **Hardening:** the remaining [safety audit](docs/security-audit.md) items, including HTTPS as the documented default, and a re-run of the restore drill on the production host.
-4. **Later:** alert delivery, SSH key lifecycle and encryption-key rotation (with device-bound key ciphertext), then firmware upgrades with canary rollout and honest recovery limits.
+2. **Device location map:** a persistent Wi-Fi floor plan with client dots showing the room of the connected AP, plus 30-day roaming history. Client tracking is opt-in. See [the design](docs/device-location-map.md).
+3. **Configuration changes:** further settings on the same engine (for example Wi-Fi SSID or channel), each with a lab rollback test.
+4. **Hardening:** the remaining [safety audit](docs/security-audit.md) items, including HTTPS as the documented default, and a re-run of the restore drill on the production host.
+5. **Later:** alert delivery, SSH key lifecycle and encryption-key rotation (with device-bound key ciphertext), then firmware upgrades with canary rollout and honest recovery limits.
 
 ## Design principles
 
