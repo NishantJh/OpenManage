@@ -132,7 +132,7 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 RADIUS is built into the Go application rather than run as a separate FreeRADIUS container. It comes after user management and the first controlled configuration write, because it needs user identities and a safe way to push RADIUS settings to APs. EAP (PEAP/TTLS) is security-sensitive protocol code with no mature Go server library, so treat it as high-risk.
 
 - [x] Design doc: scope, EAP methods, server certificate handling, per-AP shared-secret storage, threat model. ([docs/radius-design.md](docs/radius-design.md); EAP-TTLS/PAP first, `layeh.com/radius` for packet encoding.)
-- [ ] Opt-in UDP 1812 listener in the app with PAP and MAC authentication for a lab, per-AP secrets encrypted at rest, rate limiting, and audit. (PAP, secrets, rate limits and audit done; MAC authentication and the UI remain.)
+- [ ] Opt-in UDP 1812 listener in the app with PAP and MAC authentication for a lab, per-AP secrets encrypted at rest, rate limiting, and audit. (PAP, secrets, rate limits, audit and the dashboard section done; MAC authentication remains.)
 - [ ] PEAP or TTLS with a server certificate, tested against real phone and laptop clients.
 - [ ] Push AP RADIUS configuration through the Section 3 configuration workflow.
 

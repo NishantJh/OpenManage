@@ -14,6 +14,7 @@ import AddDeviceModal from "./AddDeviceModal";
 import ConfigModal from "./ConfigModal";
 import SnapshotScheduleCard from "./SnapshotScheduleCard";
 import UsersSection from "./UsersSection";
+import WifiSection from "./WifiSection";
 import PasswordModal from "./PasswordModal";
 
 export default function Dashboard({username,role,onLogout}:{username:string;role:string;onLogout:()=>void}){
@@ -47,6 +48,7 @@ export default function Dashboard({username,role,onLogout}:{username:string;role
  <MonitoringHistory monitorHistory={monitorHistory} onRefresh={()=>void loadMonitoring()}/>
  <DeviceTable devices={devices} filtered={filtered} loading={loading} query={query} role={role} healthBusy={healthBusy} onHealthCheck={d=>void runHealthCheck(d)} onEnroll={openEnrollment} onRemove={d=>void remove(d)} onAdd={()=>setShowAdd(true)} onConfig={d=>{setNotice("");setConfigDevice(d)}}/>
  {role==="admin"&&<UsersSection currentUsername={username} onChanged={()=>void loadAudit()}/>}
+ {role==="admin"&&<WifiSection devices={devices} onChanged={()=>void loadAudit()}/>}
  <AuditLog audit={audit} auditLoading={auditLoading} auditError={auditError} onRefresh={()=>void loadAudit()}/>
  <div className="bottom-cards"><div className="info-card"><ShieldCheck size={20}/><div><b>Security first</b><p>SSH enrollment pins the router host key and encrypts stored credentials. Configuration changes are previewed, applied with automatic rollback, and audited.</p><span>SECURITY ROADMAP</span></div></div><div className="info-card blue"><Activity size={20}/><div><b>Persistent monitoring</b><p>{monitoring?"Server-side checks are enabled and continue independently of this browser.":"Monitoring is disabled. Enable it to begin scheduled, read-only SSH health checks."} Each cycle is bounded to five enrolled devices; check history is stored in PostgreSQL.</p><span>{monitoring?"SERVER MONITORING ON":"OPT-IN · READ-ONLY"}</span></div></div><SnapshotScheduleCard settings={savedSettings} isAdmin={role==="admin"} onSaved={s=>{setSavedSettings(s);void loadAudit()}}/></div><footer>OpenManage · Early development <span>Lightweight by design · <a href="https://github.com/NishantJh/OpenManage">GitHub repository ↗</a></span></footer></section></main>
  {healthDevice&&<HealthModal healthDevice={healthDevice} healthResult={healthResult} healthBusy={healthBusy} onClose={()=>{setHealthDevice(null);setHealthResult(null)}} onRunAgain={()=>void runHealthCheck(healthDevice)}/>}
