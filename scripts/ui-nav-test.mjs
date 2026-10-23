@@ -32,14 +32,14 @@ try {
   await page.getByLabel(/username/i).fill(username);
   await page.getByLabel(/password/i).fill(password);
   await page.getByRole("button", { name: /sign in|log in/i }).click();
-  await page.locator("nav a", { hasText: "Overview" }).waitFor();
+  await page.locator("aside nav a", { hasText: "Overview" }).waitFor();
 
   const headings = async () => page.locator("h2").allInnerTexts();
   const check = async p => {
     assert.equal(new URL(page.url()).pathname, p.path, `${p.label}: URL`);
     await page.locator("h1", { hasText: p.h1 }).waitFor();
-    assert.equal((await page.locator("nav a.active").allInnerTexts()).length, 1, `${p.label}: one active item`);
-    assert.match(await page.locator("nav a.active").innerText(), new RegExp(p.label), `${p.label}: active item`);
+    assert.equal((await page.locator("aside nav a.active").allInnerTexts()).length, 1, `${p.label}: one active item`);
+    assert.match(await page.locator("aside nav a.active").innerText(), new RegExp(p.label), `${p.label}: active item`);
     const hs = await headings();
     for (const h of p.has) assert.ok(hs.includes(h), `${p.label}: missing "${h}"`);
     for (const h of p.absent) assert.ok(!hs.includes(h), `${p.label}: "${h}" belongs to another page`);
@@ -47,14 +47,23 @@ try {
   };
 
   for (const p of pages) {
-    await page.locator("nav a", { hasText: p.label }).click();
+    await page.locator("aside nav a", { hasText: p.label }).click();
     await check(p);
   }
   await page.goBack();
   await check(pages[4]);
   await page.goto(baseUrl + "/monitoring"); // deep link / reload must hit the SPA fallback
-  await page.locator("nav a.active", { hasText: "Monitoring" }).waitFor();
+  await page.locator("aside nav a.active", { hasText: "Monitoring" }).waitFor();
   await check(pages[3]);
+  // Phone width hides the sidebar; the page switcher must still reach every page.
+  await page.setViewportSize({ width: 390, height: 800 });
+  assert.ok(!(await page.locator("aside.sidebar").isVisible()), "sidebar hidden on mobile");
+  for (const p of pages) {
+    await page.locator(".mobile-nav a", { hasText: p.label }).click();
+    await page.locator("h1", { hasText: p.h1 }).waitFor();
+    assert.equal(new URL(page.url()).pathname, p.path, `mobile ${p.label}: URL`);
+  }
+  console.log("PASS: mobile page switcher reaches every page");
   assert.deepEqual(errors, [], "uncaught page errors");
   console.log("PASS: back button, deep link, no page errors");
 } finally {
