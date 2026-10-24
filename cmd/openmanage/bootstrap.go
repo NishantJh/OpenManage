@@ -22,6 +22,10 @@ import (
 
 const bootstrapTimeout = 15 * time.Second
 
+// bootstrapLimiter bounds root-password guesses per target address: five wrong
+// passwords block that address for ten minutes.
+var bootstrapLimiter = newLoginRateLimiter(5, 10*time.Minute, 10*time.Minute, 256)
+
 const (
 	bootstrapCodeNoPassword   = "no_root_password"
 	bootstrapCodePasswordBad  = "ssh_password_rejected"
@@ -185,6 +189,20 @@ func (a *app) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if blocked, wait := bootstrapLimiter.isBlocked(req.Address, time.Now()); blocked {
+		writeLoginRateLimited(w, wait)
+		return
+	}
+	var existing int
+	if err := a.db.QueryRow(r.Context(), "SELECT count(*) FROM devices WHERE address=$1", req.Address).Scan(&existing); err != nil {
+		writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "Could not check existing devices")
+		return
+	}
+	if existing > 0 {
+		writeErrorCode(w, http.StatusConflict, "device_exists", "A device with this address already exists. Remove it first, or use Enroll on its row.")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), bootstrapTimeout)
 	defer cancel()
 	hostPort := net.JoinHostPort(req.Address, "22")
@@ -197,9 +215,17 @@ func (a *app) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 	defer zeroBytes(privatePEM)
 
 	if status, code, message := installManagementKey(ctx, hostPort, req.Username, password, req.ExpectedFingerprint, authorizedLine); code != "" {
+		if code == bootstrapCodePasswordBad {
+			bootstrapLimiter.recordFailure(req.Address, time.Now())
+		}
 		writeErrorCode(w, status, code, message)
 		return
 	}
+	bootstrapLimiter.clear(req.Address)
+	// The key is on the device now, so finish verifying and saving even if the
+	// browser goes away, rather than leaving an untracked key behind.
+	ctx, cancel = context.WithTimeout(context.WithoutCancel(r.Context()), bootstrapTimeout)
+	defer cancel()
 	zeroBytes(password)
 
 	signer, err := ssh.ParsePrivateKey(privatePEM)
@@ -218,7 +244,7 @@ func (a *app) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "Could not protect SSH credential")
 		return
 	}
-	d, err := a.storeBootstrap(r.Context(), user.ID, req, ciphertext)
+	d, err := a.storeBootstrap(ctx, user.ID, req, ciphertext)
 	if err != nil {
 		writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "The key was installed on the device but could not be saved; remove the openmanage line from /etc/dropbear/authorized_keys and try again")
 		return
