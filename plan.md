@@ -168,6 +168,8 @@ Put chosen devices on their own VLAN with its own firewall zone, selected by SSI
 
 Trusted hosts such as Home Assistant still need to reach IoT devices. Policy: main to IoT is allowed. IoT to main is allowed only for established traffic, plus narrow pinholes: IoT devices may open connections to the HA address only (for example MQTT 1883, ESPHome API, and webhooks). mDNS does not cross VLANs by default, so it needs a reflector (avahi or umdns), or HA with an interface on the IoT VLAN.
 
+Safety defaults: the IoT VLAN is opt-in and off by default. Cast and print devices stay on the main network unless the user moves them. A scoped reflector (avahi or umdns, limited to the chosen service types and the IoT and main interfaces) is offered only to users who move such devices, with a pre-flight warning listing what may break, such as phone casting and printer discovery. A second HA interface on the IoT VLAN helps HA only; it does not let phones on the main network see IoT devices.
+
 ## Deferred and optional items
 
 - SSH key ciphertext is bound to a fixed domain label (`sshKeyAAD`), not to the device. Binding it to the device is deferred to the encryption-key rotation work in Section 4, because existing ciphertext must be re-encrypted in the same change.
