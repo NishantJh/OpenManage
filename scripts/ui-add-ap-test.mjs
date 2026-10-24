@@ -1,12 +1,14 @@
 // Browser check for the "Add an access point" wizard against a running OpenManage.
-// Usage: node scripts/ui-add-ap-test.mjs <base-url> <username> <password> <device-ip> <device-root-password>
+// Usage: OPENMANAGE_TEST_ROOT_PASSWORD=... node scripts/ui-add-ap-test.mjs <base-url> <username> <password> <device-ip>
+// The router root password comes from the environment so it never appears in the process list.
 // Needs the `playwright` package (NODE_PATH or cwd) and a Chromium (OPENMANAGE_UI_CHROMIUM).
 import { createRequire } from "node:module";
 import assert from "node:assert/strict";
 
-const [baseUrl, username, password, deviceIp, rootPassword] = process.argv.slice(2);
+const [baseUrl, username, password, deviceIp] = process.argv.slice(2);
+const rootPassword = process.env.OPENMANAGE_TEST_ROOT_PASSWORD;
 if (!rootPassword) {
-  console.error("usage: ui-add-ap-test.mjs <base-url> <username> <password> <device-ip> <device-root-password>");
+  console.error("usage: OPENMANAGE_TEST_ROOT_PASSWORD=... ui-add-ap-test.mjs <base-url> <username> <password> <device-ip>");
   process.exit(2);
 }
 const { chromium } = createRequire(process.cwd() + "/")("playwright");
@@ -34,6 +36,9 @@ try {
   await page.getByText(/^SHA256:/).waitFor();
   console.log("PASS: wizard shows the router host-key fingerprint to confirm");
 
+  const add = page.getByRole("button", { name: /add and connect/i });
+  assert.ok(await add.isDisabled(), "add enabled before the trust confirmation");
+  await page.getByLabel(/I trust this network/i).check();
   await page.locator('input[type="password"]').fill("definitely-wrong-password");
   await page.getByRole("button", { name: /add and connect/i }).click();
   await page.getByText("rejected the username or password").waitFor();
