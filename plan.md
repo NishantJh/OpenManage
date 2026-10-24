@@ -10,7 +10,7 @@ Production target: Docker Compose inside a Proxmox LXC. WSL2 is the test environ
 
 ## Priority (agreed 2026-10-22, updated 2026-10-23)
 
-Hardening (Sections 0 and 1) and the operations engine, read-only configuration, and first controlled write (Sections 2 and 3) are largely done. Built-in RADIUS (Section 7) is the active product work, with user management and the hostname write already in place. Remaining safety-audit items, alerts, and the deferred items below come after it. PRs that do not map to a roadmap item get a plan entry first, or are parked as drafts or closed.
+Hardening (Sections 0 and 1) and the operations engine, read-only configuration, and first controlled write (Sections 2 and 3) are largely done. Built-in RADIUS (Section 7) is an optional advanced feature that is already built; no further RADIUS work is planned for now (decided 2026-10-24). The next product work is pushing normal Wi-Fi password settings (Section 9), on top of the hostname write and user management already in place. The device location map (Section 8) continues in parallel. Remaining safety-audit items, alerts, and the deferred items below come after these. PRs that do not map to a roadmap item get a plan entry first, or are parked as drafts or closed.
 
 ## Current baseline
 
@@ -133,16 +133,16 @@ Exit criteria: supported upgrade paths are validated, staged, observable, and ha
 
 ### 7. Built-in RADIUS for WPA-Enterprise
 
-RADIUS is built into the Go application rather than run as a separate FreeRADIUS container. It comes after user management and the first controlled configuration write, because it needs user identities and a safe way to push RADIUS settings to APs. EAP (PEAP/TTLS) is security-sensitive protocol code with no mature Go server library, so treat it as high-risk.
+Status: optional advanced feature, built; no further RADIUS work for now. RADIUS is built into the Go application rather than run as a separate FreeRADIUS container. It comes after user management and the first controlled configuration write, because it needs user identities and a safe way to push RADIUS settings to APs. EAP (PEAP/TTLS) is security-sensitive protocol code with no mature Go server library, so treat it as high-risk.
 
 - [x] Design doc: scope, EAP methods, server certificate handling, per-AP shared-secret storage, threat model. ([docs/radius-design.md](docs/radius-design.md); EAP-TTLS/PAP first, `layeh.com/radius` for packet encoding.)
 - [ ] Opt-in UDP 1812 listener in the app with PAP and MAC authentication for a lab, per-AP secrets encrypted at rest, rate limiting, and audit. (PAP, secrets, rate limits, audit and the dashboard section done; MAC authentication remains.)
 - [ ] EAP-TTLS with a server certificate, tested against real phone and laptop clients. (EAP-TTLS/PAP done and tested with `eapol_test`; iPhone test pending; Android and Windows untested. PEAP-MSCHAPv2 only if a needed client cannot use TTLS.)
-- [ ] Push AP RADIUS configuration through the Section 3 configuration workflow.
+- [ ] Push AP RADIUS configuration through the Section 3 configuration workflow. Parked with the rest of RADIUS; Section 9 comes first.
 
 Exit criteria: a client can join a managed AP with per-user credentials, failures are audited without logging secrets, and the listener is off unless enabled.
 
-### 8. Device location map — active
+### 8. Device location map — in progress
 
 Show each client device as a dot on a persistent Wi-Fi floor plan. Design: [device-location-map.md](docs/device-location-map.md) (approved 2026-10-23). Placement is room-of-connected-AP only; finer position (multi-AP fingerprinting) is a later goal.
 
@@ -152,6 +152,19 @@ Show each client device as a dot on a persistent Wi-Fi floor plan. Design: [devi
 - [x] PR 3 (UI): green/red dots on the floor plan (room of the connected AP), legend, labels, hide, "Clear client data", client tracking toggle with 1/5/10 min poll, and a roaming history list. Verified against mocked API in a browser; not yet against a real AP.
 - [ ] Privacy: keyed-hash identity, masked MACs, reveal audited, never logged. Feature off by default.
 - [ ] Optional later: manual room pin and fingerprinting calibration.
+
+### 9. Wi-Fi password settings — next
+
+Push normal WPA2/WPA3 password Wi-Fi settings (SSID, passphrase, band, radio on/off) to APs through the Section 3 controlled-change workflow. Use the same rules as the hostname write: preview and diff, `uci apply` with a 60 s rollback, read-back over a fresh connection, then confirm. Passphrases are secrets: encrypted at rest, shown once, and never logged or left unredacted in snapshots.
+
+- [ ] Preview and apply SSID, passphrase, and band on one AP, with rollback, lab-tested like the hostname write.
+- [ ] Same flow in the configuration dialog, with per-device change history.
+
+Exit criteria: a changed SSID or passphrase applies safely on one AP, rolls back when the read-back fails, and never logs the passphrase.
+
+### 10. Optional later: IoT/guest VLAN separation
+
+Put chosen devices on their own VLAN with its own firewall zone, selected by SSID or by a per-device passphrase. On the AP, hostapd can map a passphrase to a VLAN ID (`wpa_psk_file` with `vlanid`), so RADIUS is not needed. RADIUS dynamic VLAN is the alternative. Dependencies: the VLANs and firewall zones live on the main router, which is not enrolled yet, and the path from AP to router must carry tagged VLANs. Firewall rules stay on the router, so separation only works once that path is set up.
 
 ## Deferred and optional items
 
