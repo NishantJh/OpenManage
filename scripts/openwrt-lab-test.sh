@@ -363,6 +363,41 @@ api POST "/api/devices/$missing_id/enroll" "$(enroll_body "$work/mgmt_key" "$hos
 expect_code 502 device_unreachable "enrollment reports an unreachable device"
 api DELETE "/api/devices/$missing_id"
 
+# Password bootstrap: the wizard path. The root password is used once to install a
+# generated key and must never be stored or logged.
+boot_body() { # password fingerprint
+  python3 -c 'import json,sys; print(json.dumps({"name":"lab-boot","address":sys.argv[1],"password":sys.argv[2],"expected_fingerprint":sys.argv[3]}))' "$router_ip" "$1" "$2"
+}
+api POST /api/device-bootstrap/probe "{\"address\":\"$router_ip\"}"
+[[ "$status" == 200 ]] || fail "bootstrap probe returned HTTP $status"
+json 'assert d["host_key_fingerprint"]==sys.argv[1], d' "$host_fp" < "$body"
+echo "PASS: bootstrap probe reports the router host-key fingerprint"
+api POST /api/device-bootstrap "$(boot_body wrong-password-xyz "$host_fp")"
+expect_code 422 ssh_password_rejected "bootstrap rejects a wrong root password"
+api POST /api/device-bootstrap "$(boot_body "$root_password" "SHA256:$(printf 'A%.0s' $(seq 43))")"
+expect_code 422 host_key_mismatch "bootstrap rejects a host key that differs from the confirmed fingerprint"
+docker exec "$router" sh -c "passwd -d root >/dev/null 2>&1"
+api POST /api/device-bootstrap "$(boot_body anything "$host_fp")"
+expect_code 422 no_root_password "bootstrap refuses a router with a blank root password"
+docker exec "$router" sh -c "printf '%s\n%s\n' '$root_password' '$root_password' | passwd root >/dev/null 2>&1"
+keys_before="$(docker exec "$router" sh -c 'wc -l < /etc/dropbear/authorized_keys')"
+api POST /api/device-bootstrap "$(boot_body "$root_password" "$host_fp")"
+[[ "$status" == 201 ]] || { cat "$body" >&2; fail "bootstrap returned HTTP $status"; }
+boot_id="$(json 'print(d["id"])' < "$body")"
+! grep -q -e "PRIVATE KEY" -e "$root_password" "$body" || fail "bootstrap response echoed a secret"
+keys_after="$(docker exec "$router" sh -c 'wc -l < /etc/dropbear/authorized_keys')"
+[[ "$keys_after" == "$((keys_before + 1))" ]] || fail "authorized_keys has $keys_after lines (expected $((keys_before + 1)))"
+[[ "$(docker exec "$router" stat -c '%a' /etc/dropbear/authorized_keys)" == 600 ]] || fail "authorized_keys is not mode 600"
+api POST "/api/devices/$boot_id/health-check"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "bootstrapped device health check returned HTTP $status"; }
+json 'assert d["status"]=="online", d' < "$body"
+echo "PASS: bootstrap installs a generated key and the device is immediately manageable"
+pw_leaks="$(compose exec -T db pg_dump -U openmanage openmanage | grep -c -F -e "$root_password" || true)"
+[[ "$pw_leaks" == 0 ]] || fail "the root password reached the database"
+! compose logs --no-color app | grep -q -F "$root_password" || fail "the root password reached the app log"
+echo "PASS: the root password is not in the database or the app log"
+api DELETE "/api/devices/$boot_id"
+
 # User management: a second user, role changes and disabling revoke sessions, and the
 # last active administrator cannot be removed.
 login_as() { # username password jar -> sets $status, $csrf_other
