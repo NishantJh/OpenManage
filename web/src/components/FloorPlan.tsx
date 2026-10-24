@@ -54,7 +54,7 @@ export function dotPosition(rooms:FloorRoom[],ap:{x:number;y:number},index:numbe
 export default function FloorPlan({devices,role,onChanged}:{devices:Device[];role:Role;onChanged:()=>void}){
  const canEdit=role!=="readonly",isAdmin=role==="admin";
  const [plan,setPlan]=useState<Plan>({rooms:[],placements:[]}),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState<{text:string;tone:"notice"|"error"}|null>(null);
- const [drag,setDrag]=useState<{kind:"room"|"ap"|"size";key:string;dx:number;dy:number}|null>(null),[pick,setPick]=useState("");
+ const [drag,setDrag]=useState<{kind:"room"|"ap"|"size";key:string;dx:number;dy:number;extent:{x:number;y:number}}|null>(null),[pick,setPick]=useState("");
  const [settings,setSettings]=useState<MonitoringSettings|null>(null),[clients,setClients]=useState<WifiClient[]>([]),[events,setEvents]=useState<WifiClientEvent[]>([]),[trackBusy,setTrackBusy]=useState(false);
  const svg=useRef<SVGSVGElement>(null),editor=useRef<HTMLDetailsElement>(null);
  const tracking=Boolean(settings?.client_tracking_enabled);
@@ -69,10 +69,12 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  async function clearClients(){if(!window.confirm("Delete every tracked device, its last location and its roaming history?"))return;try{const r=await apiFetch("/api/wifi-clients","DELETE");if(!r.ok)throw Error();setClients([]);setEvents([]);setMessage({tone:"notice",text:"Device data cleared."});onChanged()}catch{setMessage({tone:"error",text:"Could not clear device data."})}}
 
  const nameOf=(id:string)=>devices.find(d=>d.id===id)?.name??"Unknown access point";
- const extentX=Math.max(6,...plan.rooms.map(r=>r.x+r.w+1)),extentY=Math.max(4,...plan.rooms.map(r=>r.y+r.h+1));
+ const fit={x:Math.max(6,...plan.rooms.map(r=>r.x+r.w+1),...plan.placements.map(a=>a.x+1)),y:Math.max(4,...plan.rooms.map(r=>r.y+r.h+1),...plan.placements.map(a=>a.y+1))};
+ // The canvas is held still while dragging so the pointer-to-plan mapping does not shift under the cursor.
+ const {x:extentX,y:extentY}=drag?.extent??fit;
  const change=(next:Plan)=>{setPlan(next);setDirty(true)};
  function toPlan(e:{clientX:number;clientY:number}){const r=svg.current!.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*(extentX+PAD)-PAD,y:(e.clientY-r.top)/r.height*(extentY+PAD)-PAD}}
- function start(e:React.PointerEvent,kind:"room"|"ap"|"size",key:string,ox:number,oy:number){if(!canEdit)return;const p=toPlan(e);(e.currentTarget as Element).setPointerCapture(e.pointerId);setDrag({kind,key,dx:p.x-ox,dy:p.y-oy})}
+ function start(e:React.PointerEvent,kind:"room"|"ap"|"size",key:string,ox:number,oy:number){if(!canEdit)return;const p=toPlan(e);(e.currentTarget as Element).setPointerCapture(e.pointerId);setDrag({kind,key,dx:p.x-ox,dy:p.y-oy,extent:fit})}
  function move(e:React.PointerEvent){if(!drag)return;const p=toPlan(e);
   if(drag.kind==="size")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,w:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.x-r.x))),h:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.y-r.y)))}:r)});
   else if(drag.kind==="room")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,x:clamp(snap(p.x-drag.dx),MAX-r.w),y:clamp(snap(p.y-drag.dy),MAX-r.h)}:r)});
