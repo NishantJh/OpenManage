@@ -113,7 +113,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
      <rect x={-PAD} y={-PAD} width={extentX+PAD} height={extentY+PAD} fill="url(#fp-grid)"/>
      {plan.rooms.map(r=><g key={r.id}>
       <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={0.18} className="fp-room" onPointerDown={e=>start(e,"room",r.id,r.x,r.y)} style={{cursor:canEdit?"move":"default"}}/>
-      <text x={r.x+0.35} y={r.y+0.75} className="fp-room-name" style={{cursor:canEdit?"text":"default"}} onClick={()=>canEdit&&renameRoom(r.id)}>{canEdit&&<title>Click to rename</title>}{r.name.toUpperCase()}</text>
+      <text x={r.x+0.35} y={r.y+0.75} className={canEdit?"fp-room-name edit":"fp-room-name"} onClick={()=>canEdit&&renameRoom(r.id)}>{canEdit&&<title>Click to rename</title>}{r.name.toUpperCase()}</text>
       <text x={r.x+0.35} y={r.y+r.h-0.3} className="fp-room-size">{toFt(r.w)} × {toFt(r.h)} ft</text>
       {canEdit&&<circle cx={r.x+r.w} cy={r.y+r.h} r={0.3} className="fp-handle" onPointerDown={e=>start(e,"size",r.id,0,0)}><title>Drag to resize</title></circle>}</g>)}
      {plan.placements.map(a=><g key={a.device_id} onPointerDown={e=>start(e,"ap",a.device_id,a.x,a.y)} style={{cursor:canEdit?"grab":"default"}}>

@@ -69,6 +69,7 @@ tr.selected td{background:#1a1e2a}
 .fp-svg{display:block;width:100%;height:auto;touch-action:none;background:radial-gradient(ellipse at 30% 0%,#171b27 0%,#0f121a 70%)}
 .fp-room{fill:rgba(141,120,245,.07);stroke:rgba(141,120,245,.5);stroke-width:.05}
 .fp-room-name{fill:#b9bfce;font-size:.36px;font-weight:600;letter-spacing:.06em;pointer-events:none}
+.fp-room-name.edit{pointer-events:auto;cursor:text}
 .fp-room-size{fill:#6b7284;font-size:.3px;pointer-events:none}
 .fp-ap{fill:#8d78f5;stroke:#0c0f15;stroke-width:.08}
 .fp-ap-name{fill:#e6e8f0;font-size:.4px;font-weight:600;paint-order:stroke;stroke:#0f121a;stroke-width:.12px}
