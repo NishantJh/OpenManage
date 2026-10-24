@@ -55,6 +55,24 @@ docker compose logs -f app   # wait for the listening line, then Ctrl+C
 
 Sign in at `http://192.168.1.10:8080` as `admin` with the password from `.env`. Both services use `restart: unless-stopped`, so they come back when the container boots.
 
+### Updating
+
+Every merge to `main` publishes a prebuilt image to GitHub Container Registry, so the container does not need to build anything. One-time switch: add this line to `.env`:
+
+```
+OPENMANAGE_IMAGE=ghcr.io/nishantjh/openmanage:latest
+```
+
+Then, for each update:
+
+```sh
+cd /opt/openmanage
+docker compose pull app
+docker compose up -d
+```
+
+Database changes apply on start. To go back to a known version, set `OPENMANAGE_IMAGE` to `ghcr.io/nishantjh/openmanage:sha-<commit>` and run `docker compose up -d`. If `pull` is denied, the package is private: open the repository's **Packages** on GitHub, choose `openmanage`, and set its visibility to public (the image holds no secrets; they come from `.env`). Building on the host with `docker compose up -d --build` still works when `OPENMANAGE_IMAGE` is unset.
+
 ## 3. Prepare each OpenWrt device
 
 OpenManage signs in to each device over SSH with its own key and never sets the key up on the device itself. For each router or AP:
