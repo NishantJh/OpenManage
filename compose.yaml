@@ -1,7 +1,9 @@
 services:
   app:
     build: .
-    image: openmanage:local
+    # Set OPENMANAGE_IMAGE=ghcr.io/nishantjh/openmanage:latest in .env to update with
+    # `docker compose pull && docker compose up -d` instead of building on the host.
+    image: ${OPENMANAGE_IMAGE:-openmanage:local}
     restart: unless-stopped
     environment:
       LISTEN_ADDR: ":8080"
