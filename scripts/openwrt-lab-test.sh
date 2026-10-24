@@ -365,6 +365,11 @@ api DELETE "/api/devices/$missing_id"
 
 # Password bootstrap: the wizard path. The root password is used once to install a
 # generated key and must never be stored or logged.
+# Bootstrap refuses an address that is already in the inventory, so move the enrolled
+# lab device aside until the bootstrap checks are done.
+api POST /api/device-bootstrap "$(python3 -c 'import json,sys; print(json.dumps({"address":sys.argv[1],"password":"x","expected_fingerprint":"SHA256:x"}))' "$router_ip")"
+expect_code 409 device_exists "bootstrap refuses an address that is already in the inventory"
+compose exec -T db psql -q -U openmanage -d openmanage -c "UPDATE devices SET address='10.255.255.1' WHERE id='$device_id'" >/dev/null
 boot_body() { # password fingerprint
   python3 -c 'import json,sys; print(json.dumps({"name":"lab-boot","address":sys.argv[1],"password":sys.argv[2],"expected_fingerprint":sys.argv[3]}))' "$router_ip" "$1" "$2"
 }
@@ -398,6 +403,7 @@ pw_leaks="$(compose exec -T db pg_dump -U openmanage openmanage | grep -c -F -e 
 ! compose logs --no-color app | grep -q -F "$root_password" || fail "the root password reached the app log"
 echo "PASS: the root password is not in the database or the app log"
 api DELETE "/api/devices/$boot_id"
+compose exec -T db psql -q -U openmanage -d openmanage -c "UPDATE devices SET address='$router_ip' WHERE id='$device_id'" >/dev/null
 
 # Browser check of the add-AP wizard against this stack and the real OpenWrt router.
 if [[ "${OPENMANAGE_LAB_BROWSER:-0}" == 1 ]]; then
