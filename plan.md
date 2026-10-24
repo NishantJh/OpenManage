@@ -166,7 +166,7 @@ Exit criteria: a changed SSID or passphrase applies safely on one AP, rolls back
 
 Put chosen devices on their own VLAN with its own firewall zone, selected by SSID or by a per-device passphrase. On the AP, hostapd can map a passphrase to a VLAN ID (`wpa_psk_file` with `vlanid`), so RADIUS is not needed. RADIUS dynamic VLAN is the alternative. Dependencies: the VLANs and firewall zones live on the main router, which is not enrolled yet, and the path from AP to router must carry tagged VLANs. Firewall rules stay on the router, so separation only works once that path is set up.
 
-Trusted hosts such as Home Assistant still need to reach IoT devices. Policy: main to IoT is allowed; IoT to main is allowed only for established traffic, plus narrow pinholes to the HA address (for example MQTT 1883 and ESPHome). mDNS does not cross VLANs by default, so it needs a reflector (avahi or umdns), or HA with an interface on the IoT VLAN.
+Trusted hosts such as Home Assistant still need to reach IoT devices. Policy: main to IoT is allowed. IoT to main is allowed only for established traffic, plus narrow pinholes: IoT devices may open connections to the HA address only (for example MQTT 1883, ESPHome API, and webhooks). mDNS does not cross VLANs by default, so it needs a reflector (avahi or umdns), or HA with an interface on the IoT VLAN.
 
 ## Deferred and optional items
 
