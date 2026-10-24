@@ -31,7 +31,7 @@ const (
 // installKeyCommand is fixed. The public key arrives on stdin (never interpolated
 // into the command), is appended to dropbear's authorized_keys once, and the file
 // is kept private to root.
-const installKeyCommand = `umask 077; f=/etc/dropbear/authorized_keys; mkdir -p /etc/dropbear && touch "$f" && chmod 600 "$f" && IFS= read -r k && [ -n "$k" ] && { grep -qxF "$k" "$f" || printf '%s\n' "$k" >> "$f"; }`
+const installKeyCommand = `umask 077; f=/etc/dropbear/authorized_keys; mkdir -p /etc/dropbear && touch "$f" && chmod 600 "$f" && IFS= read -r k && [ -n "$k" ] && { grep -qxF "$k" "$f" || { [ -z "$(tail -c1 "$f")" ] || echo >> "$f"; printf '%s\n' "$k" >> "$f"; }; }`
 
 type bootstrapProbeRequest struct {
 	Address string `json:"address"`
@@ -164,9 +164,11 @@ func (a *app) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 	req.Address = strings.TrimSpace(req.Address)
 	req.Username = strings.TrimSpace(req.Username)
 	req.ExpectedFingerprint = strings.TrimSpace(req.ExpectedFingerprint)
-	if req.Username == "" {
-		req.Username = "root"
+	if req.Username != "" && req.Username != "root" {
+		writeErrorCode(w, http.StatusBadRequest, enrollCodeInvalidRequest, "Only the root account is supported; its key file is /etc/dropbear/authorized_keys")
+		return
 	}
+	req.Username = "root"
 	if req.Role == "" {
 		req.Role = "access_point"
 	}
@@ -269,6 +271,8 @@ func installManagementKey(ctx context.Context, hostPort, username string, passwo
 		}
 		client := ssh.NewClient(sshConn, channels, requests)
 		defer client.Close()
+		stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+		defer stop()
 		if !passwordAsked {
 			return http.StatusUnprocessableEntity, bootstrapCodeNoPassword, "The device let OpenManage in without a password; set a root password first"
 		}
