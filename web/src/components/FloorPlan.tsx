@@ -3,20 +3,23 @@ import { Eye, EyeOff, Plus, Radio, Save, Trash2, Wifi } from "lucide-react";
 import { apiFetch, apiJSON } from "../api";
 import type { Device, FloorPlan as Plan, FloorRoom, MonitoringSettings, Role, WifiClient, WifiClientEvent } from "../types";
 
-const STEP=0.5,MAX=500,MIN_SIZE=0.5,MAX_SIZE=100,REFRESH_MS=60000;
+// Plans are stored and drawn in metres; people see and type feet, snapped to whole feet.
+const FT=0.3048,MAX=500,MIN_FT=2,MAX_FT=300,REFRESH_MS=60000;
+const toFt=(m:number)=>Math.round(m/FT*10)/10;
+const MIN_SIZE=MIN_FT*FT,MAX_SIZE=MAX_FT*FT;
 const pollChoices:[number,string][]=[[60,"1 min"],[300,"5 min"],[600,"10 min"]];
 const ago=(iso:string)=>{const m=Math.max(0,Math.round((Date.now()-new Date(iso).getTime())/60000));return m<1?"just now":m<60?m+" min ago":Math.round(m/60)+" h ago"};
-const snap=(v:number)=>Math.round(v/STEP)*STEP;
+const snap=(v:number)=>Math.round(v/FT)*FT;
 const clamp=(v:number,hi:number)=>Math.min(Math.max(v,0),hi);
 const inRoom=(r:FloorRoom,x:number,y:number)=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h;
 const bars=(dbm:number|null)=>dbm===null?0:dbm>-55?4:dbm>-65?3:dbm>-75?2:1;
 
-// A metres field that can be typed into freely (empty or half-typed values are kept as
-// text) and only changes the plan once the text is a valid size.
+// A feet field (the plan itself is in metres) that can be typed into freely (empty or
+// half-typed values are kept as text) and only changes the plan once the text is a valid size.
 function SizeInput({label,value,onCommit}:{label:string;value:number;onCommit:(v:number)=>void}){
- const [text,setText]=useState(String(value)),[focused,setFocused]=useState(false);
- useEffect(()=>{if(!focused)setText(String(value))},[value,focused]);
- return <input aria-label={label} type="number" inputMode="decimal" min={MIN_SIZE} max={MAX_SIZE} step={STEP} value={text} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e=>{setText(e.target.value);const v=Number(e.target.value);if(e.target.value!==""&&v>=MIN_SIZE&&v<=MAX_SIZE)onCommit(v)}}/>;
+ const [text,setText]=useState(String(toFt(value))),[focused,setFocused]=useState(false);
+ useEffect(()=>{if(!focused)setText(String(toFt(value)))},[value,focused]);
+ return <input aria-label={label} type="number" inputMode="decimal" min={MIN_FT} max={MAX_FT} step={1} value={text} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e=>{setText(e.target.value);const v=Number(e.target.value);if(e.target.value!==""&&v>=MIN_FT&&v<=MAX_FT)onCommit(v*FT)}}/>;
 }
 
 const WALL_SNAP=0.8,PAD=1.4; // PAD leaves room around the plan for APs on outer walls and their labels
@@ -46,14 +49,14 @@ export function dotPosition(rooms:FloorRoom[],ap:{x:number;y:number},index:numbe
  return room?{x:within(x,room.x,room.w),y:within(y,room.y,room.h),room:room.name}:{x,y,room:""};
 }
 
-// Rooms and AP positions in metres, with the devices connected to each AP drawn on top.
+// Rooms and AP positions (kept in metres, shown in feet), with the devices connected to each AP drawn on top.
 // Drawing only: nothing here touches a router.
 export default function FloorPlan({devices,role,onChanged}:{devices:Device[];role:Role;onChanged:()=>void}){
  const canEdit=role!=="readonly",isAdmin=role==="admin";
  const [plan,setPlan]=useState<Plan>({rooms:[],placements:[]}),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState<{text:string;tone:"notice"|"error"}|null>(null);
  const [drag,setDrag]=useState<{kind:"room"|"ap"|"size";key:string;dx:number;dy:number}|null>(null),[pick,setPick]=useState("");
  const [settings,setSettings]=useState<MonitoringSettings|null>(null),[clients,setClients]=useState<WifiClient[]>([]),[events,setEvents]=useState<WifiClientEvent[]>([]),[trackBusy,setTrackBusy]=useState(false);
- const svg=useRef<SVGSVGElement>(null);
+ const svg=useRef<SVGSVGElement>(null),editor=useRef<HTMLDetailsElement>(null);
  const tracking=Boolean(settings?.client_tracking_enabled);
 
  async function loadClients(){try{const [c,e]=await Promise.all([apiFetch("/api/wifi-clients"),apiFetch("/api/wifi-client-events?limit=20")]);if(c.ok)setClients(await c.json());if(e.ok)setEvents(await e.json())}catch{/* the map still works without client data */}}
@@ -66,7 +69,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  async function clearClients(){if(!window.confirm("Delete every tracked device, its last location and its roaming history?"))return;try{const r=await apiFetch("/api/wifi-clients","DELETE");if(!r.ok)throw Error();setClients([]);setEvents([]);setMessage({tone:"notice",text:"Device data cleared."});onChanged()}catch{setMessage({tone:"error",text:"Could not clear device data."})}}
 
  const nameOf=(id:string)=>devices.find(d=>d.id===id)?.name??"Unknown access point";
- const extentX=Math.max(12,...plan.rooms.map(r=>r.x+r.w+1)),extentY=Math.max(7,...plan.rooms.map(r=>r.y+r.h+1));
+ const extentX=Math.max(6,...plan.rooms.map(r=>r.x+r.w+1)),extentY=Math.max(4,...plan.rooms.map(r=>r.y+r.h+1));
  const change=(next:Plan)=>{setPlan(next);setDirty(true)};
  function toPlan(e:{clientX:number;clientY:number}){const r=svg.current!.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*(extentX+PAD)-PAD,y:(e.clientY-r.top)/r.height*(extentY+PAD)-PAD}}
  function start(e:React.PointerEvent,kind:"room"|"ap"|"size",key:string,ox:number,oy:number){if(!canEdit)return;const p=toPlan(e);(e.currentTarget as Element).setPointerCapture(e.pointerId);setDrag({kind,key,dx:p.x-ox,dy:p.y-oy})}
@@ -74,7 +77,8 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
   if(drag.kind==="size")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,w:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.x-r.x))),h:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.y-r.y)))}:r)});
   else if(drag.kind==="room")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,x:clamp(snap(p.x-drag.dx),MAX-r.w),y:clamp(snap(p.y-drag.dy),MAX-r.h)}:r)});
   else{const pos=snapToWall(plan.rooms,clamp(snap(p.x-drag.dx),MAX),clamp(snap(p.y-drag.dy),MAX));change({...plan,placements:plan.placements.map(a=>a.device_id===drag.key?{...a,...pos}:a)})}}
- function addRoom(){const n=plan.rooms.length+1;change({...plan,rooms:[...plan.rooms,{id:"r"+Date.now().toString(36),name:"Room "+n,x:0,y:0,w:4,h:3}]})}
+ function renameRoom(id:string){if(editor.current)editor.current.open=true;setTimeout(()=>{const el=editor.current?.querySelector<HTMLInputElement>(`input[data-room="${id}"]`);el?.focus();el?.select()},0)}
+ function addRoom(){const n=plan.rooms.length+1;change({...plan,rooms:[...plan.rooms,{id:"r"+Date.now().toString(36),name:"Room "+n,x:0,y:0,w:12*FT,h:10*FT}]})}
  function patchRoom(id:string,p:Partial<FloorRoom>){change({...plan,rooms:plan.rooms.map(r=>r.id===id?{...r,...p}:r)})}
  function place(){if(!pick)return;const r=plan.rooms[0],pos=r?{x:r.x+r.w/2,y:r.y}:{x:1,y:1};change({...plan,placements:[...plan.placements,{device_id:pick,...pos}]});setPick("")}
  async function save(){setSaving(true);setMessage(null);try{const saved=await apiJSON<Plan>("/api/floor-plan","PUT",{rooms:plan.rooms,placements:plan.placements},"Could not save the floor plan");setPlan(saved);setDirty(false);setMessage({tone:"notice",text:"Floor plan saved."});onChanged()}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not save the floor plan"})}finally{setSaving(false)}}
@@ -88,7 +92,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  const eventText=(e:WifiClientEvent)=>e.kind==="roam"?"roamed"+(e.from_device_id?" from "+nameOf(e.from_device_id):"")+" to "+(e.to_device_id?nameOf(e.to_device_id):"another AP"):e.kind==="connect"?"joined "+(e.to_device_id?nameOf(e.to_device_id):"the network"):"left "+(e.from_device_id?nameOf(e.from_device_id):"the network");
 
  return <section className="audit-section fp">
-  <div className="section-head"><div><h2>Floor plan</h2><p>Where your access points are and which devices are connected to them. Metres; drawing only, nothing is changed on any router.</p></div>
+  <div className="section-head"><div><h2>Floor plan</h2><p>Where your access points are and which devices are connected to them. Sizes in feet; drawing only, nothing is changed on any router.</p></div>
    {canEdit&&<div className="tools"><button className="secondary" onClick={addRoom}><Plus size={15}/> Add room</button><button className="primary" disabled={!dirty||saving} onClick={()=>void save()}><Save size={15}/> {saving?"Saving…":"Save"}</button></div>}</div>
   {message&&<div className={message.tone}>{message.text}<button onClick={()=>setMessage(null)}>Dismiss</button></div>}
   <div className="fp-grid">
@@ -109,8 +113,8 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
      <rect x={-PAD} y={-PAD} width={extentX+PAD} height={extentY+PAD} fill="url(#fp-grid)"/>
      {plan.rooms.map(r=><g key={r.id}>
       <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={0.18} className="fp-room" onPointerDown={e=>start(e,"room",r.id,r.x,r.y)} style={{cursor:canEdit?"move":"default"}}/>
-      <text x={r.x+0.35} y={r.y+0.75} className="fp-room-name">{r.name.toUpperCase()}</text>
-      <text x={r.x+0.35} y={r.y+r.h-0.3} className="fp-room-size">{r.w} × {r.h} m</text>
+      <text x={r.x+0.35} y={r.y+0.75} className="fp-room-name" style={{cursor:canEdit?"text":"default"}} onClick={()=>canEdit&&renameRoom(r.id)}>{canEdit&&<title>Click to rename</title>}{r.name.toUpperCase()}</text>
+      <text x={r.x+0.35} y={r.y+r.h-0.3} className="fp-room-size">{toFt(r.w)} × {toFt(r.h)} ft</text>
       {canEdit&&<circle cx={r.x+r.w} cy={r.y+r.h} r={0.3} className="fp-handle" onPointerDown={e=>start(e,"size",r.id,0,0)}><title>Drag to resize</title></circle>}</g>)}
      {plan.placements.map(a=><g key={a.device_id} onPointerDown={e=>start(e,"ap",a.device_id,a.x,a.y)} style={{cursor:canEdit?"grab":"default"}}>
       <circle cx={a.x} cy={a.y} r={2.4} fill="url(#fp-coverage)" pointerEvents="none"/>
@@ -137,10 +141,10 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
     {events.length>0&&<><h3 className="fp-sub">Roaming history</h3><ul className="fp-timeline">{events.map(e=><li key={e.id} className={e.kind}><i/><div><span><b>{e.label||"Unknown device"}</b> {eventText(e)}</span><small>{ago(e.at)}{e.signal_dbm!==null?" · "+e.signal_dbm+" dBm":""}</small></div></li>)}</ul></>}
    </aside>
   </div>
-  {canEdit&&<details className="fp-card fp-edit"><summary><Radio size={15}/> Edit rooms and access points</summary>
+  {canEdit&&<details ref={editor} className="fp-card fp-edit" open><summary><Radio size={15}/> Edit rooms and access points</summary>
    <div className="fp-edit-grid">
-    {plan.rooms.length>0&&<div className="fp-edit-head"><span>Room</span><span>Width (m)</span><span>Height (m)</span><span/></div>}
-    {plan.rooms.map(r=><div className="fp-edit-row" key={r.id}><input aria-label="Room name" maxLength={60} value={r.name} onChange={e=>patchRoom(r.id,{name:e.target.value})}/><SizeInput label={r.name+" width"} value={r.w} onCommit={w=>patchRoom(r.id,{w})}/><SizeInput label={r.name+" height"} value={r.h} onCommit={h=>patchRoom(r.id,{h})}/><button className="secondary fp-icon" aria-label={"Remove "+r.name} onClick={()=>change({...plan,rooms:plan.rooms.filter(x=>x.id!==r.id)})}><Trash2 size={14}/></button></div>)}
+    {plan.rooms.length>0&&<div className="fp-edit-head"><span>Room</span><span>Width (ft)</span><span>Height (ft)</span><span/></div>}
+    {plan.rooms.map(r=><div className="fp-edit-row" key={r.id}><input aria-label="Room name" data-room={r.id} maxLength={60} value={r.name} onChange={e=>patchRoom(r.id,{name:e.target.value})}/><SizeInput label={r.name+" width"} value={r.w} onCommit={w=>patchRoom(r.id,{w})}/><SizeInput label={r.name+" height"} value={r.h} onCommit={h=>patchRoom(r.id,{h})}/><button className="secondary fp-icon" aria-label={"Remove "+r.name} onClick={()=>change({...plan,rooms:plan.rooms.filter(x=>x.id!==r.id)})}><Trash2 size={14}/></button></div>)}
     {plan.placements.map(a=><div className="fp-edit-row fp-edit-ap" key={a.device_id}><span><i className="fp-dot ap"/> Access point <b>{nameOf(a.device_id)}</b></span><span/><span/><button className="secondary fp-icon" aria-label={"Unplace "+nameOf(a.device_id)} onClick={()=>change({...plan,placements:plan.placements.filter(x=>x.device_id!==a.device_id)})}><Trash2 size={14}/></button></div>)}
     <div className="fp-place"><select className="secondary" aria-label="Device to place" value={pick} onChange={e=>setPick(e.target.value)}><option value="">Place a device on the plan…</option>{unplaced.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select><button className="secondary" disabled={!pick} onClick={place}>Place</button></div>
    </div></details>}

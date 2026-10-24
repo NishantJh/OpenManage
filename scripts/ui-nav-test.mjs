@@ -66,6 +66,25 @@ try {
     assert.equal(new URL(page.url()).pathname, p.path, `mobile ${p.label}: URL`);
   }
   console.log("PASS: mobile page switcher reaches every page");
+  // Floor plan rooms: sizes in feet, rename from the map, canvas follows the rooms (nothing is saved).
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(baseUrl + "/floor-plan");
+  await page.locator("h1", { hasText: "Floor plan" }).waitFor();
+  const box = async () => (await page.locator("svg.fp-svg").getAttribute("viewBox")).split(" ").map(Number);
+  await page.getByRole("button", { name: /add room/i }).click();
+  await page.locator(".fp-room-size", { hasText: "12 × 10 ft" }).waitFor();
+  const small = await box();
+  await page.getByLabel(/width/i).first().fill("60");
+  await page.locator(".fp-room-size", { hasText: "60 × 10 ft" }).waitFor();
+  const wide = await box();
+  assert.ok(wide[2] > small[2], "canvas grows with the room");
+  await page.getByLabel(/width/i).first().fill("12");
+  const back = await box();
+  assert.ok(back[2] < wide[2], "canvas shrinks with the room");
+  await page.locator(".fp-room-name").first().click();
+  await page.keyboard.type("Kitchen");
+  await page.locator(".fp-room-name", { hasText: "KITCHEN" }).waitFor();
+  console.log("PASS: floor plan rooms in feet, renamable, canvas fits rooms");
   assert.deepEqual(errors, [], "uncaught page errors");
   console.log("PASS: back button, deep link, no page errors");
 } finally {
