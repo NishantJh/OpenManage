@@ -59,8 +59,8 @@ To undo: `uci delete wireless.omtest; uci commit wireless; wifi reload`. If you 
 
 ## 4. Install the profile on the iPhone
 
-1. In the Server certificate card, type the SSID (`Home-Secure`) and press **Download setup profile**. Open the file on the iPhone (AirDrop it, or email it to yourself).
-2. Settings → **Profile Downloaded** → Install. iOS says the profile is not signed; that is expected. The profile contains the OpenManage CA and the network settings, and no password.
+1. In the Server certificate card, type the SSID (`Home-Secure`), pick the Wi-Fi user from step 2 (for example `nishant-iphone`) and press **Download setup profile**. With a user picked, the iPhone asks only for that user's password. With **Ask on the device**, it asks for a username too: that is the Wi-Fi user, not the network name. Open the file on the iPhone (AirDrop it, or email it to yourself).
+2. Settings → **Profile Downloaded** → Install. iOS says the profile is not signed; that is expected. The profile contains the OpenManage CA, the network settings and the Wi-Fi username if you picked one, and no password.
 3. Check the profile details show the CA named "OpenManage RADIUS CA ..." before installing.
 
 ## 5. Test checklist
@@ -69,7 +69,7 @@ Record pass or fail for each step. The dashboard's **Recent activity** shows `ra
 
 | # | Step | Expected |
 |---|------|----------|
-| 1 | Join `Home-Secure`; enter the Wi-Fi username and password when asked | Connects without a certificate warning; Safari loads a page. Audit: `radius.auth_accept`, method `eap-ttls` |
+| 1 | Join `Home-Secure`; enter the Wi-Fi user's password (and username, if asked) | Connects without a certificate warning; Safari loads a page. Audit: `radius.auth_accept`, method `eap-ttls` |
 | 2 | Reset the Wi-Fi user's password in the dashboard (the phone still has the old one); turn Wi-Fi off and on | Fails. Audit: `radius.auth_reject`, reason `bad_credentials`. Then tap `Home-Secure` and enter the new password; it connects. (A network installed by a profile has no Forget button; remove the profile to forget it.) |
 | 3 | Disable the Wi-Fi user in the dashboard; turn Wi-Fi off and on | Cannot join. Audit: reason `disabled`. Re-enable the user; the phone joins again within a minute |
 | 4 | Turn Wi-Fi off and on, then restart the phone | Rejoins on its own without asking |
@@ -80,6 +80,7 @@ If step 1 fails, check in this order:
 
 - **No audit event at all**: the request did not reach OpenManage or was dropped. Check the dashboard's "Ignored packets" count. If it rises, the AP's source address or secret does not match (RADIUS requests must come from the AP's inventory address).
 - **`tls_failed`**: the phone refused the server. Check the profile's SSID and that it was installed.
+- **`bad_credentials` with the network name as username**: the username typed on the phone was the SSID. Remove the profile, download it again with the Wi-Fi user picked, and reinstall.
 - **`inner_method_not_pap`**: the phone was not using the profile.
 - **Audit shows accept but the phone does not connect**: the key delivery to the AP failed. Capture `logread | grep hostapd` on the AP and share it.
 
