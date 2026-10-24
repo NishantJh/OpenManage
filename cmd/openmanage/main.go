@@ -161,6 +161,8 @@ func main() {
 	mux.HandleFunc("DELETE /api/devices/{id}", a.deleteDevice)
 	mux.HandleFunc("PATCH /api/devices/{id}", a.updateDeviceRole)
 	mux.HandleFunc("POST /api/devices/{id}/enroll", a.enrollDevice)
+	mux.HandleFunc("POST /api/device-bootstrap/probe", a.bootstrapProbe)
+	mux.HandleFunc("POST /api/device-bootstrap", a.bootstrapDevice)
 	mux.HandleFunc("POST /api/devices/{id}/health-check", a.runDeviceHealthCheck)
 	mux.HandleFunc("POST /api/devices/{id}/config-snapshots", a.captureConfigSnapshot)
 	mux.HandleFunc("GET /api/devices/{id}/config-snapshots", a.listConfigSnapshots)
