@@ -56,7 +56,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  const [plan,setPlan]=useState<Plan>({rooms:[],placements:[]}),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState<{text:string;tone:"notice"|"error"}|null>(null);
  const [drag,setDrag]=useState<{kind:"room"|"ap"|"size";key:string;dx:number;dy:number;extent:{x:number;y:number}}|null>(null),[pick,setPick]=useState("");
  const [settings,setSettings]=useState<MonitoringSettings|null>(null),[clients,setClients]=useState<WifiClient[]>([]),[events,setEvents]=useState<WifiClientEvent[]>([]),[trackBusy,setTrackBusy]=useState(false);
- const svg=useRef<SVGSVGElement>(null),editor=useRef<HTMLDetailsElement>(null);
+ const svg=useRef<SVGSVGElement>(null),editor=useRef<HTMLDetailsElement>(null),[focusRoom,setFocusRoom]=useState("");
  const tracking=Boolean(settings?.client_tracking_enabled);
 
  async function loadClients(){try{const [c,e]=await Promise.all([apiFetch("/api/wifi-clients"),apiFetch("/api/wifi-client-events?limit=20")]);if(c.ok)setClients(await c.json());if(e.ok)setEvents(await e.json())}catch{/* the map still works without client data */}}
@@ -68,6 +68,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  async function patchClient(c:WifiClient,change:{label?:string;hidden?:boolean}){setMessage(null);try{const r=await apiFetch("/api/wifi-clients/"+c.id,"PATCH",change);if(!r.ok)throw Error();setClients(prev=>prev.map(x=>x.id===c.id?{...x,...change}:x))}catch{setMessage({tone:"error",text:"Could not update the device."})}}
  async function clearClients(){if(!window.confirm("Delete every tracked device, its last location and its roaming history?"))return;try{const r=await apiFetch("/api/wifi-clients","DELETE");if(!r.ok)throw Error();setClients([]);setEvents([]);setMessage({tone:"notice",text:"Device data cleared."});onChanged()}catch{setMessage({tone:"error",text:"Could not clear device data."})}}
 
+ useEffect(()=>{if(!focusRoom)return;const el=editor.current?.querySelector<HTMLInputElement>(`input[data-room="${focusRoom}"]`);el?.focus();el?.select();setFocusRoom("")},[focusRoom]);
  const nameOf=(id:string)=>devices.find(d=>d.id===id)?.name??"Unknown access point";
  const fit={x:Math.max(6,...plan.rooms.map(r=>r.x+r.w+1),...plan.placements.map(a=>a.x+1)),y:Math.max(4,...plan.rooms.map(r=>r.y+r.h+1),...plan.placements.map(a=>a.y+1))};
  // The canvas is held still while dragging so the pointer-to-plan mapping does not shift under the cursor.
@@ -79,7 +80,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
   if(drag.kind==="size")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,w:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.x-r.x))),h:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.y-r.y)))}:r)});
   else if(drag.kind==="room")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,x:clamp(snap(p.x-drag.dx),MAX-r.w),y:clamp(snap(p.y-drag.dy),MAX-r.h)}:r)});
   else{const pos=snapToWall(plan.rooms,clamp(snap(p.x-drag.dx),MAX),clamp(snap(p.y-drag.dy),MAX));change({...plan,placements:plan.placements.map(a=>a.device_id===drag.key?{...a,...pos}:a)})}}
- function renameRoom(id:string){if(editor.current)editor.current.open=true;setTimeout(()=>{const el=editor.current?.querySelector<HTMLInputElement>(`input[data-room="${id}"]`);el?.focus();el?.select()},0)}
+ function renameRoom(id:string){if(editor.current)editor.current.open=true;setFocusRoom(id)}
  function addRoom(){const n=plan.rooms.length+1;change({...plan,rooms:[...plan.rooms,{id:"r"+Date.now().toString(36),name:"Room "+n,x:0,y:0,w:12*FT,h:10*FT}]})}
  function patchRoom(id:string,p:Partial<FloorRoom>){change({...plan,rooms:plan.rooms.map(r=>r.id===id?{...r,...p}:r)})}
  function place(){if(!pick)return;const r=plan.rooms[0],pos=r?{x:r.x+r.w/2,y:r.y}:{x:1,y:1};change({...plan,placements:[...plan.placements,{device_id:pick,...pos}]});setPick("")}

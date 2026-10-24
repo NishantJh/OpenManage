@@ -82,6 +82,7 @@ try {
   const back = await box();
   assert.ok(back[2] < wide[2], "canvas shrinks with the room");
   await page.locator(".fp-room-name").first().click();
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-room"), null, { timeout: 5000 });
   await page.keyboard.type("Kitchen");
   await page.locator(".fp-room-name", { hasText: "KITCHEN" }).waitFor();
   console.log("PASS: floor plan rooms in feet, renamable, canvas fits rooms");
