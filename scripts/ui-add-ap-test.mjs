@@ -45,6 +45,23 @@ try {
   await page.getByText("password you use to sign in to LuCI").waitFor();
   console.log("PASS: wrong password shows a specific, actionable error");
 
+  // A forged fingerprint (as if the probe were answered by something else) must be refused
+  // by the pinned login, and the password must not be accepted.
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.route("**/api/device-bootstrap/probe", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ address: deviceIp, host_key_fingerprint: "SHA256:" + "A".repeat(43), algorithm: "ssh-ed25519" }) }));
+  await page.getByRole("button", { name: /find device/i }).click();
+  await page.getByText("SHA256:" + "A".repeat(43)).waitFor();
+  await page.getByLabel(/I trust this network/i).check();
+  await page.locator('input[type="password"]').fill(rootPassword);
+  await page.getByRole("button", { name: /add and connect/i }).click();
+  await page.getByText("did not match", { exact: false }).waitFor();
+  console.log("PASS: a host key that differs from the confirmed fingerprint is refused");
+  await page.unroute("**/api/device-bootstrap/probe");
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: /find device/i }).click();
+  await page.getByText(/^SHA256:(?!A{43})/).waitFor();
+  await page.getByLabel(/I trust this network/i).check();
+
   await page.locator('input[type="password"]').fill(rootPassword);
   await page.getByRole("button", { name: /add and connect/i }).click();
   await page.getByText("Key installed and connection verified", { exact: false }).waitFor({ timeout: 30000 });
