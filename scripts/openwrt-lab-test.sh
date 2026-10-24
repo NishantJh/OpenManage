@@ -403,6 +403,18 @@ pw_leaks="$(compose exec -T db pg_dump -U openmanage openmanage | grep -c -F -e 
 ! compose logs --no-color app | grep -q -F "$root_password" || fail "the root password reached the app log"
 echo "PASS: the root password is not in the database or the app log"
 api DELETE "/api/devices/$boot_id"
+
+# Browser check of the add-AP wizard against this stack and the real OpenWrt router.
+if [[ "${OPENMANAGE_LAB_BROWSER:-0}" == 1 ]]; then
+  ui_dir="$(mktemp -d)"
+  ui_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ui-add-ap-test.mjs"
+  (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0 && npx playwright install --with-deps chromium >/dev/null)
+  (cd "$ui_dir" && OPENMANAGE_TEST_ROOT_PASSWORD="$root_password" node "$ui_script" "$base_url" admin lab-admin-password-123 "$router_ip") || fail "add-AP wizard browser check"
+  rm -rf "$ui_dir"
+  api GET /api/devices
+  ui_added="$(json 'print(*[x["id"] for x in d if x["address"]==sys.argv[1] and x["name"]!="lab-router"])' "$router_ip" < "$body")"
+  for id in $ui_added; do api DELETE "/api/devices/$id"; done
+fi
 compose exec -T db psql -q -U openmanage -d openmanage -c "UPDATE devices SET address='$router_ip' WHERE id='$device_id'" >/dev/null
 
 # User management: a second user, role changes and disabling revoke sessions, and the

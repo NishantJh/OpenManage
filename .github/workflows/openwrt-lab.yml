@@ -23,4 +23,6 @@ jobs:
       - name: Install eapol_test
         run: sudo apt-get update && sudo apt-get install -y eapoltest
       - name: Run OpenWrt lab test
+        env:
+          OPENMANAGE_LAB_BROWSER: "1"
         run: bash scripts/openwrt-lab-test.sh

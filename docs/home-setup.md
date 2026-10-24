@@ -73,43 +73,22 @@ docker compose up -d
 
 Database changes apply on start. To go back to a known version, set `OPENMANAGE_IMAGE` to `ghcr.io/nishantjh/openmanage:sha-<commit>` and run `docker compose up -d`. If `pull` is denied, the package is private: open the repository's **Packages** on GitHub, choose `openmanage`, and set its visibility to public (the image holds no secrets; they come from `.env`). Building on the host with `docker compose up -d --build` still works when `OPENMANAGE_IMAGE` is unset.
 
-## 3. Prepare each OpenWrt device
+## 3. Add each OpenWrt device
 
-OpenManage signs in to each device over SSH with its own key and never sets the key up on the device itself. For each router or AP:
+You need only the device's LAN IP address and its **root password** (the one you use to sign in to LuCI; set one first if the router has none). On **Devices → Add device**:
 
-1. Make sure root has a password (LuCI asks on first login), so SSH does not allow a passwordless login.
-2. In the container, create a management key with no passphrase (OpenManage needs it unencrypted):
+1. Enter the IP address and choose **Find device**. OpenManage reads the router's SSH host-key fingerprint and shows it. On a trusted home network you can accept it; if you want to be certain, compare it with the router's own value (`dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key`, then `ssh-keygen -lf`). Every later connection must present exactly this key.
+2. Enter the root password and choose **Add and connect**. OpenManage signs in once, installs a key it generates for this device, checks that key login works, then discards the password.
 
-   ```sh
-   ssh-keygen -t ed25519 -N "" -C openmanage -f ~/.ssh/openmanage_ap1
-   ```
+**What happens to the root password:** it is used for that one login only. It is not saved in the database, written to logs, or recorded in the audit trail, and the server clears its copy straight after the login. It stays valid on the router (OpenManage never changes it), so once the key works you can turn off SSH password login in LuCI (**System → Administration → SSH Access**). Use HTTPS if you open OpenManage from another machine, because the password travels from your browser to OpenManage. To remove OpenManage's access later, delete the line ending in `openmanage` from `/etc/dropbear/authorized_keys` on the router.
 
-3. Add the public key to the device: in LuCI, **System → Administration → SSH-Keys**, paste the contents of `~/.ssh/openmanage_ap1.pub` and save. (Or `ssh root@192.168.1.2 'cat >> /etc/dropbear/authorized_keys' < ~/.ssh/openmanage_ap1.pub`.)
-4. Read the device's host-key fingerprint over a connection you trust (a wired SSH session on your own LAN, or the serial console). On the device, print the public host key:
+The wizard then runs a health check, which fills in the model and firmware.
 
-   ```sh
-   dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key | grep ^ssh-ed25519
-   ```
+### Advanced: bring your own key
 
-   Then in the container, turn that line into the fingerprint OpenManage expects:
+The wizard's **Advanced / manual** link keeps the older path: add the device as inventory, then **Enroll** with a key you made. In the container create the key with `ssh-keygen -t ed25519 -N "" -C openmanage -f ~/.ssh/openmanage_ap1`, add the `.pub` contents under LuCI **System → Administration → SSH-Keys**, get the fingerprint from the router console as above, and paste the username, fingerprint and private key into **Enroll**. `host_key_mismatch` means the fingerprint is wrong or from another key type; `ssh_auth_failed` means the public key is not on the device.
 
-   ```sh
-   echo 'ssh-ed25519 AAAA... root@OpenWrt' | ssh-keygen -lf - | awk '{print $2}'
-   ```
-
-   The result starts with `SHA256:`.
-
-One key per device is cleaner (losing one does not expose the others), but one shared key also works.
-
-## 4. Add and enroll devices
-
-1. **Add device**: a name, and the device's LAN IP address as a literal (for example `192.168.1.2`). For an AP this must be the address it sends RADIUS from, normally its `br-lan` address. Give each device a DHCP reservation or a static address.
-2. **Enroll** on the device's row: username `root`, the fingerprint from step 3, and the contents of the private key `~/.ssh/openmanage_ap1` (the file without `.pub`).
-3. Run a **health check**. It should show the model and firmware read from the device.
-
-Error codes on enrollment are explained in the dialog; `host_key_mismatch` means the fingerprint is wrong or it came from another key type, and `ssh_auth_failed` means the public key is not on the device.
-
-## 5. Turn on RADIUS
+## 4. Turn on RADIUS
 
 1. Add `OPENMANAGE_RADIUS_LISTEN=:1812` to `.env`.
 2. In `compose.yaml`, under the `app` service `ports:`, add the container's address: `- "192.168.1.10:1812:1812/udp"`.
