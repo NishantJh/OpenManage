@@ -163,7 +163,6 @@ func TestReadonlyCannotCreateOrDeleteDevices(t *testing.T) {
 	}
 }
 
-
 func TestDatabaseConfigAcceptsReservedCharactersInPGPassword(t *testing.T) {
 	want := "slash/at@colon:question?hash#plus+equals="
 	t.Setenv("PGPASSWORD", want)
