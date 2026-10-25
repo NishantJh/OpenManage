@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestTokenHashIsStableAndNotRawToken(t *testing.T) {
@@ -158,5 +160,19 @@ func TestReadonlyCannotCreateOrDeleteDevices(t *testing.T) {
 				t.Fatalf("expected 403 before database access, got %d: %s", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+
+func TestDatabaseConfigAcceptsReservedCharactersInPGPassword(t *testing.T) {
+	want := "slash/at@colon:question?hash#plus+equals="
+	t.Setenv("PGPASSWORD", want)
+
+	cfg, err := pgxpool.ParseConfig("postgres://openmanage@db:5432/openmanage?sslmode=disable")
+	if err != nil {
+		t.Fatalf("parse database config: %v", err)
+	}
+	if got := cfg.ConnConfig.Password; got != want {
+		t.Fatalf("password mismatch: got %q, want %q", got, want)
 	}
 }
