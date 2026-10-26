@@ -99,6 +99,15 @@ There is no fixed list of third-party packages anywhere in the code. What should
 - **Source updates are explicit.** Registering a newer file for a package creates a new source version; sets can pin a version or follow "latest registered". Either way the upgrade plan shows the version change before anything is installed.
 - **Unused sources** can be removed once no set refers to them; stored files are deleted with them.
 
+### What an upgrade keeps and adds
+
+One upgrade does three things, in this order:
+1. **Keeps what is installed.** The build request carries every package the device has, plus removed defaults (see "Common cases").
+2. **Keeps configuration and other changes.** Config and extra files are restored from the sysupgrade backup (see "Preserving and reapplying configuration").
+3. **Adds the custom packages** from the device's desired set.
+
+**Auto-reinstall option** (per device or group, on by default once a set has custom packages): after each firmware update, OpenManage reinstalls the custom packages from their stored files without asking. If switched off, the custom packages are listed as "pending" after the flash and an admin installs them with one action. In both cases the set stays as it was, so the next upgrade does the same. Between upgrades the admin can add more custom packages or remove some by editing the set (applied on the next flash, or "apply now").
+
 ### Using sources during an upgrade
 
 1. **Reinstall after the flash** (Phase 2, default). Once the device is back, `package_install` reinstalls each third-party package from its source. Risk: the device briefly runs without the package (for a LuCI theme it falls back to the default theme), and the package must still suit the new release; a LuCI theme built for another LuCI version can fail to load.
