@@ -569,6 +569,70 @@ done
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"backups_enabled":false}'
 echo "PASS: scheduled backups are opt-in and at most daily, store only changes, and audit them as the system"
 
+# Restore a stored backup onto the same device: confirmation and refusals first, then a
+# real restore that reboots the OpenWrt container and is verified over a fresh SSH
+# connection. The container stops on `reboot`, so the lab starts it again, as a
+# power-cycled device would come back.
+# Docker bind-mounts /etc/hosts into the container, so `sysupgrade -r` cannot replace it
+# ("Resource busy"); real hardware has no such file lock. The lab's tar skips that one file.
+docker exec "$router" sh -c 'echo etc/hosts > /usr/share/om-lab-tar-exclude && cat > /usr/bin/tar <<"SHIM"
+#!/bin/sh
+case " $* " in *" -x"*) exec /bin/busybox tar -X /usr/share/om-lab-tar-exclude "$@";; esac
+exec /bin/busybox tar "$@"
+SHIM
+chmod +x /usr/bin/tar'
+docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-restore-A && uci commit system"
+api POST "/api/devices/$device_id/backups"
+[[ "$status" == 200 ]] || fail "backup before restore returned HTTP $status"
+restore_backup="$(json 'assert not d["unchanged"], d; print(d["backup"]["id"])' < "$body")"
+docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-restore-B && uci commit system"
+restore_url="/api/devices/$device_id/backups/$restore_backup/restore"
+api POST "$restore_url" '{"confirm_name":"wrong-name"}'
+[[ "$status" == 400 ]] || fail "restore without the device name returned HTTP $status"
+api POST "$restore_url" '{"unknown":true}'
+[[ "$status" == 400 ]] || fail "restore with an unknown field returned HTTP $status"
+api_as "$bk_op_jar" "$bk_op_csrf" POST "$restore_url" '{"confirm_name":"lab-router"}'
+[[ "$status" == 403 ]] || fail "operator started a restore (HTTP $status)"
+api_as "$bk_ro_jar" "$bk_ro_csrf" POST "$restore_url" '{"confirm_name":"lab-router"}'
+[[ "$status" == 403 ]] || fail "read-only user started a restore (HTTP $status)"
+psql_om "UPDATE device_backups SET board_name='some,other-board' WHERE id='$restore_backup'" >/dev/null
+api POST "$restore_url" '{"confirm_name":"lab-router"}'
+expect_code 409 board_mismatch "restore refuses a backup from a different board"
+psql_om "UPDATE device_backups SET board_name='' WHERE id='$restore_backup'" >/dev/null
+psql_om "UPDATE device_backups SET release='23.05.5' WHERE id='$restore_backup'" >/dev/null
+api POST "$restore_url" '{"confirm_name":"lab-router"}'
+expect_code 409 release_mismatch "restore asks for a second confirmation when the OpenWrt release differs"
+psql_om "UPDATE device_backups SET release='24.10.4' WHERE id='$restore_backup'" >/dev/null
+[[ "$(docker exec "$router" uci get system.@system[0].hostname)" == lab-restore-B ]] || fail "a refused restore changed the device"
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_restore'")" == 0 ]] || fail "a refused restore was audited as started"
+echo "PASS: restore needs the device name and an administrator, and refuses other boards and release mismatches without touching the device"
+
+api POST "$restore_url" '{"confirm_name":"lab-router"}'
+[[ "$status" == 202 ]] || { cat "$body" >&2; fail "restore returned HTTP $status"; }
+json 'assert d["status"]=="running" and d["backup_id"]==sys.argv[1], d' "$restore_backup" < "$body"
+api POST "$restore_url" '{"confirm_name":"lab-router"}'
+[[ "$status" == 409 ]] || fail "a second restore was accepted while one was running (HTTP $status)"
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_restore' AND details->>'backup_id'='$restore_backup'")" == 1 ]] || fail "restore start was not audited"
+for attempt in $(seq 1 60); do
+  [[ "$(docker inspect -f '{{.State.Running}}' "$router")" == false ]] && break
+  [[ "$attempt" == 60 ]] && { api GET "/api/devices/$device_id/restores"; cat "$body" >&2; fail "the device did not reboot after the restore"; }
+  sleep 1
+done
+docker start "$router" >/dev/null
+for attempt in $(seq 1 120); do
+  api GET "/api/devices/$device_id/restores"
+  restore_state="$(json 'print(d[0]["status"])' < "$body")"
+  [[ "$restore_state" != running ]] && break
+  [[ "$attempt" == 120 ]] && fail "restore did not finish"
+  sleep 3
+done
+[[ "$restore_state" == done ]] || { cat "$body" >&2; fail "restore finished as $restore_state"; }
+[[ "$(docker exec "$router" uci get system.@system[0].hostname)" == lab-restore-A ]] || fail "restore did not bring back the backed-up configuration"
+docker exec "$router" test ! -e /tmp/.om-restore.tar.gz || fail "the uploaded archive was left on the device"
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_restore.done' AND details->>'backup_id'='$restore_backup'")" == 1 ]] || fail "restore outcome was not audited"
+! psql_om "SELECT details::text FROM audit_events WHERE action LIKE 'device.backup_restore%'" | grep -q 'etc/\|shadow' || fail "a restore audit event names archive files"
+echo "PASS: a stored backup is restored onto the same device, the device reboots, comes back under the pinned host key, and the restore is audited without content"
+
 # Built-in RADIUS (PAP lab listener). The probe runs inside the router container so
 # requests come from the enrolled device's address.
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$work/radius-probe" ./scripts/radius-probe

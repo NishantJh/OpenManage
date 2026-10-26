@@ -233,6 +233,18 @@ func (s *deviceSession) execute(op operation, stdin []byte) operationResult {
 	return result
 }
 
+// runWriteRaw executes a write operation with raw bytes on stdin (a backup archive being
+// uploaded to a fixed path). Only the restore workflow calls it.
+func (s *deviceSession) runWriteRaw(op operation, stdin []byte) operationResult {
+	if op.Class != operationWrite {
+		return operationResult{Name: op.Name, Label: op.Label, Status: "error", Error: "not a write operation"}
+	}
+	if stdin == nil {
+		stdin = []byte{}
+	}
+	return s.execute(op, stdin)
+}
+
 // runBinary executes a read operation whose output is binary (a backup archive). The
 // bytes are returned untouched and never placed in the result, so they cannot reach a
 // log or an API response by accident.
