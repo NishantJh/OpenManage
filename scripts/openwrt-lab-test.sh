@@ -463,6 +463,112 @@ users_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT 
   || fail "a password reached the audit log"
 echo "PASS: user management creates, demotes and disables users, revokes their sessions, and keeps one administrator"
 
+# Device configuration backups (sysupgrade -b archives): capture, unchanged detection,
+# encryption at rest, role limits, password-gated download, retention, pinning, binding
+# of ciphertext to its row, and the daily schedule.
+psql_om() { compose exec -T db psql -U openmanage -d openmanage -tAc "$1"; }
+shadow_hash="$(docker exec "$router" sh -c "grep '^root:' /etc/shadow | cut -d: -f2")"
+[[ ${#shadow_hash} -gt 10 ]] || fail "lab router has no root password hash to look for"
+# The router's own current host key, read on the router, is what the archive must hold.
+backup_host_fp="$(docker exec "$router" dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key | grep '^ssh-ed25519' | ssh-keygen -lf - | awk '{print $2}')"
+api POST "/api/devices/$device_id/backups"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "first backup returned HTTP $status"; }
+first_backup="$(json 'b=d["backup"]; assert not d["unchanged"] and b["size_bytes"]>1000 and b["file_count"]>10 and not b["scheduled"] and not b["pinned"], d
+assert b["host_key_fingerprint"]==sys.argv[1], b
+assert b["release"].startswith("24.10") and b["hardware_id"], b
+print(b["id"])' "$backup_host_fp" < "$body")"
+! grep -q "$shadow_hash" "$body" || fail "backup response leaked archive content"
+api POST "/api/devices/$device_id/backups"
+json 'assert d["unchanged"] and d["backup"]["id"]==sys.argv[1], d' "$first_backup" < "$body"
+[[ "$(psql_om "SELECT count(*) FROM device_backups WHERE device_id='$device_id'")" == 1 ]] || fail "an unchanged device stored a second backup"
+echo "PASS: a backup is captured with its board and host-key identity; an unchanged device is not stored twice"
+leaks="$(psql_om "SELECT count(*) FROM device_backups WHERE position(convert_to('$shadow_hash','UTF8') in ciphertext)>0 OR position(convert_to('config system','UTF8') in ciphertext)>0")"
+[[ "$leaks" == 0 ]] || fail "backup plaintext found in PostgreSQL"
+[[ "$(psql_om "SELECT key_version FROM device_backups WHERE id='$first_backup'")" == 1 ]] || fail "backup has no key version"
+echo "PASS: backups are encrypted at rest"
+
+# Roles: operators may create but not download or delete; read-only users may only list.
+# api_as's response body is reused, so the checks below read $status only.
+api POST /api/users '{"username":"lab-bk-operator","role":"operator","password":"lab-operator-pass-1"}'
+api POST /api/users '{"username":"lab-bk-viewer","role":"readonly","password":"lab-viewer-pass-1"}'
+bk_op_jar="$work/bk-operator.cookies"; bk_ro_jar="$work/bk-viewer.cookies"
+login_as lab-bk-operator lab-operator-pass-1 "$bk_op_jar"; bk_op_csrf="$csrf_other"
+login_as lab-bk-viewer lab-viewer-pass-1 "$bk_ro_jar"; bk_ro_csrf="$csrf_other"
+api_as "$bk_ro_jar" "$bk_ro_csrf" GET "/api/devices/$device_id/backups"; [[ "$status" == 200 ]] || fail "read-only user could not list backups (HTTP $status)"
+! grep -q "$shadow_hash" "$body" || fail "backup list leaked archive content"
+api_as "$bk_ro_jar" "$bk_ro_csrf" POST "/api/devices/$device_id/backups"; [[ "$status" == 403 ]] || fail "read-only user created a backup (HTTP $status)"
+api_as "$bk_op_jar" "$bk_op_csrf" POST "/api/devices/$device_id/backups"; [[ "$status" == 200 ]] || fail "operator could not create a backup (HTTP $status)"
+api_as "$bk_op_jar" "$bk_op_csrf" POST "/api/devices/$device_id/backups/$first_backup/download" '{"password":"lab-operator-pass-1"}'
+[[ "$status" == 403 ]] || fail "operator downloaded a backup (HTTP $status)"
+api_as "$bk_op_jar" "$bk_op_csrf" DELETE "/api/devices/$device_id/backups/$first_backup"; [[ "$status" == 403 ]] || fail "operator deleted a backup (HTTP $status)"
+echo "PASS: backup roles: operators create, only administrators download or delete, read-only users list metadata"
+
+# Download needs the administrator's password and is audited without content.
+api POST "/api/devices/$device_id/backups/$first_backup/download" '{}'
+[[ "$status" == 400 ]] || fail "download without a password returned HTTP $status"
+api POST "/api/devices/$device_id/backups/$first_backup/download" '{"password":"not-the-password"}'
+[[ "$status" == 403 ]] || fail "download with a wrong password returned HTTP $status"
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_download'")" == 0 ]] || fail "a refused download was audited as a download"
+download="$work/backup-download.tar.gz"; headers="$work/backup-headers"
+status="$(curl --silent -D "$headers" -o "$download" -w '%{http_code}' -X POST -b "$cookie_jar" -H "X-CSRF-Token: $csrf" \
+  -H 'Content-Type: application/json' --data '{"password":"lab-admin-password-123"}' "$base_url/api/devices/$device_id/backups/$first_backup/download")"
+[[ "$status" == 200 ]] || fail "download returned HTTP $status"
+tr -d '\r' < "$headers" | grep -qi '^cache-control: no-store$' || fail "download is cacheable"
+tr -d '\r' < "$headers" | grep -qi '^content-disposition: attachment' || fail "download is not an attachment"
+tr -d '\r' < "$headers" | grep -qi '^x-content-type-options: nosniff$' || fail "download lacks nosniff"
+tar tzf "$download" | grep -qx 'etc/config/system' || fail "downloaded archive is not a sysupgrade backup"
+tar xzOf "$download" etc/shadow | grep -q "$shadow_hash" || fail "downloaded archive does not hold the router's shadow file"
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_download' AND details->>'backup_id'='$first_backup'")" == 1 ]] || fail "download was not audited"
+! psql_om "SELECT details::text FROM audit_events WHERE action LIKE 'device.backup%'" | grep -q 'etc/\|shadow' || fail "an audit event names archive files"
+echo "PASS: download needs the administrator's password, is a no-store attachment holding the real archive, and is audited without content"
+
+# Retention keeps the newest five and never prunes a pinned backup.
+psql_om "UPDATE device_backups SET pinned=TRUE WHERE id='$first_backup'" >/dev/null
+for n in 1 2 3 4 5 6 7; do
+  docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-backup-$n && uci commit system"
+  api POST "/api/devices/$device_id/backups"
+  json 'assert not d["unchanged"], d' < "$body"
+done
+[[ "$(psql_om "SELECT count(*) FROM device_backups WHERE device_id='$device_id' AND NOT pinned")" == 5 ]] || fail "retention did not keep exactly five unpinned backups"
+[[ "$(psql_om "SELECT count(*) FROM device_backups WHERE id='$first_backup'")" == 1 ]] || fail "retention pruned a pinned backup"
+api DELETE "/api/devices/$device_id/backups/$first_backup"; [[ "$status" == 409 ]] || fail "a pinned backup was deletable (HTTP $status)"
+echo "PASS: retention keeps the newest five and a pinned backup survives pruning and deletion"
+
+# A ciphertext moved to another backup row must not decrypt (AAD binds device and backup).
+api GET "/api/devices/$device_id/backups"
+newest="$(json 'print(d[0]["id"])' < "$body")"; older="$(json 'print(d[1]["id"])' < "$body")"
+psql_om "UPDATE device_backups SET ciphertext=(SELECT ciphertext FROM device_backups WHERE id='$older') WHERE id='$newest'" >/dev/null
+api POST "/api/devices/$device_id/backups/$newest/download" '{"password":"lab-admin-password-123"}'
+[[ "$status" == 500 ]] || fail "a swapped ciphertext was served (HTTP $status)"
+api DELETE "/api/devices/$device_id/backups/$newest"; [[ "$status" == 200 ]] || fail "deleting a backup returned HTTP $status"
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_delete' AND details->>'backup_id'='$newest'")" == 1 ]] || fail "delete was not audited"
+echo "PASS: a ciphertext moved to another backup does not decrypt; deleting a backup is audited"
+
+# Scheduled backups: opt-in, never more often than daily.
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"backups_enabled":true,"backup_interval_seconds":3600}'
+[[ "$status" == 400 ]] || fail "a backup interval under a day was accepted (HTTP $status)"
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"backups_enabled":true,"backup_interval_seconds":86400}'
+json 'assert d["backups_enabled"] and d["backup_interval_seconds"]==86400, d' < "$body"
+api POST "/api/devices/$device_id/backups"; [[ "$status" == 200 ]] || fail "backup before the schedule test returned HTTP $status"
+before_audit="$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_create'")"
+psql_om "UPDATE device_backups SET last_verified_at=NOW()-INTERVAL '2 days' WHERE device_id='$device_id'" >/dev/null
+for attempt in $(seq 1 30); do
+  [[ "$(psql_om "SELECT count(*) FROM device_backups WHERE device_id='$device_id' AND last_verified_at > NOW()-INTERVAL '1 hour'")" -ge 1 ]] && break
+  [[ "$attempt" == 30 ]] && fail "scheduled backup did not run"
+  sleep 2
+done
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_create'")" == "$before_audit" ]] || fail "an unchanged scheduled backup was audited"
+docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-backup-scheduled && uci commit system"
+psql_om "UPDATE device_backups SET last_verified_at=NOW()-INTERVAL '2 days' WHERE device_id='$device_id'" >/dev/null
+for attempt in $(seq 1 30); do
+  [[ "$(psql_om "SELECT count(*) FROM device_backups WHERE device_id='$device_id' AND scheduled")" -ge 1 ]] && break
+  [[ "$attempt" == 30 ]] && fail "scheduled backup did not store a changed configuration"
+  sleep 2
+done
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_create' AND user_id IS NULL AND details->>'scheduled'='true'")" == 1 ]] || fail "scheduled backup was not audited as a system action"
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"backups_enabled":false}'
+echo "PASS: scheduled backups are opt-in and at most daily, store only changes, and audit them as the system"
+
 # Built-in RADIUS (PAP lab listener). The probe runs inside the router container so
 # requests come from the enrolled device's address.
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$work/radius-probe" ./scripts/radius-probe

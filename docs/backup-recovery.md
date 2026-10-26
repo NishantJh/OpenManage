@@ -2,6 +2,15 @@
 
 OpenManage's PostgreSQL database and `OPENMANAGE_ENCRYPTION_KEY` are a coupled recovery set. The database contains SSH private keys encrypted with this key. A database backup without the matching key cannot recover those credentials; a key without the database does not recover inventory or audit history.
 
+## Device configuration backups make dumps more sensitive
+
+OpenManage can store a `sysupgrade -b` archive for every enrolled OpenWrt device, router or access point. The archive holds the device's Wi-Fi keys, RADIUS secrets, SSH host key and root password hash. It is stored encrypted with `OPENMANAGE_ENCRYPTION_KEY`, so a database dump plus that key (or a Proxmox backup of the container, which includes `.env`) is root-equivalent for every managed device. Store dumps and container backups encrypted and off the host, and keep the key apart from them.
+
+Two things to know:
+
+- Older backups keep older secrets. After rotating a leaked Wi-Fi or root password, delete the older device backups in OpenManage, because restoring one brings the old secret back.
+- Deleting a backup in OpenManage does not remove it from earlier database dumps or Proxmox backups.
+
 ## Protect the encryption key
 
 - Generate a 32-byte key with `openssl rand -base64 32` before enrolling devices.

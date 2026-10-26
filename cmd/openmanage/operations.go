@@ -228,12 +228,29 @@ func (s *deviceSession) runWrite(op operation, input any) operationResult {
 }
 
 func (s *deviceSession) execute(op operation, stdin []byte) operationResult {
+	raw, result := s.executeRaw(op, stdin)
+	result.Output = strings.TrimSpace(string(raw))
+	return result
+}
+
+// runBinary executes a read operation whose output is binary (a backup archive). The
+// bytes are returned untouched and never placed in the result, so they cannot reach a
+// log or an API response by accident.
+func (s *deviceSession) runBinary(op operation) ([]byte, operationResult) {
+	if op.Class != operationRead {
+		return nil, operationResult{Name: op.Name, Label: op.Label, Status: "error", Error: errWriteOperationDisabled.Error()}
+	}
+	return s.executeRaw(op, nil)
+}
+
+func (s *deviceSession) executeRaw(op operation, stdin []byte) ([]byte, operationResult) {
 	result := operationResult{Name: op.Name, Label: op.Label}
 	start := time.Now()
-	finish := func(status, msg string) operationResult {
+	var raw []byte
+	finish := func(status, msg string) ([]byte, operationResult) {
 		result.Status, result.Error = status, msg
 		result.Duration = time.Since(start).Milliseconds()
-		return result
+		return raw, result
 	}
 	session, err := s.client.NewSession()
 	if err != nil {
@@ -254,7 +271,7 @@ func (s *deviceSession) execute(op operation, stdin []byte) operationResult {
 	})
 	err = session.Run(op.command)
 	timer.Stop()
-	result.Output = strings.TrimSpace(stdout.String())
+	raw = stdout.buf.Bytes()
 	switch {
 	case err == nil:
 		return finish("ok", "")
