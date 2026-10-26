@@ -73,6 +73,8 @@ try {
   await page.getByText("Key installed and connection verified", { exact: false }).waitFor({ timeout: 30000 });
   await page.locator("table td", { hasText: deviceIp }).first().waitFor();
   console.log("PASS: device added through the wizard and shown in the inventory");
+  // The wizard hands over to the health-check dialog; close it before using the sidebar.
+  await page.locator(".health-modal").getByRole("button", { name: "Close" }).click();
   await page.locator("aside nav a", { hasText: "Configuration" }).click();
   await page.getByRole("heading", { name: /Access points with a secret|Wi-Fi sign-in/ }).first().waitFor();
   await page.locator("table td", { hasText: deviceIp }).first().waitFor();
