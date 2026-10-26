@@ -70,6 +70,10 @@ func init() { opRestoreApply.Timeout = restoreApplyTimeout }
 
 var restoreOperations = []operation{opRestoreUpload, opRestoreHash, opRestoreApply, opRestoreCleanup}
 
+const staleRestoreSQL = `UPDATE device_restores SET status='interrupted', finished_at=NOW(),
+	detail='the server stopped before this restore finished'
+	WHERE device_id=$1 AND status='running' AND created_at < NOW() - ($2 * INTERVAL '1 second')`
+
 type deviceRestore struct {
 	ID         int64      `json:"id"`
 	DeviceID   string     `json:"device_id"`
@@ -150,6 +154,8 @@ func (a *app) listDeviceRestores(w http.ResponseWriter, r *http.Request) {
 	if !requireAnyRole(w, r, "admin", "operator", "readonly") {
 		return
 	}
+	// A restore whose server stopped midway has no worker left to finish its row.
+	_, _ = a.db.Exec(r.Context(), staleRestoreSQL, deviceID, int(staleRestoreAfter.Seconds()))
 	rows, err := a.db.Query(r.Context(), `SELECT `+deviceRestoreColumns+` FROM device_restores
 		WHERE device_id=$1 ORDER BY created_at DESC, id DESC LIMIT 20`, deviceID)
 	if err != nil {
@@ -284,10 +290,7 @@ func (a *app) restoreDeviceBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `UPDATE device_restores SET status='interrupted', finished_at=NOW(),
-		detail='the server stopped before this restore finished'
-		WHERE device_id=$1 AND status='running' AND created_at < NOW() - ($2 * INTERVAL '1 second')`,
-		deviceID, int(staleRestoreAfter.Seconds()))
+	_, err = tx.Exec(r.Context(), staleRestoreSQL, deviceID, int(staleRestoreAfter.Seconds()))
 	var changing bool
 	if err == nil {
 		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM config_changes WHERE device_id=$1 AND status='applying')`, deviceID).Scan(&changing)
