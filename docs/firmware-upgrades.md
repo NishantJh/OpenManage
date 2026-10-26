@@ -87,6 +87,18 @@ OpenManage keeps a **package source** registry (admin-managed, audited). A packa
 
 **Packages already on the device** (installed by hand before OpenManage): the inventory marks them "third-party, source unknown". The admin resolves each one by attaching a source (release file or upload). This is a one-time step and cannot be automated, because the package manager does not keep the original file. On `opkg`, a package from a custom feed the user configured by hand also shows as source unknown; the admin attaches the same kind of file source.
 
+### The package set changes over time
+
+There is no fixed list of third-party packages anywhere in the code. What should be on a device is data:
+
+- **Desired package set** per device, optionally inherited from a **group set** (for example "all access points") with per-device additions and removals on top. A set holds: official packages to add, default packages to remove, and package sources (release files or uploads) to install.
+- **Versioned and audited.** Each change (add, remove, swap a source for a newer version) is a new revision with who and when. Rolling back means selecting an earlier revision.
+- **Applied on the next flash by default.** The upgrade plan always compares the desired set with what the device reports installed and shows the diff (to add, to remove, to update). Nothing is changed on a device just because a set was edited.
+- **Optional "apply now"** outside a flash, through the same typed operations (`package_install`, and a matching `package_remove`, both write class, source id or package name from the registered set only). This is for adding a theme to a running device without a firmware upgrade.
+- **Drift:** the existing drift view also reports where a device's installed packages differ from its desired set, for example a package someone added by hand. The admin can adopt it into the set (after attaching a source) or leave it as a warning.
+- **Source updates are explicit.** Registering a newer file for a package creates a new source version; sets can pin a version or follow "latest registered". Either way the upgrade plan shows the version change before anything is installed.
+- **Unused sources** can be removed once no set refers to them; stored files are deleted with them.
+
 ### Using sources during an upgrade
 
 1. **Reinstall after the flash** (Phase 2, default). Once the device is back, `package_install` reinstalls each third-party package from its source. Risk: the device briefly runs without the package (for a LuCI theme it falls back to the default theme), and the package must still suit the new release; a LuCI theme built for another LuCI version can fail to load.
@@ -140,6 +152,7 @@ New operations (names indicative):
 | `firmware_check` | read | `sysupgrade -T` on the staged image |
 | `firmware_flash` | write, disruptive | Start `sysupgrade` detached; the connection will drop |
 | `package_install` | write | Install a package from a registered source (stored release file or upload, allow-untrusted); parameters are source id only |
+| `package_remove` | write | Remove a named package that the desired set marks for removal; package name validated against the device manifest |
 
 Write operations audit transactionally (a Section 2 rule). A job state machine in PostgreSQL (`planned`, `built`, `staged`, `flashing`, `verifying`, `done`, `needs_attention`) survives restarts, with no worker service: the existing server process drives it, like the monitoring loop. Migrations are additive.
 
