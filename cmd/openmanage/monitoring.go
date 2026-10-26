@@ -33,6 +33,8 @@ type monitoringSettings struct {
 	// BackupIntervalSeconds is at least one day.
 	BackupsEnabled        bool `json:"backups_enabled"`
 	BackupIntervalSeconds int  `json:"backup_interval_seconds"`
+	// BackupRetention is how many unpinned backups are kept per device (1 to 20).
+	BackupRetention int `json:"backup_retention"`
 	// ClientTrackingEnabled turns on Wi-Fi client tracking for the device location
 	// map; ClientPollIntervalSeconds is how often each AP is asked for its clients.
 	ClientTrackingEnabled     bool      `json:"client_tracking_enabled"`
@@ -41,11 +43,11 @@ type monitoringSettings struct {
 }
 
 const monitoringSettingsColumns = `enabled, interval_seconds, snapshots_enabled, snapshot_interval_seconds,
-	client_tracking_enabled, client_poll_interval_seconds, updated_at, backups_enabled, backup_interval_seconds`
+	client_tracking_enabled, client_poll_interval_seconds, updated_at, backups_enabled, backup_interval_seconds, backup_retention`
 
 func scanMonitoringSettings(row pgx.Row, s *monitoringSettings) error {
 	return row.Scan(&s.Enabled, &s.IntervalSeconds, &s.SnapshotsEnabled, &s.SnapshotIntervalSeconds,
-		&s.ClientTrackingEnabled, &s.ClientPollIntervalSeconds, &s.UpdatedAt, &s.BackupsEnabled, &s.BackupIntervalSeconds)
+		&s.ClientTrackingEnabled, &s.ClientPollIntervalSeconds, &s.UpdatedAt, &s.BackupsEnabled, &s.BackupIntervalSeconds, &s.BackupRetention)
 }
 
 type monitoringCheck struct {
@@ -84,6 +86,7 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 		ClientPollIntervalSeconds *int  `json:"client_poll_interval_seconds"`
 		BackupsEnabled            *bool `json:"backups_enabled"`
 		BackupIntervalSeconds     *int  `json:"backup_interval_seconds"`
+		BackupRetention           *int  `json:"backup_retention"`
 	}
 	if err := decodeJSONBody(w, r, monitoringBodyLimit, &in); err != nil {
 		if errors.Is(err, errTrailingJSON) {
@@ -109,6 +112,10 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "backup interval must be between 1 and 30 days")
 		return
 	}
+	if in.BackupRetention != nil && (*in.BackupRetention < minBackupRetention || *in.BackupRetention > maxBackupRetention) {
+		writeError(w, http.StatusBadRequest, "backup retention must be between 1 and 20")
+		return
+	}
 	user := r.Context().Value(userContextKey).(authUser)
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
@@ -122,16 +129,18 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 			snapshot_interval_seconds=COALESCE($4, snapshot_interval_seconds),
 			client_tracking_enabled=COALESCE($5, client_tracking_enabled),
 			client_poll_interval_seconds=COALESCE($6, client_poll_interval_seconds),
-			backups_enabled=COALESCE($7, backups_enabled), backup_interval_seconds=COALESCE($8, backup_interval_seconds), updated_at=NOW()
+			backups_enabled=COALESCE($7, backups_enabled), backup_interval_seconds=COALESCE($8, backup_interval_seconds),
+			backup_retention=COALESCE($9, backup_retention), updated_at=NOW()
 		WHERE id=TRUE
 		RETURNING `+monitoringSettingsColumns, in.Enabled, in.IntervalSeconds, in.SnapshotsEnabled, in.SnapshotIntervalSeconds,
-		in.ClientTrackingEnabled, in.ClientPollIntervalSeconds, in.BackupsEnabled, in.BackupIntervalSeconds), &settings)
+		in.ClientTrackingEnabled, in.ClientPollIntervalSeconds, in.BackupsEnabled, in.BackupIntervalSeconds, in.BackupRetention), &settings)
 	if err == nil {
 		err = insertAuditEvent(r.Context(), tx, user.ID, "monitoring.settings.update", "monitoring", "settings",
 			map[string]any{"enabled": settings.Enabled, "interval_seconds": settings.IntervalSeconds,
 				"snapshots_enabled": settings.SnapshotsEnabled, "snapshot_interval_seconds": settings.SnapshotIntervalSeconds,
 				"client_tracking_enabled": settings.ClientTrackingEnabled, "client_poll_interval_seconds": settings.ClientPollIntervalSeconds,
-				"backups_enabled": settings.BackupsEnabled, "backup_interval_seconds": settings.BackupIntervalSeconds})
+				"backups_enabled": settings.BackupsEnabled, "backup_interval_seconds": settings.BackupIntervalSeconds,
+				"backup_retention": settings.BackupRetention})
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

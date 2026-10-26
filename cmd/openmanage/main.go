@@ -183,6 +183,8 @@ func main() {
 	mux.HandleFunc("GET /api/devices/{id}/backups", a.listDeviceBackups)
 	mux.HandleFunc("POST /api/devices/{id}/backups/{backup}/download", a.downloadDeviceBackup)
 	mux.HandleFunc("DELETE /api/devices/{id}/backups/{backup}", a.deleteDeviceBackup)
+	mux.HandleFunc("POST /api/devices/{id}/backups/{backup}/restore", a.restoreDeviceBackup)
+	mux.HandleFunc("GET /api/devices/{id}/restores", a.listDeviceRestores)
 	mux.HandleFunc("GET /api/config-settings", a.listWritableSettings)
 	mux.HandleFunc("GET /api/devices/{id}/config-changes", a.listConfigChanges)
 	mux.HandleFunc("POST /api/devices/{id}/config-changes", a.previewConfigChange)
