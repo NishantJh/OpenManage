@@ -43,10 +43,21 @@ func TestSniffImage(t *testing.T) {
 		"empty":         {},
 		"truncated png": png[:20],
 		"too wide":      encodedImage(t, floorImageMaxSide+1, 1, false),
+		"too stretched": encodedImage(t, 200, 10, false),
 	}
 	for name, data := range bad {
 		if _, _, _, err := sniffImage(data); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+func TestFloorImageHeight(t *testing.T) {
+	i := floorImage{WidthM: 20, PxW: 800, PxH: 500}
+	if got := i.heightM(); got != 12.5 {
+		t.Fatalf("height = %v, want 12.5", got)
+	}
+	if (floorImage{WidthM: 20}).heightM() != 0 {
+		t.Fatal("an image with unknown pixels should have no height")
 	}
 }

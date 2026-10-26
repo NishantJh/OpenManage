@@ -147,10 +147,18 @@ func (a *app) putFloorPlan(w http.ResponseWriter, r *http.Request) {
 		in.Image = &g
 	}
 	if in.Image != nil {
-		var one int
-		if err := tx.QueryRow(r.Context(), `SELECT 1 FROM floor_plan_image WHERE id=TRUE`).Scan(&one); err != nil {
-			in.Image = nil
+		if err := fillImage(r.Context(), tx, &in); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not save floor plan")
+			return
 		}
+	}
+	if in.Image != nil && in.Image.heightM() > floorPlanMaxExtent {
+		writeError(w, http.StatusBadRequest, "the plan image is too tall for its width")
+		return
+	}
+	if in.Image != nil {
+		g := in.Image.geometry()
+		in.Image = &g
 	}
 	raw, _ := json.Marshal(in)
 	var resp floorPlanResponse

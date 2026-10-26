@@ -47,13 +47,10 @@ func (i *floorImage) validate() error {
 func (i floorImage) geometry() floorImage { return floorImage{X: i.X, Y: i.Y, WidthM: i.WidthM} }
 
 // fillImage adds the stored picture's facts to a layout. A layout that names an image that is
-// no longer stored simply loses it.
+// no longer stored loses it.
 func fillImage(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, l *floorLayout) error {
-	if l.Image == nil {
-		return nil
-	}
 	var w, h int
 	var at time.Time
 	err := q.QueryRow(ctx, `SELECT width_px, height_px, updated_at FROM floor_plan_image WHERE id=TRUE`).Scan(&w, &h, &at)
@@ -64,8 +61,21 @@ func fillImage(ctx context.Context, q interface {
 	if err != nil {
 		return err
 	}
+	// A stored picture whose placement was lost (an older app version rewrote the layout) comes
+	// back with the default placement instead of disappearing.
+	if l.Image == nil {
+		l.Image = &floorImage{WidthM: floorImageDefaultM}
+	}
 	l.Image.PxW, l.Image.PxH, l.Image.Version = w, h, strconv.FormatInt(at.UnixNano(), 10)
 	return nil
+}
+
+// heightM is the picture's height on the plan given its width and its own aspect ratio.
+func (i floorImage) heightM() float64 {
+	if i.PxW == 0 {
+		return 0
+	}
+	return i.WidthM * float64(i.PxH) / float64(i.PxW)
 }
 
 // sniffImage checks the bytes really are a PNG or JPEG of a sane size and returns its type
@@ -82,6 +92,9 @@ func sniffImage(data []byte) (contentType string, w, h int, err error) {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return "", 0, 0, errors.New("the plan image could not be read")
+	}
+	if cfg.Width > 10*cfg.Height || cfg.Height > 10*cfg.Width {
+		return "", 0, 0, errors.New("the plan image is too stretched (at most 10 to 1)")
 	}
 	if cfg.Width < 1 || cfg.Height < 1 || cfg.Width > floorImageMaxSide || cfg.Height > floorImageMaxSide || cfg.Width*cfg.Height > floorImageMaxPixels {
 		return "", 0, 0, errors.New("the plan image is too large (at most 8000 px a side)")

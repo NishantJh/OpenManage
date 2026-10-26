@@ -16,10 +16,10 @@ const bars=(dbm:number|null)=>dbm===null?0:dbm>-55?4:dbm>-65?3:dbm>-75?2:1;
 
 // A feet field (the plan itself is in metres) that can be typed into freely (empty or
 // half-typed values are kept as text) and only changes the plan once the text is a valid size.
-function SizeInput({label,value,onCommit}:{label:string;value:number;onCommit:(v:number)=>void}){
+function SizeInput({label,value,onCommit,minFt=MIN_FT}:{label:string;value:number;onCommit:(v:number)=>void;minFt?:number}){
  const [text,setText]=useState(String(toFt(value))),[focused,setFocused]=useState(false);
  useEffect(()=>{if(!focused)setText(String(toFt(value)))},[value,focused]);
- return <input aria-label={label} type="number" inputMode="decimal" min={MIN_FT} max={MAX_FT} step={1} value={text} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e=>{setText(e.target.value);const v=Number(e.target.value);if(e.target.value!==""&&v>=MIN_FT&&v<=MAX_FT)onCommit(v*FT)}}/>;
+ return <input aria-label={label} type="number" inputMode="decimal" min={minFt} max={MAX_FT} step={1} value={text} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e=>{setText(e.target.value);const v=Number(e.target.value);if(e.target.value!==""&&v>=minFt&&v<=MAX_FT)onCommit(v*FT)}}/>;
 }
 
 const WALL_SNAP=0.8,PAD=1.4; // PAD leaves room around the plan for APs on outer walls and their labels
@@ -139,13 +139,13 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
      <rect x={-PAD} y={-PAD} width={extentX+PAD} height={extentY+PAD} fill="url(#fp-grid)"/>
      {img&&<g>
       <image href={"/api/floor-plan/image?v="+(img.version??"")} x={img.x} y={img.y} width={img.width_m} height={img.h} preserveAspectRatio="none" className="fp-plan-image" onPointerDown={e=>adjust&&start(e,"image","img",img.x,img.y)}/>
-      {canEdit&&adjust&&<><rect x={img.x} y={img.y} width={img.width_m} height={img.h} className="fp-image-frame" pointerEvents="none"/><rect x={img.x+img.width_m-P(5)} y={img.y+img.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className="fp-handle show" onPointerDown={e=>start(e,"imgsize","img",0,0)}><title>Drag to scale the image</title></rect></>}</g>}
+      {canEdit&&adjust&&<><rect x={img.x} y={img.y} width={img.width_m} height={img.h} className="fp-image-frame" pointerEvents="none"/><rect x={img.x+img.width_m-P(5)} y={img.y+img.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className="fp-handle show img" onPointerDown={e=>start(e,"imgsize","img",0,0)}><title>Drag to scale the image</title></rect></>}</g>}
      {plan.rooms.map(r=><g key={r.id} onPointerEnter={()=>setHoverRoom(r.id)} onPointerLeave={()=>setHoverRoom("")}>
       <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={P(3)} className="fp-room" onPointerDown={e=>start(e,"room",r.id,r.x,r.y)} style={{cursor:canEdit?"move":"default"}}/>
       <text x={r.x+P(14)} y={r.y+P(24)} className={canEdit?"fp-room-name edit":"fp-room-name"} style={{fontSize:P(11)}} onClick={()=>canEdit&&renameRoom(r.id)}>{canEdit&&<title>Click to rename</title>}{r.name.toUpperCase()}</text>
       <text x={r.x+P(14)} y={r.y+r.h-P(12)} className="fp-room-size" style={{fontSize:P(10)}}>{toFt(r.w)} × {toFt(r.h)} ft</text>
       {canEdit&&<rect x={r.x+r.w-P(5)} y={r.y+r.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className={hoverRoom===r.id||drag?.key===r.id?"fp-handle show":"fp-handle"} onPointerDown={e=>start(e,"size",r.id,0,0)}><title>Drag to resize</title></rect>}</g>)}
-     {plan.placements.map(a=><g key={a.device_id} onPointerDown={e=>start(e,"ap",a.device_id,a.x,a.y)} style={{cursor:canEdit?"grab":"default"}}>
+     {plan.placements.map(a=><g key={a.device_id} className="fp-ap-g" onPointerDown={e=>start(e,"ap",a.device_id,a.x,a.y)} style={{cursor:canEdit?"grab":"default"}}>
       <circle cx={a.x} cy={a.y} r={3} fill="url(#fp-coverage)" pointerEvents="none"/>
       <circle cx={a.x} cy={a.y} r={P(8)} className="fp-ap"/><circle cx={a.x} cy={a.y} r={P(3)} fill="#8d78f5" pointerEvents="none"/>
       <text x={a.x+P(14)} y={a.y+P(4)} className="fp-ap-name" style={{fontSize:P(12),strokeWidth:P(3)}} pointerEvents="none">{nameOf(a.device_id)}</text></g>)}
@@ -178,7 +178,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
      <span className="fp-image-title"><ImageIcon size={14}/> Plan image</span>
      <label className={"secondary fp-file"+(imgBusy?" disabled":"")}><Upload size={14}/> {plan.image?"Replace":"Upload"}<input type="file" accept="image/png,image/jpeg" disabled={imgBusy} aria-label="Upload plan image" onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f)void uploadImage(f)}}/></label>
      {plan.image&&<><button className={"secondary"+(adjust?" on":"")} aria-pressed={adjust} onClick={()=>setAdjust(!adjust)}><Move size={14}/> {adjust?"Done adjusting":"Move and scale"}</button>
-      <span className="fp-image-width">Width (ft)<SizeInput label="Plan image width" value={plan.image.width_m} onCommit={w=>change({...plan,image:{...plan.image!,width_m:w}})}/></span>
+      <span className="fp-image-width">Width (ft)<SizeInput label="Plan image width" minFt={3.3} value={plan.image.width_m} onCommit={w=>change({...plan,image:{...plan.image!,width_m:w}})}/></span>
       <button className="secondary fp-icon" aria-label="Remove plan image" disabled={imgBusy} onClick={()=>void removeImage()}><Trash2 size={14}/></button></>}
      <small>PNG or JPEG, up to 5 MB. Set the width of the whole picture in feet (or drag its corner) so it matches your real rooms.</small></div>
     {plan.rooms.length>0&&<div className="fp-edit-head"><span>Room</span><span>Width (ft)</span><span>Height (ft)</span><span/></div>}
