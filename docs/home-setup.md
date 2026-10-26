@@ -46,10 +46,11 @@ openssl rand -base64 24   # POSTGRES_PASSWORD
 openssl rand -base64 24   # OPENMANAGE_ADMIN_PASSWORD
 ```
 
-Edit `.env` with those values and set `OPENMANAGE_PORT=192.168.1.10:8080` so the dashboard is reachable from the LAN. That is plain HTTP: fine for a trusted home LAN, but read the Quick start note in the README before using it from guest or shared networks. Store the encryption key in your password manager: without it, the stored SSH keys and RADIUS secrets cannot be recovered ([Backup and recovery](backup-recovery.md)).
+Edit `.env` with those values, set `OPENMANAGE_IMAGE=ghcr.io/nishantjh/openmanage:latest` (the prebuilt image, so nothing is built on the container), and set `OPENMANAGE_PORT=192.168.1.10:8080` so the dashboard is reachable from the LAN. That is plain HTTP: fine for a trusted home LAN, but read the Quick start note in the README before using it from guest or shared networks. Store the encryption key in your password manager: without it, the stored SSH keys and RADIUS secrets cannot be recovered ([Backup and recovery](backup-recovery.md)).
 
 ```sh
-docker compose up -d --build
+docker compose pull app
+docker compose up -d
 docker compose logs -f app   # wait for the listening line, then Ctrl+C
 ```
 
@@ -57,21 +58,16 @@ Sign in at `http://192.168.1.10:8080` as `admin` with the password from `.env`. 
 
 ### Updating
 
-Every merge to `main` publishes a prebuilt image to GitHub Container Registry, so the container does not need to build anything. One-time switch: add this line to `.env`:
-
-```
-OPENMANAGE_IMAGE=ghcr.io/nishantjh/openmanage:latest
-```
-
-Then, for each update:
+Every merge to `main` publishes a prebuilt image to GitHub Container Registry, and `OPENMANAGE_IMAGE` in `.env` (set in step 2) points at it, so the container never builds anything. For each update:
 
 ```sh
 cd /opt/openmanage
+git pull
 docker compose pull app
 docker compose up -d
 ```
 
-Database changes apply on start. To go back to a known version, set `OPENMANAGE_IMAGE` to `ghcr.io/nishantjh/openmanage:sha-<commit>` and run `docker compose up -d`. If `pull` is denied, the package is private: open the repository's **Packages** on GitHub, choose `openmanage`, and set its visibility to public (the image holds no secrets; they come from `.env`). Building on the host with `docker compose up -d --build` still works when `OPENMANAGE_IMAGE` is unset.
+`git pull` brings in any `compose.yaml` or `.env.example` changes; the image itself comes from `pull`. Database changes apply on start. To go back to a known version, set `OPENMANAGE_IMAGE` to `ghcr.io/nishantjh/openmanage:sha-<commit>` and run `docker compose up -d`. If `pull` is denied, the package is private: open the repository's **Packages** on GitHub, choose `openmanage`, and set its visibility to public (the image holds no secrets; they come from `.env`). Only if you leave `OPENMANAGE_IMAGE` unset does Compose use a locally built image (`docker compose up -d --build`); that is not the recommended route.
 
 ## 3. Add each OpenWrt device
 
