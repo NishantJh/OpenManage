@@ -77,7 +77,7 @@ tr.selected td{background:#1a1e2a}
 .fp-client.on{fill:#7be0a4}
 .fp-client.off{fill:#e07b7b;opacity:.75}
 .fp-hit{cursor:default}
-.fp-tip{position:absolute;z-index:2;display:grid;gap:2px;min-width:150px;padding:9px 12px;border:1px solid #2d3448;border-radius:8px;background:#1a1f2e;box-shadow:0 6px 18px rgba(0,0,0,.4);transform:translate(14px,-50%);pointer-events:none;font-size:11px;color:#8a91a5}
+.fp-tip{position:absolute;z-index:2;display:grid;gap:2px;min-width:150px;padding:9px 12px;border:1px solid #2d3448;border-radius:8px;background:#1a1f2e;box-shadow:0 6px 18px rgba(0,0,0,.4);pointer-events:none;font-size:11px;color:#8a91a5}
 .fp-tip b{font-size:13px;color:#eceef5}
 .fp-tip small{font-size:10px;color:#6b7284}
 .fp-empty{padding:26px 16px;text-align:center;color:#8f96a7;font-size:12px}

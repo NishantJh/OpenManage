@@ -46,7 +46,7 @@ export function placeDots(rooms:FloorRoom[],items:{id:string;ap:{x:number;y:numb
  const out=new Map<string,{x:number;y:number;room:string}>(),taken=new Map<string,{x:number;y:number}[]>();
  for(const it of [...items].sort((a,b)=>a.id<b.id?-1:1)){
   const room=rooms.find(r=>inRoom(r,it.ap.x,it.ap.y))??[...rooms].sort((a,b)=>Math.hypot(a.x+a.w/2-it.ap.x,a.y+a.h/2-it.ap.y)-Math.hypot(b.x+b.w/2-it.ap.x,b.y+b.h/2-it.ap.y))[0];
-  if(!room){out.set(it.id,{x:it.ap.x+(frac(hash(it.id)/4294967296)-0.5)*2,y:it.ap.y+1+frac(hash(it.id+"y")/4294967296),room:""});continue}
+  if(!room){out.set(it.id,{x:it.ap.x+(frac(hash(it.id)/4294967296)-0.5)*2,y:it.ap.y+0.3+0.6*frac(hash(it.id+"y")/4294967296),room:""});continue}
   const used=taken.get(room.id)??[],m=Math.min(0.4,room.w/4,room.h/4),h1=hash(it.id)/4294967296,h2=hash(it.id+"y")/4294967296;
   let best={x:room.x+room.w/2,y:room.y+room.h/2},bestD=-1;
   for(let k=0;k<40;k++){
@@ -143,7 +143,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
       <circle cx={x} cy={y} r={P(c.connected?2.6:2.2)} className={c.connected?"fp-client on":"fp-client off"} pointerEvents="none"/>
       <circle cx={x} cy={y} r={P(9)} fill="transparent" className="fp-hit"/></g>)}
     </svg>
-    {(()=>{const d=dots.find(v=>v.c.id===hover);if(!d)return null;const c=d.c;return <div className="fp-tip" role="status" style={{left:(d.x+PAD)/(extentX+PAD)*100+"%",top:(d.y+PAD)/(extentY+PAD)*100+"%"}}><b>{c.label||c.name||"Unknown device"}</b><span>{nameOf(c.device_id)}{d.room?" · "+d.room:""}{c.connected&&c.signal_dbm!==null?" · "+c.signal_dbm+" dBm":""}</span><small>{c.mac_hint} · {c.connected?"connected":"last seen "+ago(c.last_seen)}</small></div>})()}
+    {(()=>{const d=dots.find(v=>v.c.id===hover);if(!d)return null;const c=d.c,fx=(d.x+PAD)/(extentX+PAD),fy=(d.y+PAD)/(extentY+PAD);return <div className="fp-tip" role="status" style={{left:fx*100+"%",top:fy*100+"%",transform:`translate(${fx>0.6?"calc(-100% - 14px)":"14px"},${fy<0.2?"-15%":fy>0.8?"-85%":"-50%"})`}}><b>{c.label||c.name||"Unknown device"}</b><span>{nameOf(c.device_id)}{d.room?" · "+d.room:""}{c.connected&&c.signal_dbm!==null?" · "+c.signal_dbm+" dBm":""}</span><small>{c.mac_hint} · {c.connected?"connected":"last seen "+ago(c.last_seen)}</small></div>})()}
     </div>
     {plan.rooms.length===0&&<div className="fp-empty">{canEdit?"Add a room to start drawing your floor plan.":"No floor plan has been drawn yet."}</div>}
     <p className="fp-note">A device is shown in the room of the access point it is connected to. This is not a measured position.</p>
