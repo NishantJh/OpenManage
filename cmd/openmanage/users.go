@@ -282,21 +282,7 @@ func (a *app) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	// Wrong current passwords count towards the login limit, so this endpoint
-	// cannot be used to guess a password from a stolen session.
-	clientIP := loginClientIP(r.RemoteAddr)
-	if blocked, retryAfter := loginAttempts.isBlocked(clientIP, time.Now()); blocked {
-		writeLoginRateLimited(w, retryAfter)
-		return
-	}
-	var hash string
-	if err := a.db.QueryRow(r.Context(), `SELECT password_hash FROM users WHERE id=$1`, user.ID).Scan(&hash); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not change password")
-		return
-	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.CurrentPassword)) != nil {
-		loginAttempts.recordFailure(clientIP, time.Now())
-		writeError(w, http.StatusForbidden, "current password is incorrect")
+	if !a.verifyUserPassword(w, r, user.ID, in.CurrentPassword, "current password is incorrect") {
 		return
 	}
 	keep := ""
@@ -335,4 +321,27 @@ func (a *app) setPassword(ctx context.Context, actorID, userID, password, keepSe
 		err = tx.Commit(ctx)
 	}
 	return err
+}
+
+// verifyUserPassword re-checks a signed-in user's password before a sensitive action
+// (a password change, a backup download). Wrong passwords count towards the login
+// limit, so these endpoints cannot be used to guess a password from a stolen session.
+// It writes the error response itself and returns false when the check fails.
+func (a *app) verifyUserPassword(w http.ResponseWriter, r *http.Request, userID, password, wrongMessage string) bool {
+	clientIP := loginClientIP(r.RemoteAddr)
+	if blocked, retryAfter := loginAttempts.isBlocked(clientIP, time.Now()); blocked {
+		writeLoginRateLimited(w, retryAfter)
+		return false
+	}
+	var hash string
+	if err := a.db.QueryRow(r.Context(), `SELECT password_hash FROM users WHERE id=$1`, userID).Scan(&hash); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not verify password")
+		return false
+	}
+	if len(password) > maxPasswordLength || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		loginAttempts.recordFailure(clientIP, time.Now())
+		writeError(w, http.StatusForbidden, wrongMessage)
+		return false
+	}
+	return true
 }

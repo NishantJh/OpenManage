@@ -29,6 +29,10 @@ type monitoringSettings struct {
 	// health monitoring; SnapshotIntervalSeconds is how often each device is exported.
 	SnapshotsEnabled        bool `json:"snapshots_enabled"`
 	SnapshotIntervalSeconds int  `json:"snapshot_interval_seconds"`
+	// BackupsEnabled turns on scheduled device configuration backups (archives);
+	// BackupIntervalSeconds is at least one day.
+	BackupsEnabled        bool `json:"backups_enabled"`
+	BackupIntervalSeconds int  `json:"backup_interval_seconds"`
 	// ClientTrackingEnabled turns on Wi-Fi client tracking for the device location
 	// map; ClientPollIntervalSeconds is how often each AP is asked for its clients.
 	ClientTrackingEnabled     bool      `json:"client_tracking_enabled"`
@@ -37,11 +41,11 @@ type monitoringSettings struct {
 }
 
 const monitoringSettingsColumns = `enabled, interval_seconds, snapshots_enabled, snapshot_interval_seconds,
-	client_tracking_enabled, client_poll_interval_seconds, updated_at`
+	client_tracking_enabled, client_poll_interval_seconds, updated_at, backups_enabled, backup_interval_seconds`
 
 func scanMonitoringSettings(row pgx.Row, s *monitoringSettings) error {
 	return row.Scan(&s.Enabled, &s.IntervalSeconds, &s.SnapshotsEnabled, &s.SnapshotIntervalSeconds,
-		&s.ClientTrackingEnabled, &s.ClientPollIntervalSeconds, &s.UpdatedAt)
+		&s.ClientTrackingEnabled, &s.ClientPollIntervalSeconds, &s.UpdatedAt, &s.BackupsEnabled, &s.BackupIntervalSeconds)
 }
 
 type monitoringCheck struct {
@@ -78,6 +82,8 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 		SnapshotIntervalSeconds   *int  `json:"snapshot_interval_seconds"`
 		ClientTrackingEnabled     *bool `json:"client_tracking_enabled"`
 		ClientPollIntervalSeconds *int  `json:"client_poll_interval_seconds"`
+		BackupsEnabled            *bool `json:"backups_enabled"`
+		BackupIntervalSeconds     *int  `json:"backup_interval_seconds"`
 	}
 	if err := decodeJSONBody(w, r, monitoringBodyLimit, &in); err != nil {
 		if errors.Is(err, errTrailingJSON) {
@@ -99,6 +105,10 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "client poll interval must be between 60 and 600 seconds")
 		return
 	}
+	if in.BackupIntervalSeconds != nil && (*in.BackupIntervalSeconds < 86400 || *in.BackupIntervalSeconds > 2592000) {
+		writeError(w, http.StatusBadRequest, "backup interval must be between 1 and 30 days")
+		return
+	}
 	user := r.Context().Value(userContextKey).(authUser)
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
@@ -111,15 +121,17 @@ func (a *app) updateMonitoringSettings(w http.ResponseWriter, r *http.Request) {
 		SET enabled=$1, interval_seconds=$2, snapshots_enabled=COALESCE($3, snapshots_enabled),
 			snapshot_interval_seconds=COALESCE($4, snapshot_interval_seconds),
 			client_tracking_enabled=COALESCE($5, client_tracking_enabled),
-			client_poll_interval_seconds=COALESCE($6, client_poll_interval_seconds), updated_at=NOW()
+			client_poll_interval_seconds=COALESCE($6, client_poll_interval_seconds),
+			backups_enabled=COALESCE($7, backups_enabled), backup_interval_seconds=COALESCE($8, backup_interval_seconds), updated_at=NOW()
 		WHERE id=TRUE
 		RETURNING `+monitoringSettingsColumns, in.Enabled, in.IntervalSeconds, in.SnapshotsEnabled, in.SnapshotIntervalSeconds,
-		in.ClientTrackingEnabled, in.ClientPollIntervalSeconds), &settings)
+		in.ClientTrackingEnabled, in.ClientPollIntervalSeconds, in.BackupsEnabled, in.BackupIntervalSeconds), &settings)
 	if err == nil {
 		err = insertAuditEvent(r.Context(), tx, user.ID, "monitoring.settings.update", "monitoring", "settings",
 			map[string]any{"enabled": settings.Enabled, "interval_seconds": settings.IntervalSeconds,
 				"snapshots_enabled": settings.SnapshotsEnabled, "snapshot_interval_seconds": settings.SnapshotIntervalSeconds,
-				"client_tracking_enabled": settings.ClientTrackingEnabled, "client_poll_interval_seconds": settings.ClientPollIntervalSeconds})
+				"client_tracking_enabled": settings.ClientTrackingEnabled, "client_poll_interval_seconds": settings.ClientPollIntervalSeconds,
+				"backups_enabled": settings.BackupsEnabled, "backup_interval_seconds": settings.BackupIntervalSeconds})
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -233,6 +245,9 @@ func (a *app) runDueMonitoringChecks(ctx context.Context) {
 	}
 	if settings.SnapshotsEnabled {
 		a.runSnapshotBatch(ctx, lockConn, settings)
+	}
+	if settings.BackupsEnabled {
+		a.runBackupBatch(ctx, lockConn, settings)
 	}
 	if settings.ClientTrackingEnabled {
 		a.runClientBatch(ctx, lockConn, settings)

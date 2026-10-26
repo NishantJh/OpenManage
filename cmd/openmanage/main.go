@@ -37,6 +37,8 @@ type app struct {
 	secureCookie bool
 	// snapshotRetry holds back scheduled snapshots of devices that just failed.
 	snapshotRetry retryTracker
+	// backupRetry does the same for scheduled configuration backups.
+	backupRetry retryTracker
 	// clientPolls remembers when each AP was last asked for its Wi-Fi clients.
 	clientPolls pollTracker
 	// leaseNames holds DHCP hostnames per device so any router's leases can name a client.
@@ -168,6 +170,10 @@ func main() {
 	mux.HandleFunc("GET /api/devices/{id}/config-snapshots", a.listConfigSnapshots)
 	mux.HandleFunc("GET /api/devices/{id}/config-snapshots/{snapshot}/changes", a.configSnapshotChanges)
 	mux.HandleFunc("POST /api/devices/{id}/config-snapshots/{snapshot}/acknowledge", a.acknowledgeConfigDrift)
+	mux.HandleFunc("POST /api/devices/{id}/backups", a.createDeviceBackup)
+	mux.HandleFunc("GET /api/devices/{id}/backups", a.listDeviceBackups)
+	mux.HandleFunc("POST /api/devices/{id}/backups/{backup}/download", a.downloadDeviceBackup)
+	mux.HandleFunc("DELETE /api/devices/{id}/backups/{backup}", a.deleteDeviceBackup)
 	mux.HandleFunc("GET /api/config-settings", a.listWritableSettings)
 	mux.HandleFunc("GET /api/devices/{id}/config-changes", a.listConfigChanges)
 	mux.HandleFunc("POST /api/devices/{id}/config-changes", a.previewConfigChange)
