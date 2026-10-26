@@ -46,12 +46,12 @@ openssl rand -base64 24   # POSTGRES_PASSWORD
 openssl rand -base64 24   # OPENMANAGE_ADMIN_PASSWORD
 ```
 
-Edit `.env` with those values, set `OPENMANAGE_IMAGE=ghcr.io/nishantjh/openmanage:latest` (the prebuilt image, so nothing is built on the container), and set `OPENMANAGE_PORT=192.168.1.10:8080` so the dashboard is reachable from the LAN. That is plain HTTP: fine for a trusted home LAN, but read the Quick start note in the README before using it from guest or shared networks. Store the encryption key in your password manager: without it, the stored SSH keys and RADIUS secrets cannot be recovered ([Backup and recovery](backup-recovery.md)).
+Edit `.env` with those values. Uncomment and set `OPENMANAGE_IMAGE=ghcr.io/nishantjh/openmanage:latest` (the prebuilt image, so nothing is built on the container), and uncomment and set `OPENMANAGE_PORT=192.168.1.10:8080` so the dashboard is reachable from the LAN. That is plain HTTP: fine for a trusted home LAN, but read the Quick start note in the README before using it from guest or shared networks. Store the encryption key in your password manager: without it, the stored SSH keys and RADIUS secrets cannot be recovered ([Backup and recovery](backup-recovery.md)).
 
 ```sh
 docker compose pull app
 docker compose up -d
-docker compose logs -f app   # wait for the listening line, then Ctrl+C
+docker compose logs -f app   # wait for "OpenManage listening on :8080", then Ctrl+C
 ```
 
 Sign in at `http://192.168.1.10:8080` as `admin` with the password from `.env`. Both services use `restart: unless-stopped`, so they come back when the container boots.
