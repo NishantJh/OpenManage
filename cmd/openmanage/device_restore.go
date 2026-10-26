@@ -27,7 +27,13 @@ import (
 //     with mode 600, is hash-checked on the device, and is deleted afterwards.
 
 const (
-	restoreArchivePath   = "/tmp/.om-restore.tar.gz"
+	// The archive lives in a fresh directory that only root can have created: mkdir
+	// fails if the name already exists, so a local process cannot pre-create the path
+	// and swap the file between the hash check and the restore.
+	restoreDir           = "/tmp/.om-restore"
+	restoreArchivePath   = restoreDir + "/backup.tar.gz"
+	restoreApplyTimeout  = 90 * time.Second
+	restoreDownWait      = 90 * time.Second
 	restoreStepTimeout   = 30 * time.Second
 	restoreJobTimeout    = 6 * time.Minute
 	restoreRebootGrace   = 15 * time.Second
@@ -47,17 +53,20 @@ func restoreOperation(name, label, command string) operation {
 
 var (
 	opRestoreUpload = restoreOperation("firmware_restore_upload", "Upload backup",
-		"umask 077; cat > "+restoreArchivePath)
+		"umask 077; mkdir -m 700 "+restoreDir+" && cat > "+restoreArchivePath)
 	opRestoreHash = restoreOperation("firmware_restore_hash", "Check uploaded backup",
 		"sha256sum "+restoreArchivePath)
 	// The reboot is detached so this command's exit status reaches us before the
 	// connection drops. A failed restore removes the file and does not reboot.
 	opRestoreApply = restoreOperation("firmware_restore", "Restore backup",
-		"if sysupgrade -r "+restoreArchivePath+" >/dev/null 2>&1; then rm -f "+restoreArchivePath+
-			"; (sleep 2; reboot) >/dev/null 2>&1 & else rm -f "+restoreArchivePath+"; exit 1; fi")
+		"if sysupgrade -r "+restoreArchivePath+" >/dev/null 2>&1; then rm -rf "+restoreDir+
+			"; (sleep 2; reboot) >/dev/null 2>&1 & else rm -rf "+restoreDir+"; exit 1; fi")
 	opRestoreCleanup = restoreOperation("firmware_restore_cleanup", "Remove uploaded backup",
-		"rm -f "+restoreArchivePath)
+		"rm -rf "+restoreDir)
+	opBootID = readOperation("boot_id", "Boot identity", "cat /proc/sys/kernel/random/boot_id")
 )
+
+func init() { opRestoreApply.Timeout = restoreApplyTimeout }
 
 var restoreOperations = []operation{opRestoreUpload, opRestoreHash, opRestoreApply, opRestoreCleanup}
 
@@ -96,11 +105,13 @@ func archiveAuthorizesKey(authorizedKeys []byte, pub ssh.PublicKey) bool {
 	want := pub.Marshal()
 	rest := authorizedKeys
 	for len(rest) > 0 {
-		key, _, _, next, err := ssh.ParseAuthorizedKey(rest)
+		key, _, options, next, err := ssh.ParseAuthorizedKey(rest)
 		if err != nil {
 			return false
 		}
-		if bytes.Equal(key.Marshal(), want) {
+		// An entry with options (command=, from=, restrict) would let the key in but
+		// not run OpenManage's commands, so it does not count.
+		if len(options) == 0 && bytes.Equal(key.Marshal(), want) {
 			return true
 		}
 		rest = next
@@ -122,7 +133,7 @@ func restorePreflight(b deviceBackup, info archiveInfo, target deviceTarget, liv
 			"; restoring across releases does not migrate settings. Confirm again to continue")
 	}
 	if !archiveAuthorizesKey(info.AuthorizedKeys, target.signer.PublicKey()) {
-		return refuse(http.StatusConflict, "lockout_key", "restoring this backup would remove OpenManage's SSH key from the device and lock OpenManage out")
+		return refuse(http.StatusConflict, "lockout_key", "restoring this backup would remove OpenManage's SSH key (as a plain, unrestricted entry) from the device and lock OpenManage out")
 	}
 	if info.HostKeyFingerprint == "" || info.HostKeyFingerprint != target.Fingerprint {
 		return refuse(http.StatusConflict, "lockout_host_key", "this backup does not carry the SSH host key OpenManage has pinned for the device; restoring it would make the device fail host-key verification")
@@ -277,6 +288,14 @@ func (a *app) restoreDeviceBackup(w http.ResponseWriter, r *http.Request) {
 		detail='the server stopped before this restore finished'
 		WHERE device_id=$1 AND status='running' AND created_at < NOW() - ($2 * INTERVAL '1 second')`,
 		deviceID, int(staleRestoreAfter.Seconds()))
+	var changing bool
+	if err == nil {
+		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM config_changes WHERE device_id=$1 AND status='applying')`, deviceID).Scan(&changing)
+	}
+	if err == nil && changing {
+		writeError(w, http.StatusConflict, "a configuration change is being applied to this device; wait for it to finish")
+		return
+	}
 	if err == nil {
 		err = scanDeviceRestore(tx.QueryRow(r.Context(), `INSERT INTO device_restores(device_id,backup_id,status,step,release_mismatch_accepted,created_by)
 			VALUES($1,$2,'running','uploading',$3,$4) RETURNING `+deviceRestoreColumns, deviceID, backupID, in.AcceptRelease, user.ID), &rec)
@@ -358,6 +377,9 @@ func (a *app) restoreOnDevice(ctx context.Context, deviceID string, archive []by
 		return "could not open a verified SSH session to the device; nothing was changed"
 	}
 	cleanup := func() { _ = session.runWriteRaw(opRestoreCleanup, nil) }
+	// Clear anything left by an earlier attempt, or by a local process squatting on the
+	// name; the upload then creates the directory itself or fails.
+	cleanup()
 	if res := session.runWriteRaw(opRestoreUpload, archive); res.Status != "ok" {
 		cleanup()
 		session.Close()
@@ -370,8 +392,14 @@ func (a *app) restoreOnDevice(ctx context.Context, deviceID string, archive []by
 		session.Close()
 		return "the uploaded backup did not match what was sent; nothing was changed"
 	}
+	bootBefore := ""
+	if res := session.run(opBootID); res.Status == "ok" {
+		bootBefore = res.Output
+	}
 	step("restoring")
-	if res := session.runWriteRaw(opRestoreApply, nil); res.Status != "ok" {
+	// A timed-out apply says nothing about the device: the remote shell may still
+	// finish and reboot, so only a definite failure stops here.
+	if res := session.runWriteRaw(opRestoreApply, nil); res.Status != "ok" && !strings.Contains(res.Error, "timed out") {
 		cleanup()
 		session.Close()
 		return "the device refused to restore the backup; it was not rebooted and may be partly restored. Check it before changing anything else"
@@ -386,11 +414,21 @@ func (a *app) restoreOnDevice(ctx context.Context, deviceID string, archive []by
 	}
 	deadline := time.Now().Add(restoreReturnTimeout)
 	step("verifying")
+	// Success needs proof of a restart: a different boot id, or at least one poll in
+	// which the device was unreachable. Answering as before, with the same boot, would
+	// mean the reboot never happened and the restore is not in effect.
+	sawDown := false
 	for time.Now().Before(deadline) && ctx.Err() == nil {
-		if msg, ok := a.verifyAfterRestore(ctx, deviceID); ok {
-			return ""
-		} else if msg != "" {
+		msg, bootNow, ok := a.verifyAfterRestore(ctx, deviceID)
+		switch {
+		case msg != "":
 			return msg
+		case ok && (sawDown || (bootBefore != "" && bootNow != "" && bootNow != bootBefore)):
+			return ""
+		case ok && time.Until(deadline) < restoreReturnTimeout-restoreDownWait:
+			return "the device answered but did not restart after the restore, so the restored configuration is not in effect yet. Reboot it, then check it"
+		case !ok:
+			sawDown = true
 		}
 		select {
 		case <-time.After(restorePollInterval):
@@ -401,23 +439,29 @@ func (a *app) restoreOnDevice(ctx context.Context, deviceID string, archive []by
 		". Wait a few minutes, power-cycle it if needed, then check it before restoring again"
 }
 
-// verifyAfterRestore tries one fresh SSH connection. It returns ok on success, a
-// message when retrying is pointless, and ("", false) when the device is simply not
-// back yet.
-func (a *app) verifyAfterRestore(ctx context.Context, deviceID string) (string, bool) {
+// verifyAfterRestore tries one fresh SSH connection. It returns ok with the device's
+// boot id on success, a message when retrying is pointless, and ("", "", false) when the
+// device is simply not reachable yet.
+func (a *app) verifyAfterRestore(ctx context.Context, deviceID string) (msg, bootID string, ok bool) {
 	target, err := a.loadDeviceTarget(ctx, deviceID)
 	if err != nil {
-		_, msg := targetError(err)
-		return msg, false
+		_, m := targetError(err)
+		return m, "", false
 	}
 	session, err := openDeviceSession(ctx, target, 10*time.Second)
 	if err != nil {
 		if errors.Is(err, errHostKeyMismatch) {
-			return "the device came back with a different SSH host key than the one OpenManage pinned", false
+			return "the device came back with a different SSH host key than the one OpenManage pinned", "", false
 		}
-		return "", false
+		return "", "", false
 	}
 	defer session.Close()
 	res := session.run(readOperation("system_board", "System information", "ubus call system board"))
-	return "", res.Status == "ok"
+	if res.Status != "ok" {
+		return "", "", false
+	}
+	if boot := session.run(opBootID); boot.Status == "ok" {
+		bootID = boot.Output
+	}
+	return "", bootID, true
 }

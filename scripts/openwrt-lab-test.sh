@@ -607,6 +607,8 @@ psql_om "UPDATE device_backups SET release='24.10.4' WHERE id='$restore_backup'"
 [[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_restore'")" == 0 ]] || fail "a refused restore was audited as started"
 echo "PASS: restore needs the device name and an administrator, and refuses other boards and release mismatches without touching the device"
 
+# A stale or squatted upload directory must not block or hijack the restore.
+docker exec "$router" sh -c 'mkdir -m 777 /tmp/.om-restore && echo stale > /tmp/.om-restore/backup.tar.gz'
 api POST "$restore_url" '{"confirm_name":"lab-router"}'
 [[ "$status" == 202 ]] || { cat "$body" >&2; fail "restore returned HTTP $status"; }
 json 'assert d["status"]=="running" and d["backup_id"]==sys.argv[1], d' "$restore_backup" < "$body"
@@ -618,6 +620,9 @@ for attempt in $(seq 1 60); do
   [[ "$attempt" == 60 ]] && { api GET "/api/devices/$device_id/restores"; cat "$body" >&2; fail "the device did not reboot after the restore"; }
   sleep 1
 done
+# A real device takes tens of seconds to restart; the app only trusts a restore after
+# seeing the device go away (the lab kernel's boot id is the host's, so it cannot differ).
+sleep 30
 docker start "$router" >/dev/null
 for attempt in $(seq 1 120); do
   api GET "/api/devices/$device_id/restores"
@@ -628,7 +633,7 @@ for attempt in $(seq 1 120); do
 done
 [[ "$restore_state" == done ]] || { cat "$body" >&2; fail "restore finished as $restore_state"; }
 [[ "$(docker exec "$router" uci get system.@system[0].hostname)" == lab-restore-A ]] || fail "restore did not bring back the backed-up configuration"
-docker exec "$router" test ! -e /tmp/.om-restore.tar.gz || fail "the uploaded archive was left on the device"
+docker exec "$router" test ! -e /tmp/.om-restore || fail "the uploaded archive was left on the device"
 [[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_restore.done' AND details->>'backup_id'='$restore_backup'")" == 1 ]] || fail "restore outcome was not audited"
 ! psql_om "SELECT details::text FROM audit_events WHERE action LIKE 'device.backup_restore%'" | grep -q 'etc/\|shadow' || fail "a restore audit event names archive files"
 echo "PASS: a stored backup is restored onto the same device, the device reboots, comes back under the pinned host key, and the restore is audited without content"

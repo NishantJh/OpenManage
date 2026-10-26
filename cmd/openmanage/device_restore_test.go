@@ -34,6 +34,10 @@ func TestArchiveAuthorizesKey(t *testing.T) {
 	if archiveAuthorizesKey([]byte(line(other, "other")), ours.PublicKey()) {
 		t.Fatal("another key must not count")
 	}
+	restricted := []byte(`command="/bin/true" ` + line(ours, "openmanage"))
+	if archiveAuthorizesKey(restricted, ours.PublicKey()) {
+		t.Fatal("a key entry with options must not count")
+	}
 	for _, in := range []string{"", "garbage\n", "ssh-ed25519 notbase64 x\n"} {
 		if archiveAuthorizesKey([]byte(in), ours.PublicKey()) {
 			t.Fatalf("%q must not authorize", in)
@@ -83,12 +87,12 @@ func TestRestoreCommandsAreFixedAdminOnlyWrites(t *testing.T) {
 		if op.Class != operationWrite || op.allows("operator") || op.allows("readonly") || !op.allows("admin") {
 			t.Fatalf("%s must be an admin-only write", op.Name)
 		}
-		if !strings.Contains(op.command, restoreArchivePath) || strings.Contains(op.command, "$") {
+		if !strings.Contains(op.command, restoreDir) || strings.Contains(op.command, "$") {
 			t.Fatalf("%s must use the fixed path and no variables: %s", op.Name, op.command)
 		}
 	}
-	if !strings.HasPrefix(opRestoreUpload.command, "umask 077;") {
-		t.Fatal("upload must create a private file")
+	if !strings.HasPrefix(opRestoreUpload.command, "umask 077; mkdir -m 700 "+restoreDir+" &&") {
+		t.Fatal("upload must create a fresh private directory, failing if the name exists")
 	}
 }
 
