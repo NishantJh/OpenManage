@@ -132,10 +132,67 @@ Checked with Nishant 2026-10-23. Sources for the claims below are forum posts, n
 ## Preserving and reapplying configuration
 
 - Default path: `sysupgrade` with config kept (`-k`, the default), which restores `/etc/config` and files listed in `/etc/sysupgrade.conf` and package keep lists.
-- Before flashing, take an OpenManage config snapshot (already exists) **and** a `sysupgrade -b` backup archive. The archive is stored encrypted with the existing AES-GCM key, never logged, size-capped, and kept for a bounded time.
+- Before flashing, take an OpenManage config snapshot (already exists) **and** a `sysupgrade -b` backup archive, handled as described in "Device config backup (Phase 0)" below. The pre-flash archive is pinned until the upgrade is done and acknowledged.
 - Why both: existing snapshots redact secrets and are read-only, so they cannot restore a device. They are used after the upgrade to show drift (what changed versus before), not to rewrite config. Restoring from the archive is the recovery path.
 - After the flash and package reinstall, run the existing drift diff and show the result. Differences caused by release migrations are expected and are reviewed by the administrator, not silently overwritten.
 - Large release jumps (for example 23.05 to 24.10) are blocked in Phase 1; only the same release family or the next one is allowed, with a warning.
+
+## Device config backup (Phase 0)
+
+A `sysupgrade -b` archive is root-equivalent for the router. As data it holds Wi-Fi PSKs, RADIUS shared secrets, the dropbear host private key, TLS and VPN private keys, and `/etc/shadow` (an offline-crackable root hash). As code, restoring it writes `rc.local`, hotplug and `uci-defaults` scripts, `authorized_keys` and `/etc/shadow`, then reboots. The rules below follow from that. Security review: [#72 comment](https://github.com/NishantJh/OpenManage/pull/72#issuecomment-6416376878).
+
+**Who can do what**
+
+| Action | Roles | Audit event (details) |
+| --- | --- | --- |
+| Create (manual) | admin, operator | `device.backup_create` |
+| Scheduled run | system | `device.backup_create` with `scheduled: true` |
+| List (metadata only) | any role that can see the device | none |
+| Download | admin, after password re-entry | `device.backup_download` |
+| Restore | admin, after explicit per-device confirmation | `device.backup_restore`, written in the same transaction that starts the job |
+| Delete | admin | `device.backup_delete` |
+
+Audit details carry only backup id, device id, size, keyed digest, actor and scheduled flag. Never file names from the archive and never content. Readonly users never see backup content.
+
+**Capture**
+
+- Fixed command, no parameters from the request. Prefer `sysupgrade -b -` to stdout (verify on 23.05 and 24.10 in the lab). Otherwise write to a fixed `/tmp` path under `umask 077` and remove it in the same command on exit. Check free RAM first, because `/tmp` is RAM.
+- Output cap 4 MiB (typical archives are tens of KiB) and a fixed timeout. Stderr is dropped and replaced by a fixed message, since it can echo file names.
+- Recorded with each backup: device id, board name, target, OpenWrt release, a MAC or board serial, size, a keyed digest of the plaintext (the `configDigest` pattern, not a plain hash), and the dropbear host-key fingerprint the archive contains.
+- One backup or restore job per device at a time.
+
+**Encryption**
+
+- AES-256-GCM with the existing key and AAD `openmanage:firmware-backup:v1:<device_id>:<backup_id>`. The backup id is generated before sealing. A row moved to another device or id fails to decrypt.
+- A key-version column, so the encryption-key rotation work (plan.md Section 4) can find and re-encrypt these rows.
+- Plaintext lives only in memory. It is never written to a server file, logged, or put in an error message.
+
+**The server never extracts the archive.** It is opaque bytes. Where OpenManage reads it (file list, restore preflight), it parses in memory with `archive/tar` behind `gzip`, with a decompressed-size cap, an entry-count cap and a per-entry size cap. It rejects absolute paths, `..`, symlinks, hardlinks and device nodes, and writes nothing to disk. Device output is untrusted: a compromised router can send anything. The keep list (`/etc/sysupgrade.conf`) is set by the device. OpenManage shows it read-only and never edits it in Phase 0.
+
+**Download**
+
+- Headers `Content-Disposition: attachment`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`. Streamed from memory.
+- A warning when the session is on plain HTTP: the archive would cross the network unencrypted.
+- The archive can also be downloaded encrypted with a passphrase the admin types (age, scrypt), so the downloaded file is not plaintext root material. Plain download is still available for use with LuCI.
+
+**Restore** (`firmware_restore`, a write and disruptive operation)
+
+- Only archives OpenManage captured. No uploaded archives in Phase 0; that needs its own review.
+- The only parameter is a backup id. Commands are fixed strings: upload to a fixed `/tmp` path with mode 600, check `sha256sum` against the stored value, `sysupgrade -r`, remove the file, reboot.
+- Same device id only. Refused if the live board name differs from the recorded one. A release mismatch needs a second confirmation, because `sysupgrade -r` does not migrate config across releases.
+- Before upload: decrypt (GCM verifies integrity) and check the keyed digest.
+- Lockout preflight: refuse with a plain message if the archive's `authorized_keys` lacks the current OpenManage public key, or its dropbear host key does not match the pinned fingerprint. The confirmation notes that the archive restores the root password as it was then.
+- After reboot: the normal verify step (pinned host key, health check, drift diff).
+
+**Retention and deletion**
+
+- Keep the last 5 per device. An archive whose keyed digest equals the latest one is not stored again; the latest one's last-verified time is refreshed instead.
+- The pre-flash backup is pinned (excluded from pruning) until the upgrade job is `done` and the admin acknowledges.
+- Schedule: off by default, at most daily, run from the existing monitoring loop with its concurrency limit.
+- Removing a device from inventory deletes its backups; the UI says so first.
+- Honesty notes in the UI and docs: old backups keep old secrets, so after rotating a leaked Wi-Fi or root password, older backups still hold the old one and restoring brings it back (delete them after a rotation). Deleting a row does not remove it from earlier database dumps or Proxmox backups.
+
+**Database and host backups.** With router archives in PostgreSQL, a `pg_dump` plus the key, or a Proxmox backup of the container (which includes `.env`), is root-equivalent for every managed router. [Backup and recovery](backup-recovery.md) and [home setup](home-setup.md) must say these files are stored encrypted and off-host.
 
 ## Safety
 
@@ -157,6 +214,7 @@ New operations (names indicative):
 | --- | --- | --- |
 | `firmware_inventory` | read | Version, board, target, package manager, user-installed packages, free space |
 | `firmware_backup` | read (secret-bearing output) | `sysupgrade -b` archive streamed, encrypted at once, never logged |
+| `firmware_restore` | write, disruptive, admin-only | Restore an OpenManage-captured archive to the same device; parameter is the backup id only |
 | `firmware_stage` | write | Upload the verified image to a fixed path under `/tmp` |
 | `firmware_check` | read | `sysupgrade -T` on the staged image |
 | `firmware_flash` | write, disruptive | Start `sysupgrade` detached; the connection will drop |
@@ -167,7 +225,7 @@ Write operations audit transactionally (a Section 2 rule). A job state machine i
 
 ## Phases
 
-0. **Device config backup** (also a standalone feature): `firmware_backup`, encrypted storage, restore. Needed before any flash.
+0. **Device config backup** (also a standalone feature): `firmware_backup`, encrypted storage, download, `firmware_restore`, retention, per "Device config backup (Phase 0)". Needed before any flash.
 1. **Inventory and plan-only.** Capture manifests, show the package diff and what an upgrade would do. No writes.
 2. **Single-device upgrade via ASU**, reinstalling third-party packages afterward, with backup, verification, and drift review. Test on real hardware and in the OpenWrt lab where possible (the lab is a container; flashing itself cannot be tested there).
 3. **Staged rollout** with canary and concurrency limits.
