@@ -96,4 +96,4 @@ If the AP's requests do not arrive (no audit event when the phone tries to join)
 
 ## Backups
 
-Take Proxmox backups of the container (vzdump) and follow [Backup and recovery](backup-recovery.md) for database dumps. A container backup includes `.env`, so store it as carefully as the encryption key.
+Take Proxmox backups of the container (vzdump) and follow [Backup and recovery](backup-recovery.md) for database dumps. A container backup includes `.env`, so store it as carefully as the encryption key. With device configuration backups enabled, a container backup or database dump plus the key is root-equivalent for every managed router and access point, so keep these files encrypted and off the host.

@@ -60,8 +60,14 @@ func configSnapshotAAD(deviceID string) string {
 
 // configDigest is keyed so equal digests reveal nothing to someone without the key.
 func configDigest(key []byte, text string) string {
+	return keyedDigest(key, "openmanage:config-digest:v1", text)
+}
+
+// keyedDigest derives a per-purpose subkey, so digests of different kinds of data
+// are unrelated even under one encryption key.
+func keyedDigest(key []byte, label, text string) string {
 	sub := hmac.New(sha256.New, key)
-	sub.Write([]byte("openmanage:config-digest:v1"))
+	sub.Write([]byte(label))
 	mac := hmac.New(sha256.New, sub.Sum(nil))
 	mac.Write([]byte(text))
 	return hex.EncodeToString(mac.Sum(nil))
