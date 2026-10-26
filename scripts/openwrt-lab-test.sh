@@ -534,6 +534,21 @@ done
 api DELETE "/api/devices/$device_id/backups/$first_backup"; [[ "$status" == 409 ]] || fail "a pinned backup was deletable (HTTP $status)"
 echo "PASS: retention keeps the newest five and a pinned backup survives pruning and deletion"
 
+# The retention count is the administrator's choice, within 1 to 20.
+for bad in 0 21; do
+  api PUT /api/monitoring/settings "{\"enabled\":false,\"interval_seconds\":300,\"backup_retention\":$bad}"
+  [[ "$status" == 400 ]] || fail "backup retention $bad was accepted (HTTP $status)"
+done
+api GET /api/monitoring/settings; json 'assert d["backup_retention"]==5, d' < "$body"
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"backup_retention":2}'
+json 'assert d["backup_retention"]==2, d' < "$body"
+docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-backup-keep2 && uci commit system"
+api POST "/api/devices/$device_id/backups"; json 'assert not d["unchanged"], d' < "$body"
+[[ "$(psql_om "SELECT count(*) FROM device_backups WHERE device_id='$device_id' AND NOT pinned")" == 2 ]] || fail "a retention of 2 did not prune to two unpinned backups"
+[[ "$(psql_om "SELECT count(*) FROM device_backups WHERE id='$first_backup'")" == 1 ]] || fail "lowering retention pruned a pinned backup"
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"backup_retention":5}'
+echo "PASS: backup retention is set by the administrator within bounds, and the pinned backup is never counted or pruned"
+
 # A ciphertext moved to another backup row must not decrypt (AAD binds device and backup).
 api GET "/api/devices/$device_id/backups"
 newest="$(json 'print(d[0]["id"])' < "$body")"; older="$(json 'print(d[1]["id"])' < "$body")"
