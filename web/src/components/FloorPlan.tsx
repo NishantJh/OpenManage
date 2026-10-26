@@ -133,7 +133,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
       <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={P(3)} className="fp-room" onPointerDown={e=>start(e,"room",r.id,r.x,r.y)} style={{cursor:canEdit?"move":"default"}}/>
       <text x={r.x+P(14)} y={r.y+P(24)} className={canEdit?"fp-room-name edit":"fp-room-name"} style={{fontSize:P(11)}} onClick={()=>canEdit&&renameRoom(r.id)}>{canEdit&&<title>Click to rename</title>}{r.name.toUpperCase()}</text>
       <text x={r.x+P(14)} y={r.y+r.h-P(12)} className="fp-room-size" style={{fontSize:P(10)}}>{toFt(r.w)} × {toFt(r.h)} ft</text>
-      {canEdit&&(hoverRoom===r.id||drag?.key===r.id)&&<rect x={r.x+r.w-P(5)} y={r.y+r.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className="fp-handle" onPointerDown={e=>start(e,"size",r.id,0,0)}><title>Drag to resize</title></rect>}</g>)}
+      {canEdit&&<rect x={r.x+r.w-P(5)} y={r.y+r.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className={hoverRoom===r.id||drag?.key===r.id?"fp-handle show":"fp-handle"} onPointerDown={e=>start(e,"size",r.id,0,0)}><title>Drag to resize</title></rect>}</g>)}
      {plan.placements.map(a=><g key={a.device_id} onPointerDown={e=>start(e,"ap",a.device_id,a.x,a.y)} style={{cursor:canEdit?"grab":"default"}}>
       <circle cx={a.x} cy={a.y} r={3} fill="url(#fp-coverage)" pointerEvents="none"/>
       <circle cx={a.x} cy={a.y} r={P(8)} className="fp-ap"/><circle cx={a.x} cy={a.y} r={P(3)} fill="#8d78f5" pointerEvents="none"/>
