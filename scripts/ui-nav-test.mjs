@@ -86,6 +86,16 @@ try {
   await page.keyboard.type("Kitchen");
   await page.locator(".fp-room-name", { hasText: "KITCHEN" }).waitFor();
   console.log("PASS: floor plan rooms in feet, renamable, canvas fits rooms");
+  // Plan image: upload a PNG, scale it by typing a width in feet, then remove it again.
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==", "base64");
+  await page.locator('input[aria-label="Upload plan image"]').setInputFiles({ name: "plan.png", mimeType: "image/png", buffer: png });
+  await page.locator("image.fp-plan-image").waitFor();
+  await page.getByLabel("Plan image width").fill("30");
+  await page.waitForFunction(() => Math.abs(Number(document.querySelector("image.fp-plan-image").getAttribute("width")) - 30 * 0.3048) < 0.01);
+  page.once("dialog", d => d.accept());
+  await page.getByRole("button", { name: "Remove plan image" }).click();
+  await page.locator("image.fp-plan-image").waitFor({ state: "detached" });
+  console.log("PASS: floor plan image upload, scale and removal");
   assert.deepEqual(errors, [], "uncaught page errors");
   console.log("PASS: back button, deep link, no page errors");
 } finally {

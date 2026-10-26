@@ -31,3 +31,21 @@ func TestFloorLayoutValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestFloorLayoutImageValidate(t *testing.T) {
+	ok := floorLayout{Image: &floorImage{X: 1, Y: 2, WidthM: 20}}
+	if err := ok.validate(); err != nil {
+		t.Fatalf("valid image placement rejected: %v", err)
+	}
+	for name, img := range map[string]floorImage{
+		"tiny":     {WidthM: 0.1},
+		"huge":     {WidthM: 9999},
+		"negative": {X: -1, WidthM: 5},
+		"far":      {Y: 9999, WidthM: 5},
+	} {
+		l := floorLayout{Image: &img}
+		if err := l.validate(); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}

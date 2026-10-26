@@ -152,6 +152,36 @@ status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
 [[ "$status" == "204" ]] || { echo "ERROR: device deletion returned HTTP $status (expected 204)" >&2; exit 1; }
 echo "PASS: authenticated device deletion"
 
+# Floor plan background image: PNG/JPEG only, served back with a fixed type, removable.
+plan_png="$(mktemp)"
+python3 - "$plan_png" <<'PY'
+import struct, sys, zlib
+def chunk(t, d): c = struct.pack(">I", len(d)) + t + d; return c + struct.pack(">I", zlib.crc32(t + d))
+raw = b"".join(b"\x00" + b"\xff\xff\xff" * 4 for _ in range(2))
+open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 2, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+PY
+plan_img() { curl --silent --show-error -o "$device_body" -w '%{http_code}' -X "$1" -b "$cookie_jar" -H "X-CSRF-Token: $csrf" "${@:3}" "$base_url/api/floor-plan/image$2"; }
+[[ "$(plan_img GET)" == "404" ]] || { echo "ERROR: plan image existed before upload" >&2; exit 1; }
+printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' > "$device_body.svg"
+[[ "$(plan_img PUT "" --data-binary @"$device_body.svg" -H 'Content-Type: image/png')" == "400" ]] || { echo "ERROR: SVG plan image was accepted" >&2; exit 1; }
+[[ "$(plan_img PUT "" --data-binary @"$plan_png" -H 'Content-Type: text/plain')" == "200" ]] || { cat "$device_body" >&2; echo "ERROR: PNG plan image upload failed" >&2; exit 1; }
+python3 -c 'import json,sys; i=json.load(sys.stdin)["image"]; assert i["px_w"]==4 and i["px_h"]==2 and i["width_m"]>0 and i["version"], i' < "$device_body"
+plan_headers="$(curl --silent --show-error -D - -o "$device_body" -b "$cookie_jar" "$base_url/api/floor-plan/image")"
+grep -qi '^content-type: image/png' <<< "$plan_headers" && grep -qi '^x-content-type-options: nosniff' <<< "$plan_headers" || { echo "ERROR: plan image served with unexpected headers: $plan_headers" >&2; exit 1; }
+status="$(curl --silent --show-error -o "$device_body" -w '%{http_code}' -X PUT -b "$cookie_jar" -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' \
+  --data '{"rooms":[],"placements":[],"image":{"x":1,"y":2,"width_m":20}}' "$base_url/api/floor-plan")"
+[[ "$status" == "200" ]] || { cat "$device_body" >&2; echo "ERROR: placing the plan image returned HTTP $status" >&2; exit 1; }
+python3 -c 'import json,sys; i=json.load(sys.stdin)["image"]; assert (i["x"],i["y"],i["width_m"])==(1,2,20) and i["px_w"]==4, i' < "$device_body"
+status="$(curl --silent --show-error -o "$device_body" -w '%{http_code}' -X PUT -b "$cookie_jar" -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' \
+  --data '{"rooms":[],"placements":[],"image":{"x":1,"y":2,"width_m":0.1}}' "$base_url/api/floor-plan")"
+[[ "$status" == "400" ]] || { echo "ERROR: out-of-range plan image width returned HTTP $status (expected 400)" >&2; exit 1; }
+[[ "$(plan_img DELETE)" == "204" ]] || { echo "ERROR: plan image deletion failed" >&2; exit 1; }
+[[ "$(plan_img GET)" == "404" ]] || { echo "ERROR: plan image still served after deletion" >&2; exit 1; }
+plan="$(curl --silent --show-error --fail -b "$cookie_jar" "$base_url/api/floor-plan")"
+python3 -c 'import json,sys; assert "image" not in json.load(sys.stdin)' <<< "$plan"
+rm -f "$plan_png" "$device_body.svg"
+echo "PASS: floor plan image upload, type checks, placement and removal"
+
 # Browser check of sidebar navigation. Playwright is installed into a throwaway directory so the
 # web/ lockfile is untouched. OPENMANAGE_UI_CHROMIUM may point at an existing Chromium binary.
 if [[ "${OPENMANAGE_SKIP_UI_TEST:-0}" == 1 ]]; then
