@@ -28,10 +28,11 @@ func TestConfigSnapshotCiphertextIsBoundToDevice(t *testing.T) {
 
 func TestConfigDigestIsKeyedAndStable(t *testing.T) {
 	k1, k2 := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
-	if configDigest(k1, "x") != configDigest(k1, "x") {
+	d1, d2 := configDigest(k1, "x"), configDigest(k1, "x")
+	if d1 != d2 {
 		t.Fatal("digest must be stable")
 	}
-	if configDigest(k1, "x") == configDigest(k2, "x") || configDigest(k1, "x") == configDigest(k1, "y") {
+	if d1 == configDigest(k2, "x") || d1 == configDigest(k1, "y") {
 		t.Fatal("digest must depend on key and content")
 	}
 }

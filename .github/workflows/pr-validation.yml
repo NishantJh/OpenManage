@@ -18,6 +18,20 @@ jobs:
     # Never run untrusted pull-request code on the self-hosted WSL2 runner.
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: openmanage
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          POSTGRES_DB: openmanage_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openmanage -d openmanage_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -45,11 +59,19 @@ jobs:
           npm run build
       - name: Prepare embedded assets
         run: mkdir -p cmd/openmanage/web/dist && cp -a web/dist/. cmd/openmanage/web/dist/
+      - name: Vet Go package
+        run: go vet ./...
+      - name: Staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          "$(go env GOPATH)/bin/staticcheck" ./...
       - name: Verify dependency metadata
         run: |
           go mod tidy -diff
           git diff --exit-code -- go.mod go.sum web/package.json web/package-lock.json
       - name: Test Go package
+        env:
+          OPENMANAGE_TEST_DATABASE_URL: postgres://openmanage:ci-only-not-a-secret@localhost:5432/openmanage_test?sslmode=disable
         run: go test -race ./...
       - name: Validate Compose configuration
         env:

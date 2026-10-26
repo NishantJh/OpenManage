@@ -36,7 +36,8 @@ Read plan.md before planning work. Read [CODEQUALITY.md](CODEQUALITY.md) before 
 Run from repository root unless noted:
 
 Frontend: cd web && npm ci && npm run build
-Backend: go test ./...
+Backend: go test ./...; go vet ./...; staticcheck ./... (go install honnef.co/go/tools/cmd/staticcheck@v0.8.2)
+PostgreSQL-backed tests run only when OPENMANAGE_TEST_DATABASE_URL is set (PR validation sets it).
 Formatting: gofmt -w cmd/openmanage/*.go; gofmt -l cmd/openmanage/*.go
 Container: docker build -t openmanage:local .
 Browser navigation check: scripts/ui-nav-test.mjs (run by scripts/smoke-test.sh; needs Node and Chromium)

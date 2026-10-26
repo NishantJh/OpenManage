@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -92,6 +93,25 @@ type auditEvent struct {
 	CreatedAt    time.Time       `json:"created_at"`
 }
 
+// applyMigrations runs every embedded migration in name order.
+func applyMigrations(ctx context.Context, db *pgxpool.Pool) error {
+	migrations, err := fs.Glob(migrationFS, "migrations/*.sql")
+	if err != nil {
+		return err
+	}
+	sort.Strings(migrations)
+	for _, name := range migrations {
+		sql, err := migrationFS.ReadFile(name)
+		if err != nil {
+			return fmt.Errorf("migration %s: %w", name, err)
+		}
+		if _, err = db.Exec(ctx, string(sql)); err != nil {
+			return fmt.Errorf("migration %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -132,19 +152,8 @@ func main() {
 	}
 	defer pool.Close()
 
-	migrations, err := fs.Glob(migrationFS, "migrations/*.sql")
-	if err != nil {
-		log.Fatal(err)
-	}
-	sort.Strings(migrations)
-	for _, name := range migrations {
-		sql, readErr := migrationFS.ReadFile(name)
-		if readErr != nil {
-			log.Fatalf("read migration %s: %v", name, readErr)
-		}
-		if _, err = pool.Exec(ctx, string(sql)); err != nil {
-			log.Fatalf("database migration %s: %v", name, err)
-		}
+	if err = applyMigrations(ctx, pool); err != nil {
+		log.Fatalf("database migration: %v", err)
 	}
 	if err = bootstrapAdmin(ctx, pool); err != nil {
 		log.Fatalf("admin bootstrap: %v", err)

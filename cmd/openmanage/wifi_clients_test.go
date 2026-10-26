@@ -77,7 +77,8 @@ func TestClientKeyAndMask(t *testing.T) {
 	if string(clientKey(k1, mac)) == string(clientKey(k2, mac)) {
 		t.Fatal("client key must depend on the server key")
 	}
-	if string(clientKey(k1, mac)) != string(clientKey(k1, mac)) || string(clientKey(k1, mac)) == string(clientKey(k1, "aa:bb:cc:11:22:34")) {
+	c1, c2 := clientKey(k1, mac), clientKey(k1, mac)
+	if string(c1) != string(c2) || string(c1) == string(clientKey(k1, "aa:bb:cc:11:22:34")) {
 		t.Fatal("client key must be stable per MAC and differ between MACs")
 	}
 	if got := maskMAC(mac); got != "aa:bb:cc:••:••:••" || strings.Contains(got, "11") {

@@ -186,10 +186,11 @@ func TestBackupCiphertextIsBoundToDeviceAndBackup(t *testing.T) {
 
 func TestBackupDigestIsKeyedAndSeparateFromConfigDigest(t *testing.T) {
 	k1, k2 := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
-	if backupDigest(k1, "x") != backupDigest(k1, "x") || backupDigest(k1, "x") == backupDigest(k2, "x") {
+	d1, d2 := backupDigest(k1, "x"), backupDigest(k1, "x")
+	if d1 != d2 || d1 == backupDigest(k2, "x") {
 		t.Fatal("digest must be stable and keyed")
 	}
-	if backupDigest(k1, "x") == configDigest(k1, "x") {
+	if d1 == configDigest(k1, "x") {
 		t.Fatal("backup and config digests must be unrelated")
 	}
 }

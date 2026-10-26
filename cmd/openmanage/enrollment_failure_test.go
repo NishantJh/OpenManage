@@ -171,14 +171,8 @@ func newEnrollmentTestDB(t *testing.T) *pgxpool.Pool {
 		_, _ = admin.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE")
 		admin.Close()
 	})
-	for _, name := range []string{"001_initial.sql", "002_auth_audit.sql", "003_device_credentials.sql", "004_monitoring.sql"} {
-		sql, err := migrationFS.ReadFile("migrations/" + name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("migration %s: %v", name, err)
-		}
+	if err := applyMigrations(ctx, db); err != nil {
+		t.Fatal(err)
 	}
 	return db
 }
