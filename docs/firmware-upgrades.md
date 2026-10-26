@@ -167,6 +167,7 @@ Write operations audit transactionally (a Section 2 rule). A job state machine i
 
 ## Phases
 
+0. **Device config backup** (also a standalone feature): `firmware_backup`, encrypted storage, restore. Needed before any flash.
 1. **Inventory and plan-only.** Capture manifests, show the package diff and what an upgrade would do. No writes.
 2. **Single-device upgrade via ASU**, reinstalling third-party packages afterward, with backup, verification, and drift review. Test on real hardware and in the OpenWrt lab where possible (the lab is a container; flashing itself cannot be tested there).
 3. **Staged rollout** with canary and concurrency limits.
