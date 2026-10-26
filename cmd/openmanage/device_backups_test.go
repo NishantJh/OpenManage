@@ -57,6 +57,25 @@ func buildArchive(t *testing.T, entries ...tarEntry) []byte {
 	return buf.Bytes()
 }
 
+func TestInspectBackupArchiveDigestCoversPermissions(t *testing.T) {
+	a := buildArchive(t, tarEntry{name: "etc/shadow", body: "x"})
+	modeChanged := func() []byte {
+		var b bytes.Buffer
+		w := gzip.NewWriter(&b)
+		x := tar.NewWriter(w)
+		_ = x.WriteHeader(&tar.Header{Name: "etc/shadow", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1})
+		_, _ = x.Write([]byte("x"))
+		_ = x.Close()
+		_ = w.Close()
+		return b.Bytes()
+	}()
+	ia, _ := inspectBackupArchive(a)
+	ib, _ := inspectBackupArchive(modeChanged)
+	if ia.ContentDigest == ib.ContentDigest {
+		t.Fatal("a permission change must change the digest")
+	}
+}
+
 func dropbearKeyFile(pub ed25519.PublicKey, priv ed25519.PrivateKey) string {
 	var b []byte
 	for _, f := range [][]byte{[]byte("ssh-ed25519"), append(append([]byte{}, priv.Seed()...), pub...)} {

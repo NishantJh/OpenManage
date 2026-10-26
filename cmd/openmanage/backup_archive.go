@@ -59,6 +59,7 @@ func inspectBackupArchive(data []byte) (archiveInfo, error) {
 	budget := &io.LimitedReader{R: zr, N: archiveMaxDecompressed + 1}
 	tr := tar.NewReader(budget)
 	digest := sha256.New()
+	total := 0
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -84,11 +85,22 @@ func inspectBackupArchive(data []byte) (archiveInfo, error) {
 		if hdr.Size < 0 || hdr.Size > archiveMaxEntrySize {
 			return info, errBadArchive
 		}
+		// Sparse entries expand holes into zeros that bypass the compressed-stream
+		// budget, so they are refused outright.
+		for key := range hdr.PAXRecords {
+			if strings.HasPrefix(key, "GNU.sparse.") {
+				return info, errBadArchive
+			}
+		}
 		content, err := io.ReadAll(io.LimitReader(tr, hdr.Size+1))
 		if err != nil || int64(len(content)) != hdr.Size || budget.N <= 0 {
 			return info, errBadArchive
 		}
-		fmt.Fprintf(digest, "%s\x00%d\x00", name, len(content))
+		// Count what was actually read, so no entry type can exceed the total cap.
+		if total += len(content); total > archiveMaxDecompressed {
+			return info, errBadArchive
+		}
+		fmt.Fprintf(digest, "%s\x00%o\x00%d\x00", name, hdr.Mode&0o7777, len(content))
 		digest.Write(content)
 		switch {
 		case name == dropbearEd25519HostKey:
