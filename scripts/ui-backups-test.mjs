@@ -67,6 +67,7 @@ try {
   await page.getByText(/Keeping \d+ of 3/).waitFor();
   console.log("PASS: changing the retention updates the limit shown");
   await retention.fill("99");
+  await retention.blur();
   assert.equal(await retention.inputValue(), "20", "retention is not capped at 20");
   await retention.fill("5");
   await page.getByRole("button", { name: /save retention|save settings/i }).click();
@@ -83,7 +84,7 @@ try {
   await page.locator(".restore-modal input").fill(deviceName);
   assert.ok(await restore.isEnabled(), "restore disabled with the right name");
   await restore.click();
-  await page.getByText("different OpenWrt release", { exact: false }).waitFor();
+  await page.getByText("restoring across releases", { exact: false }).waitFor();
   assert.ok(await restore.isDisabled(), "restore enabled before the release mismatch was accepted");
   await shot("restore-dialog");
   await page.getByLabel(/I understand and want to restore anyway/).check();

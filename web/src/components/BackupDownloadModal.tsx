@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Download } from "lucide-react";
 import { apiFetch } from "../api";
@@ -9,9 +9,10 @@ import type { Device, DeviceBackup } from "../types";
 // The password travels in the POST body only.
 export default function BackupDownloadModal({device,backup,onClose,onDone}:{device:Device;backup:DeviceBackup;onClose:()=>void;onDone:(message:string)=>void}){
  const [password,setPassword]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState("");
- const insecure=window.location.protocol==="http:"&&!["localhost","127.0.0.1","[::1]"].includes(window.location.hostname);
- async function submit(e:FormEvent){e.preventDefault();setBusy(true);setError("");try{const r=await apiFetch("/api/devices/"+device.id+"/backups/"+backup.id+"/download","POST",{password});if(!r.ok){const data=await r.json().catch(()=>({}));throw Error(data.error||"Could not download the backup")}
-  const url=URL.createObjectURL(await r.blob()),a=document.createElement("a");a.href=url;a.download="openmanage-backup-"+device.name.replace(/[^A-Za-z0-9._-]+/g,"_")+"-"+backup.captured_at.slice(0,10)+".tar.gz";document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);onDone("Backup downloaded. Keep the file private: anyone holding it can read this device's passwords and keys.")}catch(e){setError(e instanceof Error?e.message:"Could not download the backup")}finally{setBusy(false);setPassword("")}}
+ const insecure=!window.isSecureContext,abort=useRef<AbortController|null>(null);
+ useEffect(()=>()=>abort.current?.abort(),[]);
+ async function submit(e:FormEvent){e.preventDefault();setBusy(true);setError("");try{const r=await apiFetch("/api/devices/"+device.id+"/backups/"+backup.id+"/download","POST",{password},{signal:(abort.current=new AbortController()).signal});if(!r.ok){const data=await r.json().catch(()=>({}));throw Error(data.error||"Could not download the backup")}
+  const url=URL.createObjectURL(await r.blob()),a=document.createElement("a");a.href=url;a.download="openmanage-backup-"+device.name.replace(/[^A-Za-z0-9._-]+/g,"_")+"-"+backup.captured_at.slice(0,10)+".tar.gz";document.body.appendChild(a);a.click();a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),30000);onDone("Backup downloaded. Keep the file private: anyone holding it can read this device's passwords and keys.")}catch(e){if(abort.current?.signal.aborted)return;setError(e instanceof Error?e.message:"Could not download the backup")}finally{setBusy(false);setPassword("")}}
  return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><form className="modal" onSubmit={submit}><div className="modal-head"><div><div className="eyebrow">BACKUP</div><h2>Download backup</h2><p>{device.name} · {new Date(backup.captured_at).toLocaleString()}</p></div><button type="button" className="close" onClick={onClose}>×</button></div>
  <div className="warning">This file contains the device's root password hash, SSH keys and Wi-Fi passphrases. Store it like a password manager export, and do not email or share it.</div>
  {insecure&&<div className="warning backup-warning">You are on plain HTTP, so the file and your password cross the network unencrypted. Use HTTPS or a trusted network before downloading.</div>}
