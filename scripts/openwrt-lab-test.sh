@@ -23,12 +23,16 @@ env_file="$work/env"
 cookie_jar="$work/cookies"
 body="$work/body"
 
-compose() { docker compose --project-name "$project" --env-file "$env_file" "$@"; }
+# The override gives the app container a hosts entry that stands in for a home DNS record:
+# reverse DNS of 192.168.1.50 answers lab-ipad.lan (the container's /etc/hosts is read-only).
+override="$work/lab-override.yaml"
+compose() { docker compose --project-name "$project" --env-file "$env_file" -f compose.yaml -f "$override" "$@"; }
 cleanup() {
   docker rm -f "$router" >/dev/null 2>&1 || true
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$work"
 }
+printf 'services:\n  app:\n    extra_hosts:\n      - "lab-ipad.lan:192.168.1.50"\n' > "$override"
 trap cleanup EXIT
 fail() { echo "ERROR: $*" >&2; exit 1; }
 json() { python3 -c "import json,sys; d=json.load(sys.stdin); $1" "${@:2}"; }
@@ -60,8 +64,9 @@ network="${project}_default"
 echo "Starting OpenWrt container ($openwrt_image) on $network ..."
 docker run -d --name "$router" --network "$network" "$openwrt_image" /sbin/init >/dev/null
 for attempt in $(seq 1 30); do
-  docker exec "$router" sh -c 'pgrep dropbear >/dev/null && ubus call system board >/dev/null' 2>/dev/null && break
-  [[ "$attempt" == 30 ]] && { docker logs "$router" | tail -20; fail "OpenWrt did not start dropbear and ubus"; }
+  # dropbear can be running before its init script has written the host key.
+  docker exec "$router" sh -c 'pgrep dropbear >/dev/null && test -s /etc/dropbear/dropbear_ed25519_host_key && ubus call system board >/dev/null' 2>/dev/null && break
+  [[ "$attempt" == 30 ]] && { docker logs "$router" | tail -20; fail "OpenWrt did not start dropbear (with its host key) and ubus"; }
   sleep 1
 done
 # docker cp keeps the host file owner (uid 1001 on GitHub runners); dropbear ignores
@@ -189,28 +194,68 @@ if [ "\$1" = call ] && [ "\$2" = hostapd.phy0-ap0 ] && [ "\$3" = get_clients ]; 
 exec "$ubus_bin.real" "\$@"
 SHIM
 chmod +x "$ubus_bin"'
+# The same trick for the neighbour table (`ip -4 neigh show`), which the AP reads to learn
+# a client's IP for reverse DNS. If the image has no ip binary the shim stands alone.
+docker exec "$router" sh -c '
+ip_bin="$(command -v ip || true)"
+if [ -n "$ip_bin" ]; then ip_target="$(readlink -f "$ip_bin")"; mv "$ip_bin" "$ip_bin.real"; else ip_bin=/usr/sbin/ip; ip_target=; fi
+cat > "$ip_bin" <<SHIM
+#!/bin/sh
+if [ "\$1 \$2 \$3" = "-4 neigh show" ]; then cat /tmp/fake-neigh; exit 0; fi
+case "$ip_target" in
+  "") exit 1;;
+  *busybox*) exec "$ip_target" ip "\$@";;
+  *) exec "$ip_target" "\$@";;
+esac
+SHIM
+chmod +x "$ip_bin"; echo "$ip_bin" > /tmp/ip-shim-path'
+docker exec -i "$router" sh -c "cat > /tmp/fake-neigh" <<< "192.168.1.50 dev eth0 lladdr $fake_mac REACHABLE
+192.168.1.99 dev eth0  FAILED"
+# Reverse DNS for 192.168.1.50 comes from the app container's hosts entry (see the override).
 set_fake_clients() { docker exec -i "$router" sh -c "cat > /tmp/fake-clients.json" <<< "$1"; }
 set_fake_clients "{\"freq\":5180,\"clients\":{\"$fake_mac\":{\"auth\":true,\"assoc\":true,\"authorized\":true,\"signal\":-58}}}"
+# dnsmasq lease line: expiry mac ip hostname client-id. The second line has no hostname.
+# The router is not marked as the DHCP host yet, so this file must be ignored for now.
+docker exec -i "$router" sh -c "cat > /tmp/dhcp.leases" <<< "4102444800 $fake_mac 192.168.1.50 lab-iphone 01:$fake_mac
+4102444800 de:ad:be:ef:00:09 192.168.1.51 * 01:de:ad:be:ef:00:09"
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":30}'
 [[ "$status" == 400 ]] || fail "a 30 s client poll interval was accepted (HTTP $status)"
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"client_tracking_enabled":true,"client_poll_interval_seconds":60}'
 [[ "$status" == 200 ]] || { cat "$body" >&2; fail "enabling client tracking returned HTTP $status"; }
 for attempt in $(seq 1 40); do
   api GET /api/wifi-clients
-  [[ "$(json 'print(len(d))' < "$body")" == 1 ]] && break
-  [[ "$attempt" == 40 ]] && { cat "$body" >&2; fail "client tracking did not record the fixture client"; }
+  [[ "$(json 'print(len(d)==1 and d[0]["name"]=="lab-ipad")' < "$body")" == True ]] && break
+  [[ "$attempt" == 40 ]] && { cat "$body" >&2; fail "client tracking did not record the fixture client with its reverse DNS name"; }
   sleep 1
 done
-json 'c=d[0]; assert c["connected"] and c["signal_dbm"]==-58 and c["interface"]=="phy0-ap0" and c["device_id"]==sys.argv[1], c; assert c["mac_hint"]=="aa:bb:cc:••:••:••" and c["label"]=="" and not c["hidden"], c' "$device_id" < "$body"
+json 'c=d[0]; assert c["connected"] and c["signal_dbm"]==-58 and c["interface"]=="phy0-ap0" and c["device_id"]==sys.argv[1], c; assert c["mac_hint"]=="aa:bb:cc:••:••:••" and c["label"]=="" and c["name"]=="lab-ipad" and not c["hidden"], c' "$device_id" < "$body"
 ! grep -q "11:22:33" "$body" || fail "client list leaked the full MAC address"
 client_id="$(json 'print(d[0]["id"])' < "$body")"
 mac_leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM wifi_clients WHERE position(convert_to('$fake_mac','UTF8') in mac_ciphertext)>0 OR mac_hint LIKE '%11:22:33%'")"
 [[ "$mac_leaks" == 0 ]] || fail "client MAC found in plaintext in PostgreSQL"
-echo "PASS: a client associated to the AP is tracked, with its MAC masked and encrypted at rest"
+echo "PASS: a client associated to the AP is tracked and named by reverse DNS, with its MAC masked and encrypted at rest"
+# Device roles: an AP by default; the lease file counts only once the device is the DHCP host.
+api GET "/api/devices/$device_id"
+json 'assert d["role"]=="access_point" and d["dhcp_host"] is False, d' < "$body"
+api PATCH "/api/devices/$device_id" '{"role":"switch"}'
+[[ "$status" == 400 ]] || fail "an invalid device role was accepted (HTTP $status)"
+api PATCH "/api/devices/$device_id" '{"role":"router","dhcp_host":true}'
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "setting the device role returned HTTP $status"; }
+json 'assert d["role"]=="router" and d["dhcp_host"] is True, d' < "$body"
+for attempt in $(seq 1 100); do
+  api GET /api/wifi-clients
+  [[ "$(json 'print(d[0]["name"])' < "$body")" == lab-iphone ]] && break
+  [[ "$attempt" == 100 ]] && { cat "$body" >&2; fail "the DHCP host's lease name did not replace the reverse DNS name"; }
+  sleep 1
+done
+echo "PASS: the DHCP host's lease names a client, and its lease file was ignored until it was marked as the DHCP host"
 api PATCH "/api/wifi-clients/$client_id" '{"label":"lab phone"}'
 [[ "$status" == 204 ]] || fail "labelling a client returned HTTP $status"
 # The client leaves: the next poll (one interval later) records a disconnect.
 set_fake_clients '{"freq":5180,"clients":{}}'
+# The router also renames the device in its leases. The client is no longer on the AP, so
+# the new name can only arrive through the lease path, not through the hostapd list.
+docker exec -i "$router" sh -c "cat > /tmp/dhcp.leases" <<< "4102444800 $fake_mac 192.168.1.50 lab-iphone-renamed 01:$fake_mac"
 for attempt in $(seq 1 100); do
   api GET /api/wifi-clients
   [[ "$(json 'print(d[0]["connected"])' < "$body")" == False ]] && break
@@ -218,6 +263,12 @@ for attempt in $(seq 1 100); do
   sleep 1
 done
 json 'assert d[0]["label"]=="lab phone", d' < "$body"
+for attempt in $(seq 1 100); do
+  api GET /api/wifi-clients
+  [[ "$(json 'print(d[0]["name"])' < "$body")" == lab-iphone-renamed ]] && break
+  [[ "$attempt" == 100 ]] && { cat "$body" >&2; fail "a changed DHCP lease name did not reach a tracked client"; }
+  sleep 1
+done
 api GET "/api/wifi-client-events?client=$client_id"
 json 'assert [e["kind"] for e in d]==["disconnect","connect"] and d[1]["signal_dbm"]==-58 and d[0]["from_device_id"]==sys.argv[1], d' "$device_id" < "$body"
 ! grep -q "11:22:33" "$body" || fail "client history leaked the full MAC address"
@@ -233,6 +284,7 @@ api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":3600,"clie
 echo "PASS: clearing client data removes clients and history"
 # Remove the shim so later sections (the forced-rollback wrapper) see the real ubus.
 docker exec "$router" sh -c 'ubus_bin="$(command -v ubus)" && mv "$ubus_bin.real" "$ubus_bin" && rm -f /tmp/fake-clients.json'
+docker exec "$router" sh -c 'p="$(cat /tmp/ip-shim-path)"; if [ -e "$p.real" ]; then mv "$p.real" "$p"; else rm -f "$p"; fi; rm -f /tmp/ip-shim-path /tmp/fake-neigh /tmp/dhcp.leases'
 
 # Controlled configuration change: preview, apply with rpcd rollback armed, verify
 # over a fresh connection, confirm.
@@ -311,6 +363,60 @@ api POST "/api/devices/$missing_id/enroll" "$(enroll_body "$work/mgmt_key" "$hos
 expect_code 502 device_unreachable "enrollment reports an unreachable device"
 api DELETE "/api/devices/$missing_id"
 
+# Password bootstrap: the wizard path. The root password is used once to install a
+# generated key and must never be stored or logged.
+# Bootstrap refuses an address that is already in the inventory, so move the enrolled
+# lab device aside until the bootstrap checks are done.
+api POST /api/device-bootstrap "$(python3 -c 'import json,sys; print(json.dumps({"address":sys.argv[1],"password":"x","expected_fingerprint":"SHA256:x"}))' "$router_ip")"
+expect_code 409 device_exists "bootstrap refuses an address that is already in the inventory"
+compose exec -T db psql -q -U openmanage -d openmanage -c "UPDATE devices SET address='10.255.255.1' WHERE id='$device_id'" >/dev/null
+boot_body() { # password fingerprint
+  python3 -c 'import json,sys; print(json.dumps({"name":"lab-boot","address":sys.argv[1],"password":sys.argv[2],"expected_fingerprint":sys.argv[3]}))' "$router_ip" "$1" "$2"
+}
+api POST /api/device-bootstrap/probe "{\"address\":\"$router_ip\"}"
+[[ "$status" == 200 ]] || fail "bootstrap probe returned HTTP $status"
+json 'assert d["host_key_fingerprint"]==sys.argv[1], d' "$host_fp" < "$body"
+echo "PASS: bootstrap probe reports the router host-key fingerprint"
+api POST /api/device-bootstrap "$(boot_body wrong-password-xyz "$host_fp")"
+expect_code 422 ssh_password_rejected "bootstrap rejects a wrong root password"
+api POST /api/device-bootstrap "$(boot_body "$root_password" "SHA256:$(printf 'A%.0s' $(seq 43))")"
+expect_code 422 host_key_mismatch "bootstrap rejects a host key that differs from the confirmed fingerprint"
+docker exec "$router" sh -c "passwd -d root >/dev/null 2>&1"
+api POST /api/device-bootstrap "$(boot_body anything "$host_fp")"
+expect_code 422 no_root_password "bootstrap refuses a router with a blank root password"
+docker exec "$router" sh -c "printf '%s\n%s\n' '$root_password' '$root_password' | passwd root >/dev/null 2>&1"
+keys_before="$(docker exec "$router" sh -c 'wc -l < /etc/dropbear/authorized_keys')"
+api POST /api/device-bootstrap "$(boot_body "$root_password" "$host_fp")"
+[[ "$status" == 201 ]] || { cat "$body" >&2; fail "bootstrap returned HTTP $status"; }
+boot_id="$(json 'print(d["id"])' < "$body")"
+! grep -q -e "PRIVATE KEY" -e "$root_password" "$body" || fail "bootstrap response echoed a secret"
+keys_after="$(docker exec "$router" sh -c 'wc -l < /etc/dropbear/authorized_keys')"
+[[ "$keys_after" == "$((keys_before + 1))" ]] || fail "authorized_keys has $keys_after lines (expected $((keys_before + 1)))"
+key_mode="$(docker exec "$router" ls -l /etc/dropbear/authorized_keys | cut -c1-10)"
+[[ "$key_mode" == "-rw-------" ]] || fail "authorized_keys mode is '$key_mode' (expected -rw-------)"
+api POST "/api/devices/$boot_id/health-check"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "bootstrapped device health check returned HTTP $status"; }
+json 'assert d["status"]=="online", d' < "$body"
+echo "PASS: bootstrap installs a generated key and the device is immediately manageable"
+pw_leaks="$(compose exec -T db pg_dump -U openmanage openmanage | grep -c -F -e "$root_password" || true)"
+[[ "$pw_leaks" == 0 ]] || fail "the root password reached the database"
+! compose logs --no-color app | grep -q -F "$root_password" || fail "the root password reached the app log"
+echo "PASS: the root password is not in the database or the app log"
+api DELETE "/api/devices/$boot_id"
+
+# Browser check of the add-AP wizard against this stack and the real OpenWrt router.
+if [[ "${OPENMANAGE_LAB_BROWSER:-0}" == 1 ]]; then
+  ui_dir="$(mktemp -d)"
+  ui_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ui-add-ap-test.mjs"
+  (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0 && npx playwright install --with-deps chromium >/dev/null)
+  (cd "$ui_dir" && OPENMANAGE_TEST_ROOT_PASSWORD="$root_password" node "$ui_script" "$base_url" admin lab-admin-password-123 "$router_ip") || fail "add-AP wizard browser check"
+  rm -rf "$ui_dir"
+  api GET /api/devices
+  ui_added="$(json 'print(*[x["id"] for x in d if x["address"]==sys.argv[1] and x["name"]!="lab-router"])' "$router_ip" < "$body")"
+  for id in $ui_added; do api DELETE "/api/devices/$id"; done
+fi
+compose exec -T db psql -q -U openmanage -d openmanage -c "UPDATE devices SET address='$router_ip' WHERE id='$device_id'" >/dev/null
+
 # User management: a second user, role changes and disabling revoke sessions, and the
 # last active administrator cannot be removed.
 login_as() { # username password jar -> sets $status, $csrf_other
@@ -357,6 +463,112 @@ users_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT 
   || fail "a password reached the audit log"
 echo "PASS: user management creates, demotes and disables users, revokes their sessions, and keeps one administrator"
 
+# Device configuration backups (sysupgrade -b archives): capture, unchanged detection,
+# encryption at rest, role limits, password-gated download, retention, pinning, binding
+# of ciphertext to its row, and the daily schedule.
+psql_om() { compose exec -T db psql -U openmanage -d openmanage -tAc "$1"; }
+shadow_hash="$(docker exec "$router" sh -c "grep '^root:' /etc/shadow | cut -d: -f2")"
+[[ ${#shadow_hash} -gt 10 ]] || fail "lab router has no root password hash to look for"
+# The router's own current host key, read on the router, is what the archive must hold.
+backup_host_fp="$(docker exec "$router" dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key | grep '^ssh-ed25519' | ssh-keygen -lf - | awk '{print $2}')"
+api POST "/api/devices/$device_id/backups"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "first backup returned HTTP $status"; }
+first_backup="$(json 'b=d["backup"]; assert not d["unchanged"] and b["size_bytes"]>1000 and b["file_count"]>10 and not b["scheduled"] and not b["pinned"], d
+assert b["host_key_fingerprint"]==sys.argv[1], b
+assert b["release"].startswith("24.10") and b["hardware_id"], b
+print(b["id"])' "$backup_host_fp" < "$body")"
+! grep -q "$shadow_hash" "$body" || fail "backup response leaked archive content"
+api POST "/api/devices/$device_id/backups"
+json 'assert d["unchanged"] and d["backup"]["id"]==sys.argv[1], d' "$first_backup" < "$body"
+[[ "$(psql_om "SELECT count(*) FROM device_backups WHERE device_id='$device_id'")" == 1 ]] || fail "an unchanged device stored a second backup"
+echo "PASS: a backup is captured with its board and host-key identity; an unchanged device is not stored twice"
+leaks="$(psql_om "SELECT count(*) FROM device_backups WHERE position(convert_to('$shadow_hash','UTF8') in ciphertext)>0 OR position(convert_to('config system','UTF8') in ciphertext)>0")"
+[[ "$leaks" == 0 ]] || fail "backup plaintext found in PostgreSQL"
+[[ "$(psql_om "SELECT key_version FROM device_backups WHERE id='$first_backup'")" == 1 ]] || fail "backup has no key version"
+echo "PASS: backups are encrypted at rest"
+
+# Roles: operators may create but not download or delete; read-only users may only list.
+# api_as's response body is reused, so the checks below read $status only.
+api POST /api/users '{"username":"lab-bk-operator","role":"operator","password":"lab-operator-pass-1"}'
+api POST /api/users '{"username":"lab-bk-viewer","role":"readonly","password":"lab-viewer-pass-1"}'
+bk_op_jar="$work/bk-operator.cookies"; bk_ro_jar="$work/bk-viewer.cookies"
+login_as lab-bk-operator lab-operator-pass-1 "$bk_op_jar"; bk_op_csrf="$csrf_other"
+login_as lab-bk-viewer lab-viewer-pass-1 "$bk_ro_jar"; bk_ro_csrf="$csrf_other"
+api_as "$bk_ro_jar" "$bk_ro_csrf" GET "/api/devices/$device_id/backups"; [[ "$status" == 200 ]] || fail "read-only user could not list backups (HTTP $status)"
+! grep -q "$shadow_hash" "$body" || fail "backup list leaked archive content"
+api_as "$bk_ro_jar" "$bk_ro_csrf" POST "/api/devices/$device_id/backups"; [[ "$status" == 403 ]] || fail "read-only user created a backup (HTTP $status)"
+api_as "$bk_op_jar" "$bk_op_csrf" POST "/api/devices/$device_id/backups"; [[ "$status" == 200 ]] || fail "operator could not create a backup (HTTP $status)"
+api_as "$bk_op_jar" "$bk_op_csrf" POST "/api/devices/$device_id/backups/$first_backup/download" '{"password":"lab-operator-pass-1"}'
+[[ "$status" == 403 ]] || fail "operator downloaded a backup (HTTP $status)"
+api_as "$bk_op_jar" "$bk_op_csrf" DELETE "/api/devices/$device_id/backups/$first_backup"; [[ "$status" == 403 ]] || fail "operator deleted a backup (HTTP $status)"
+echo "PASS: backup roles: operators create, only administrators download or delete, read-only users list metadata"
+
+# Download needs the administrator's password and is audited without content.
+api POST "/api/devices/$device_id/backups/$first_backup/download" '{}'
+[[ "$status" == 400 ]] || fail "download without a password returned HTTP $status"
+api POST "/api/devices/$device_id/backups/$first_backup/download" '{"password":"not-the-password"}'
+[[ "$status" == 403 ]] || fail "download with a wrong password returned HTTP $status"
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_download'")" == 0 ]] || fail "a refused download was audited as a download"
+download="$work/backup-download.tar.gz"; headers="$work/backup-headers"
+status="$(curl --silent -D "$headers" -o "$download" -w '%{http_code}' -X POST -b "$cookie_jar" -H "X-CSRF-Token: $csrf" \
+  -H 'Content-Type: application/json' --data '{"password":"lab-admin-password-123"}' "$base_url/api/devices/$device_id/backups/$first_backup/download")"
+[[ "$status" == 200 ]] || fail "download returned HTTP $status"
+tr -d '\r' < "$headers" | grep -qi '^cache-control: no-store$' || fail "download is cacheable"
+tr -d '\r' < "$headers" | grep -qi '^content-disposition: attachment' || fail "download is not an attachment"
+tr -d '\r' < "$headers" | grep -qi '^x-content-type-options: nosniff$' || fail "download lacks nosniff"
+tar tzf "$download" | grep -qx 'etc/config/system' || fail "downloaded archive is not a sysupgrade backup"
+tar xzOf "$download" etc/shadow | grep -q "$shadow_hash" || fail "downloaded archive does not hold the router's shadow file"
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_download' AND details->>'backup_id'='$first_backup'")" == 1 ]] || fail "download was not audited"
+! psql_om "SELECT details::text FROM audit_events WHERE action LIKE 'device.backup%'" | grep -q 'etc/\|shadow' || fail "an audit event names archive files"
+echo "PASS: download needs the administrator's password, is a no-store attachment holding the real archive, and is audited without content"
+
+# Retention keeps the newest five and never prunes a pinned backup.
+psql_om "UPDATE device_backups SET pinned=TRUE WHERE id='$first_backup'" >/dev/null
+for n in 1 2 3 4 5 6 7; do
+  docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-backup-$n && uci commit system"
+  api POST "/api/devices/$device_id/backups"
+  json 'assert not d["unchanged"], d' < "$body"
+done
+[[ "$(psql_om "SELECT count(*) FROM device_backups WHERE device_id='$device_id' AND NOT pinned")" == 5 ]] || fail "retention did not keep exactly five unpinned backups"
+[[ "$(psql_om "SELECT count(*) FROM device_backups WHERE id='$first_backup'")" == 1 ]] || fail "retention pruned a pinned backup"
+api DELETE "/api/devices/$device_id/backups/$first_backup"; [[ "$status" == 409 ]] || fail "a pinned backup was deletable (HTTP $status)"
+echo "PASS: retention keeps the newest five and a pinned backup survives pruning and deletion"
+
+# A ciphertext moved to another backup row must not decrypt (AAD binds device and backup).
+api GET "/api/devices/$device_id/backups"
+newest="$(json 'print(d[0]["id"])' < "$body")"; older="$(json 'print(d[1]["id"])' < "$body")"
+psql_om "UPDATE device_backups SET ciphertext=(SELECT ciphertext FROM device_backups WHERE id='$older') WHERE id='$newest'" >/dev/null
+api POST "/api/devices/$device_id/backups/$newest/download" '{"password":"lab-admin-password-123"}'
+[[ "$status" == 500 ]] || fail "a swapped ciphertext was served (HTTP $status)"
+api DELETE "/api/devices/$device_id/backups/$newest"; [[ "$status" == 200 ]] || fail "deleting a backup returned HTTP $status"
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_delete' AND details->>'backup_id'='$newest'")" == 1 ]] || fail "delete was not audited"
+echo "PASS: a ciphertext moved to another backup does not decrypt; deleting a backup is audited"
+
+# Scheduled backups: opt-in, never more often than daily.
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"backups_enabled":true,"backup_interval_seconds":3600}'
+[[ "$status" == 400 ]] || fail "a backup interval under a day was accepted (HTTP $status)"
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"backups_enabled":true,"backup_interval_seconds":86400}'
+json 'assert d["backups_enabled"] and d["backup_interval_seconds"]==86400, d' < "$body"
+api POST "/api/devices/$device_id/backups"; [[ "$status" == 200 ]] || fail "backup before the schedule test returned HTTP $status"
+before_audit="$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_create'")"
+psql_om "UPDATE device_backups SET last_verified_at=NOW()-INTERVAL '2 days' WHERE device_id='$device_id'" >/dev/null
+for attempt in $(seq 1 30); do
+  [[ "$(psql_om "SELECT count(*) FROM device_backups WHERE device_id='$device_id' AND last_verified_at > NOW()-INTERVAL '1 hour'")" -ge 1 ]] && break
+  [[ "$attempt" == 30 ]] && fail "scheduled backup did not run"
+  sleep 2
+done
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_create'")" == "$before_audit" ]] || fail "an unchanged scheduled backup was audited"
+docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-backup-scheduled && uci commit system"
+psql_om "UPDATE device_backups SET last_verified_at=NOW()-INTERVAL '2 days' WHERE device_id='$device_id'" >/dev/null
+for attempt in $(seq 1 30); do
+  [[ "$(psql_om "SELECT count(*) FROM device_backups WHERE device_id='$device_id' AND scheduled")" -ge 1 ]] && break
+  [[ "$attempt" == 30 ]] && fail "scheduled backup did not store a changed configuration"
+  sleep 2
+done
+[[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_create' AND user_id IS NULL AND details->>'scheduled'='true'")" == 1 ]] || fail "scheduled backup was not audited as a system action"
+api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"backups_enabled":false}'
+echo "PASS: scheduled backups are opt-in and at most daily, store only changes, and audit them as the system"
+
 # Built-in RADIUS (PAP lab listener). The probe runs inside the router container so
 # requests come from the enrolled device's address.
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$work/radius-probe" ./scripts/radius-probe
@@ -379,7 +591,7 @@ curl --silent --fail -o "$work/radius-ca.pem" -b "$cookie_jar" "$base_url/api/ra
 ! compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT encode(ca_key_ciphertext,'escape') || encode(server_key_ciphertext,'escape') FROM radius_certificate" | grep -q "PRIVATE KEY" \
   || fail "RADIUS certificate keys are stored unencrypted"
 echo "PASS: RADIUS generates a CA and server certificate and offers the CA for download"
-curl --silent --fail -o "$work/wifi.mobileconfig" -b "$cookie_jar" "$base_url/api/radius/apple-profile?ssid=Lab%20%26%20Home" \
+curl --silent --fail -o "$work/wifi.mobileconfig" -b "$cookie_jar" "$base_url/api/radius/apple-profile?ssid=Lab%20%26%20Home&username=lab-wifi" \
   || fail "Apple profile download failed"
 python3 - "$work/wifi.mobileconfig" "$work/radius-ca.pem" <<'PY' || fail "Apple profile is malformed"
 import base64, plistlib, ssl, sys
@@ -389,7 +601,10 @@ assert ca["PayloadContent"] == ssl.PEM_cert_to_DER_cert(open(sys.argv[2]).read()
 eap = wifi["EAPClientConfiguration"]
 assert wifi["SSID_STR"] == "Lab & Home" and eap["AcceptEAPTypes"] == [21] and eap["TTLSInnerAuthentication"] == "PAP"
 assert eap["TLSTrustedServerNames"] == ["radius.openmanage.home.arpa"] and eap["PayloadCertificateAnchorUUID"] == [ca["PayloadUUID"]]
+assert eap["UserName"] == "lab-wifi" and "UserPassword" not in eap
 PY
+curl --silent -o /dev/null -w '%{http_code}' -b "$cookie_jar" "$base_url/api/radius/apple-profile?ssid=Lab&username=bad%20name" | grep -qx 400 \
+  || fail "Apple profile accepted an invalid username"
 echo "PASS: RADIUS offers an Apple setup profile that trusts only this CA and server name"
 expect_probe timeout "ignores a device without a secret" not-a-secret lab-wifi lab-wifi-password-1
 api POST /api/network-users '{"username":"lab-wifi","password":"lab-wifi-password-1"}'
@@ -397,6 +612,7 @@ api POST /api/network-users '{"username":"lab-wifi","password":"lab-wifi-passwor
 wifi_id="$(json 'print(d["id"])' < "$body")"
 api POST /api/network-users '{"username":"lab-locked","password":"lab-locked-password-1"}'
 [[ "$status" == 201 ]] || fail "creating a second network user returned HTTP $status"
+locked_id="$(json 'print(d["id"])' < "$body")"
 api POST "/api/auth/login" '{"username":"lab-wifi","password":"lab-wifi-password-1"}'
 [[ "$status" == 401 ]] || fail "a network user signed in to OpenManage (HTTP $status)"
 api POST "/api/devices/$device_id/radius-secret"
@@ -413,9 +629,24 @@ expect_probe timeout "drops a request signed with the wrong secret" "wrong-$radi
 api PATCH "/api/network-users/$wifi_id" '{"disabled":true}'
 [[ "$status" == 200 ]] || fail "disabling a network user returned HTTP $status"
 expect_probe reject "rejects a disabled network user" "$radius_secret" lab-wifi lab-wifi-password-1
+# A phone keeps retrying while its user is disabled; re-enabling must let it back in.
+for attempt in $(seq 1 10); do probe "$radius_secret" lab-wifi lab-wifi-password-1 >/dev/null; done
 api PATCH "/api/network-users/$wifi_id" '{"disabled":false}'
+expect_probe accept "accepts a re-enabled user after rejections while disabled" "$radius_secret" lab-wifi lab-wifi-password-1
 for attempt in $(seq 1 10); do probe "$radius_secret" lab-locked wrong-password-123 >/dev/null; done
 expect_probe reject "blocks a user after repeated failures" "$radius_secret" lab-locked lab-locked-password-1
+api POST "/api/network-users/$locked_id/password" '{"password":"lab-locked-password-2"}'
+[[ "$status" == 200 ]] || fail "resetting a network user's password returned HTTP $status"
+expect_probe accept "accepts a blocked user right after a password reset" "$radius_secret" lab-locked lab-locked-password-2
+# Phones of disabled users retrying must not lock the AP out for everyone: 50
+# rejections of disabled users would reach the per-AP limit if they counted there.
+for n in 1 2 3 4 5; do
+  api POST /api/network-users "{\"username\":\"lab-off-$n\",\"password\":\"lab-off-password-$n\"}"
+  off_id="$(json 'print(d["id"])' < "$body")"
+  api PATCH "/api/network-users/$off_id" '{"disabled":true}'
+  for attempt in $(seq 1 10); do probe "$radius_secret" "lab-off-$n" "lab-off-password-$n" >/dev/null; done
+done
+expect_probe accept "keeps the AP open after many rejections of disabled users" "$radius_secret" lab-wifi lab-wifi-password-1
 api POST "/api/devices/$device_id/radius-secret"
 new_secret="$(json 'print(d["secret"])' < "$body")"
 expect_probe timeout "stops accepting a rotated-out secret" "$radius_secret" lab-wifi lab-wifi-password-1
@@ -423,8 +654,25 @@ expect_probe accept "accepts the rotated secret" "$new_secret" lab-wifi lab-wifi
 api GET /api/radius
 json 'assert len(d["clients"])==1 and d["dropped_packets"]>=4, d' < "$body"
 ! grep -q "$new_secret" "$body" || fail "RADIUS status returned the shared secret"
+# Run the AP commands from docs/radius-client-setup.md step 3 as written, so a guide
+# step that uci rejects fails here first. The lab router has no radio, so the
+# section is only checked, not brought up (no wifi reload).
+guide_ap_cmds="$(python3 - docs/radius-client-setup.md <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+section = text.split("## 3. Configure the AP", 1)[1].split("\n## ", 1)[0]
+block = re.search(r"```sh\n(.*?)```", section, re.S).group(1)
+print("\n".join(l for l in block.splitlines() if l.strip() != "wifi reload"))
+PY
+)"
+[[ "$guide_ap_cmds" == *"uci commit wireless"* ]] || fail "could not read the AP commands from the setup guide"
+guide_ap_cmds="${guide_ap_cmds//<secret from step 2>/$new_secret}"
+docker exec "$router" sh -c "set -e; touch /etc/config/wireless; $guide_ap_cmds" || fail "the setup guide's AP commands failed on OpenWrt"
+[[ "$(docker exec "$router" uci get wireless.omtest.encryption)" == wpa2 ]] || fail "the setup guide's AP commands did not configure WPA2-Enterprise"
+docker exec "$router" sh -c "uci delete wireless.omtest && uci commit wireless" || fail "the setup guide's undo command failed"
+echo "PASS: the setup guide's AP commands run on OpenWrt"
 radius_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action='radius.auth_accept'")"
-[[ "$radius_audit" == 3 ]] || fail "RADIUS accept audit events: $radius_audit (expected 3)"
+[[ "$radius_audit" == 6 ]] || fail "RADIUS accept audit events: $radius_audit (expected 6)"
 leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events" | grep -c -e lab-wifi-password -e lab-locked-password -e "$new_secret" -e "$radius_secret" || true)"
 [[ "$leaks" == 0 ]] || fail "a RADIUS password or secret reached the audit log"
 ! compose logs --no-color app | grep -q -e lab-wifi-password -e "$new_secret" || fail "a RADIUS password or secret reached the app log"
@@ -471,6 +719,34 @@ ttls_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT s
 ! compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT details::text FROM audit_events" | grep -q -e lab-wifi-password -e "$eapol_secret" \
   || fail "an EAP-TTLS password or secret reached the audit log"
 echo "PASS: EAP-TTLS failures are audited with a reason and no secrets"
+
+# The phone-side checklist, simulated: rejoin, repeated joins, abandoned handshakes
+# (a phone toggling Wi-Fi), disable and re-enable, and a password reset.
+ttls_conf lab-wifi lab-wifi-password-1 "auth=PAP" radius.openmanage.home.arpa
+eapol_test -c "$work/ttls.conf" -a "$app_ip" -s "$eapol_secret" -t 15 -r 3 > "$work/eapol.log" 2>&1 \
+  || { tail -30 "$work/eapol.log" >&2; fail "EAP-TTLS reauthentication failed"; }
+grep -q "MPPE keys OK: 4  mismatch: 0" "$work/eapol.log" || fail "EAP-TTLS reauthentication: expected 4 joins with matching keys"
+echo "PASS: EAP-TTLS rejoins three more times in one run"
+for n in $(seq 1 10); do expect_ttls success "join $n of 10 in a row" lab-wifi lab-wifi-password-1 "auth=PAP" >/dev/null; done
+echo "PASS: EAP-TTLS accepts 10 joins in a row"
+# eapol_test's Calling-Station-Id is its default MAC 02:00:00:00:00:01.
+for n in $(seq 1 12); do "$work/radius-probe" -server "$app_ip:1812" -secret "$eapol_secret" -user anonymous -password x -eap -station 02-00-00-00-00-01 >/dev/null; done
+expect_ttls success "joins after 12 abandoned handshakes from the same phone" lab-wifi lab-wifi-password-1 "auth=PAP"
+for n in $(seq 1 12); do "$work/radius-probe" -server "$app_ip:1812" -secret "$eapol_secret" -user anonymous -password x -eap >/dev/null; done
+expect_ttls success "joins after 12 abandoned handshakes without a station id" lab-wifi lab-wifi-password-1 "auth=PAP"
+api PATCH "/api/network-users/$wifi_id" '{"disabled":true}'
+[[ "$status" == 200 ]] || fail "disabling the network user returned HTTP $status"
+for n in $(seq 1 12); do expect_ttls failure "disabled user attempt $n" lab-wifi lab-wifi-password-1 "auth=PAP" >/dev/null; done
+echo "PASS: EAP-TTLS rejects a disabled user"
+api PATCH "/api/network-users/$wifi_id" '{"disabled":false}'
+expect_ttls success "accepts a re-enabled user after 12 rejections" lab-wifi lab-wifi-password-1 "auth=PAP"
+api POST "/api/network-users/$wifi_id/password" '{"password":"lab-wifi-password-2"}'
+[[ "$status" == 200 ]] || fail "resetting the network user's password returned HTTP $status"
+expect_ttls failure "rejects the old password after a reset" lab-wifi lab-wifi-password-1 "auth=PAP"
+expect_ttls success "accepts the new password after a reset" lab-wifi lab-wifi-password-2 "auth=PAP"
+ttls_reasons="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT string_agg(DISTINCT details->>'reason', ',') FROM audit_events WHERE action='radius.auth_reject' AND details->>'method'='eap-ttls'")"
+[[ "$ttls_reasons" == "bad_credentials,disabled,inner_method_not_pap,tls_failed" ]] || fail "EAP-TTLS reject reasons after the checklist: $ttls_reasons"
+echo "PASS: EAP-TTLS checklist rejects were audited as disabled or bad_credentials, never eap_session_limit"
 
 api DELETE "/api/devices/$device_id/radius-secret"
 [[ "$status" == 200 ]] || fail "removing the RADIUS secret returned HTTP $status"

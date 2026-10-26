@@ -37,8 +37,14 @@ type app struct {
 	secureCookie bool
 	// snapshotRetry holds back scheduled snapshots of devices that just failed.
 	snapshotRetry retryTracker
+	// backupRetry does the same for scheduled configuration backups.
+	backupRetry retryTracker
 	// clientPolls remembers when each AP was last asked for its Wi-Fi clients.
 	clientPolls pollTracker
+	// leaseNames holds DHCP hostnames per device so any router's leases can name a client.
+	leaseNames leaseCache
+	// rdns names clients by reverse DNS of their IP when no DHCP host reports them.
+	rdns reverseDNS
 	// radius is nil unless OPENMANAGE_RADIUS_LISTEN is set.
 	radius *radiusServer
 }
@@ -66,10 +72,15 @@ type device struct {
 	Enrollable bool `json:"enrollable"`
 	// ConfigDrift is true while the device has configuration drift nobody has acknowledged.
 	ConfigDrift bool `json:"config_drift"`
+	// Role says what the device is for ("access_point" or "router", a router also being the
+	// gateway) and DHCPHost marks the device whose lease file names Wi-Fi clients.
+	Role     string `json:"role"`
+	DHCPHost bool   `json:"dhcp_host"`
 }
 
 const deviceColumns = `id::text,name,address,model,firmware,status,last_seen_at,created_at,
-	EXISTS (SELECT 1 FROM config_snapshots cs WHERE cs.device_id=devices.id AND cs.drift AND cs.acknowledged_at IS NULL)`
+	EXISTS (SELECT 1 FROM config_snapshots cs WHERE cs.device_id=devices.id AND cs.drift AND cs.acknowledged_at IS NULL),
+	role,dhcp_host`
 
 type auditEvent struct {
 	ID           int64           `json:"id"`
@@ -150,12 +161,19 @@ func main() {
 	mux.HandleFunc("POST /api/devices", a.createDevice)
 	mux.HandleFunc("GET /api/devices/{id}", a.getDevice)
 	mux.HandleFunc("DELETE /api/devices/{id}", a.deleteDevice)
+	mux.HandleFunc("PATCH /api/devices/{id}", a.updateDeviceRole)
 	mux.HandleFunc("POST /api/devices/{id}/enroll", a.enrollDevice)
+	mux.HandleFunc("POST /api/device-bootstrap/probe", a.bootstrapProbe)
+	mux.HandleFunc("POST /api/device-bootstrap", a.bootstrapDevice)
 	mux.HandleFunc("POST /api/devices/{id}/health-check", a.runDeviceHealthCheck)
 	mux.HandleFunc("POST /api/devices/{id}/config-snapshots", a.captureConfigSnapshot)
 	mux.HandleFunc("GET /api/devices/{id}/config-snapshots", a.listConfigSnapshots)
 	mux.HandleFunc("GET /api/devices/{id}/config-snapshots/{snapshot}/changes", a.configSnapshotChanges)
 	mux.HandleFunc("POST /api/devices/{id}/config-snapshots/{snapshot}/acknowledge", a.acknowledgeConfigDrift)
+	mux.HandleFunc("POST /api/devices/{id}/backups", a.createDeviceBackup)
+	mux.HandleFunc("GET /api/devices/{id}/backups", a.listDeviceBackups)
+	mux.HandleFunc("POST /api/devices/{id}/backups/{backup}/download", a.downloadDeviceBackup)
+	mux.HandleFunc("DELETE /api/devices/{id}/backups/{backup}", a.deleteDeviceBackup)
 	mux.HandleFunc("GET /api/config-settings", a.listWritableSettings)
 	mux.HandleFunc("GET /api/devices/{id}/config-changes", a.listConfigChanges)
 	mux.HandleFunc("POST /api/devices/{id}/config-changes", a.previewConfigChange)
@@ -455,7 +473,7 @@ func (a *app) listDevices(w http.ResponseWriter, r *http.Request) {
 	out := make([]device, 0)
 	for rows.Next() {
 		var d device
-		if err := rows.Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not read devices")
 			return
 		}
@@ -478,9 +496,18 @@ func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
 		Address  string `json:"address"`
 		Model    string `json:"model"`
 		Firmware string `json:"firmware"`
+		Role     string `json:"role"`
+		DHCPHost bool   `json:"dhcp_host"`
 	}
 	if err := decodeJSONBody(w, r, deviceBodyLimit, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if in.Role == "" {
+		in.Role = "access_point"
+	}
+	if !validDeviceRole(in.Role) {
+		writeError(w, http.StatusBadRequest, "role must be access_point or router")
 		return
 	}
 	in.Name = strings.TrimSpace(in.Name)
@@ -503,8 +530,8 @@ func (a *app) createDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var d device
-	err = tx.QueryRow(r.Context(), `INSERT INTO devices(name,address,model,firmware,status) VALUES($1,$2,$3,$4,'unknown') RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE`, in.Name, in.Address, in.Model, in.Firmware).
-		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift)
+	err = tx.QueryRow(r.Context(), `INSERT INTO devices(name,address,model,firmware,status,role,dhcp_host) VALUES($1,$2,$3,$4,'unknown',$5,$6) RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE,role,dhcp_host`, in.Name, in.Address, in.Model, in.Firmware, in.Role, in.DHCPHost).
+		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost)
 	if err == nil {
 		err = insertAuditEvent(r.Context(), tx, user.ID, "device.create", "device", d.ID, map[string]string{"name": d.Name, "address": d.Address})
 	}
@@ -526,7 +553,7 @@ func (a *app) getDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	var d device
 	err := a.db.QueryRow(r.Context(), `SELECT `+deviceColumns+` FROM devices WHERE id=$1`, r.PathValue("id")).
-		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift)
+		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost)
 	if errors.Is(err, pgx.ErrNoRows) || err != nil {
 		writeError(w, http.StatusNotFound, "device not found")
 		return

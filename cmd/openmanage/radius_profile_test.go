@@ -24,7 +24,7 @@ func TestAppleWiFiProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile := appleWiFiProfile(caDER, `Home <"5G"> & co`)
+	profile := appleWiFiProfile(caDER, `Home <"5G"> & co`, "")
 	// Well-formed XML, with the SSID escaped and the CA embedded.
 	dec := xml.NewDecoder(bytes.NewReader(profile))
 	dec.Strict = true
@@ -50,8 +50,16 @@ func TestAppleWiFiProfile(t *testing.T) {
 	if bytes.Contains(profile, []byte("<5G>")) {
 		t.Fatal("SSID was not escaped")
 	}
+	if bytes.Contains(profile, []byte("UserName")) {
+		t.Fatal("profile without a username presets one")
+	}
+	// A preset username lands inside the EAP settings.
+	withUser := appleWiFiProfile(caDER, "Home", "nishant-iphone")
+	if !bytes.Contains(withUser, []byte("<key>UserName</key><string>nishant-iphone</string>")) {
+		t.Fatal("profile does not preset the username")
+	}
 	// The same CA and SSID give the same identifiers, so reinstalling replaces.
-	if !bytes.Equal(profile, appleWiFiProfile(caDER, `Home <"5G"> & co`)) {
+	if !bytes.Equal(profile, appleWiFiProfile(caDER, `Home <"5G"> & co`, "")) {
 		t.Fatal("profile identifiers are not stable")
 	}
 }

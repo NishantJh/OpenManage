@@ -1,6 +1,6 @@
 # Instructions for coding agents and contributors
 
-Read plan.md before planning work. Use this file as the repository-specific operating guide.
+Read plan.md before planning work. Read [CODEQUALITY.md](CODEQUALITY.md) before making any change: it is the general code quality standard for every agent and contributor, including its Section 18 completion report. This file is the repository-specific operating guide and the Section 20 project-specific enforcement for that standard. Where the two overlap, the rules in this file win. The checks CODEQUALITY.md Sections 6 and 17 ask for are listed under "CI and security" and "Useful checks" below; run those rather than inventing others.
 
 ## Workflow
 
@@ -39,6 +39,7 @@ Frontend: cd web && npm ci && npm run build
 Backend: go test ./...
 Formatting: gofmt -w cmd/openmanage/*.go; gofmt -l cmd/openmanage/*.go
 Container: docker build -t openmanage:local .
+Browser navigation check: scripts/ui-nav-test.mjs (run by scripts/smoke-test.sh; needs Node and Chromium)
 
 CI prepares embedded frontend assets before running Go tests and building the Docker image. Do not interpret a standalone local Docker build failure as an application defect until the required generated assets are prepared.
 

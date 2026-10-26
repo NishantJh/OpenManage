@@ -1,9 +1,9 @@
-export type Device={id:string;name:string;address:string;model:string;firmware:string;status:"online"|"offline"|"unknown"|"degraded";last_seen_at:string;enrollable:boolean;config_drift:boolean};
+export type Device={id:string;name:string;address:string;model:string;firmware:string;status:"online"|"offline"|"unknown"|"degraded";last_seen_at:string;enrollable:boolean;config_drift:boolean;role:"access_point"|"router";dhcp_host:boolean};
 export type AuditEvent={id:number;username:string;action:string;resource_type:string;resource_id:string;details:Record<string,unknown>;created_at:string};
 export type HealthResult={name:string;label:string;status:"ok"|"error";output?:string;error?:string;duration_ms:number};
 export type HealthResponse={device_id:string;checked_at:string;status:string;results:HealthResult[]};
 export type MonitoringCheck={id:number;device_id:string;device_name:string;status:"online"|"offline"|"degraded"|"error";reason:string;started_at:string;finished_at:string;duration_ms:number};
-export type MonitoringSettings={enabled:boolean;interval_seconds:number;snapshots_enabled:boolean;snapshot_interval_seconds:number};
+export type MonitoringSettings={enabled:boolean;interval_seconds:number;snapshots_enabled:boolean;snapshot_interval_seconds:number;client_tracking_enabled:boolean;client_poll_interval_seconds:number};
 export type ConfigSnapshot={id:number;device_id:string;captured_at:string;last_verified_at:string;size_bytes:number;option_count:number;drift:boolean;acknowledged_at:string|null};
 export type CaptureResult={snapshot:ConfigSnapshot;first:boolean;changed:boolean;change_count:number};
 export type ConfigChange={path:string;kind:"added"|"removed"|"changed";old?:string;new?:string;redacted?:boolean};
@@ -19,3 +19,5 @@ export type RadiusStatus={enabled:boolean;listen_addr:string;dropped_packets:num
 export type FloorRoom={id:string;name:string;x:number;y:number;w:number;h:number};
 export type FloorPlacement={device_id:string;x:number;y:number};
 export type FloorPlan={rooms:FloorRoom[];placements:FloorPlacement[];updated_at?:string};
+export type WifiClient={id:string;label:string;name:string;mac_hint:string;hidden:boolean;device_id:string;interface:string;signal_dbm:number|null;connected:boolean;connected_since?:string;last_seen:string};
+export type WifiClientEvent={id:number;client_id:string;label:string;mac_hint:string;kind:"connect"|"roam"|"disconnect";from_device_id:string|null;to_device_id:string|null;signal_dbm:number|null;at:string};

@@ -36,12 +36,16 @@ const (
 	clientMaxPerInterface = 256
 )
 
-// wifiClientsOperation reads the hostapd association tables. The command is fixed:
-// it lists the hostapd ubus objects and asks each for its clients, nothing else.
+// wifiClientsOperation reads the hostapd association tables, plus two small side tables
+// used only for naming devices: the DHCP lease file (MAC and hostname) and the IPv4
+// neighbour table (MAC and IP). Both are capped at 256 lines. The command is fixed: it
+// prints those, then lists the hostapd ubus objects and asks each for its clients.
 var wifiClientsOperation = operation{
 	Name: "wifi_clients", Label: "Wi-Fi clients", Class: operationRead, Roles: readOnlyRoles,
 	Timeout: healthCheckTimeout, OutputLimit: 64 * 1024, Audit: auditBestEffort,
-	command: `for n in $(ubus list 'hostapd.*'); do echo "@@ $n"; ubus call "$n" get_clients; done`,
+	command: `echo "##leases"; awk 'length($4)>0 && length($4)<=60 && $4!="*" {print $2, $4}' /tmp/dhcp.leases 2>/dev/null | head -n 256; ` +
+		`echo "##neigh"; ip -4 neigh show 2>/dev/null | awk '$4=="lladdr" {print $5, $1}' | head -n 256; ` +
+		`for n in $(ubus list 'hostapd.*'); do echo "@@ $n"; ubus call "$n" get_clients; done`,
 }
 
 var hostapdObjectPattern = regexp.MustCompile(`^hostapd\.[A-Za-z0-9_.-]{1,32}$`)
@@ -50,6 +54,44 @@ type polledClient struct {
 	MAC       string
 	Interface string
 	Signal    *int
+	Name      string // DHCP or reverse DNS hostname, empty when none is known
+}
+
+var leaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$`)
+
+// parsePreamble reads the "##leases" and "##neigh" side tables the operation prints before
+// the first hostapd section. Both are "MAC value" lines. Hostnames come from the clients
+// themselves, so anything that is not a plain hostname is dropped; neighbour addresses
+// must be IPv4 literals.
+func parsePreamble(preamble string) (leases map[string]string, neigh map[string]string) {
+	leases, neigh = map[string]string{}, map[string]string{}
+	section := ""
+	for _, line := range strings.Split(preamble, "\n") {
+		switch line = strings.TrimSpace(line); line {
+		case "##leases", "##neigh":
+			section = line
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		mac, ok := normalizeMAC(f[0])
+		if !ok {
+			continue
+		}
+		switch section {
+		case "##leases":
+			if leaseNamePattern.MatchString(f[1]) {
+				leases[mac] = f[1]
+			}
+		case "##neigh":
+			if ip := net.ParseIP(f[1]); ip != nil && ip.To4() != nil {
+				neigh[mac] = ip.String()
+			}
+		}
+	}
+	return leases, neigh
 }
 
 // parseWifiClients turns the operation's output into associated clients. Malformed
@@ -133,6 +175,43 @@ func classifyAssociation(prev *clientState, deviceID string) string {
 	return ""
 }
 
+// leaseCache holds the hostnames each enrolled device's DHCP server last reported, so a
+// client seen on one AP can be named from the lease file of a different router. In
+// memory: after a restart every device is simply polled once.
+type leaseCache struct {
+	mu    sync.Mutex
+	names map[string]map[string]string // device ID -> MAC -> hostname
+}
+
+func (c *leaseCache) set(deviceID string, leases map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.names == nil {
+		c.names = map[string]map[string]string{}
+	}
+	if len(leases) == 0 {
+		delete(c.names, deviceID)
+		return
+	}
+	c.names[deviceID] = leases
+}
+
+func (c *leaseCache) lookup(mac string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, leases := range c.names {
+		if name := leases[mac]; name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+// leaseSection is the part of the operation's output before the first hostapd section.
+func leaseSection(output string) string {
+	return strings.Split("\n"+output, "\n@@ ")[0]
+}
+
 // pollTracker remembers when each AP was last polled. In memory: after a restart
 // every AP is simply polled once.
 type pollTracker struct {
@@ -184,6 +263,8 @@ func (a *app) pollWifiClients(parent context.Context, deviceID string) {
 	if err != nil {
 		return
 	}
+	var dhcpHost bool
+	_ = a.db.QueryRow(ctx, `SELECT dhcp_host FROM devices WHERE id=$1`, deviceID).Scan(&dhcpHost)
 	session, err := openDeviceSession(ctx, target, healthCheckTimeout)
 	if err != nil {
 		return
@@ -193,8 +274,79 @@ func (a *app) pollWifiClients(parent context.Context, deviceID string) {
 	if result.Status != "ok" {
 		return // unknown, not "disconnected": leave the recorded state alone
 	}
-	if err := a.applyClientPoll(ctx, deviceID, parseWifiClients(result.Output)); err != nil {
+	leases, neigh := parsePreamble(leaseSection(result.Output))
+	if !dhcpHost {
+		leases = nil // only the DHCP host's lease file is trusted for names
+	}
+	a.leaseNames.set(deviceID, leases)
+	clients := parseWifiClients(result.Output)
+	pending := map[string]string{} // MAC -> IP for clients no DHCP host has named
+	for i := range clients {
+		if name := a.leaseNames.lookup(clients[i].MAC); name != "" {
+			clients[i].Name = name
+		} else if ip := neigh[clients[i].MAC]; ip != "" {
+			pending[clients[i].MAC] = ip
+		}
+	}
+	if err := a.applyClientPoll(ctx, deviceID, clients); err != nil {
 		log.Printf("client tracking could not store results for device %s", deviceID)
+	}
+	a.applyLeaseNames(ctx, leases)
+	// Reverse DNS runs after the poll is stored, with its own budget, so a slow resolver
+	// can never cost a poll its results.
+	a.applyLeaseNames(parent, a.reverseNames(parent, pending))
+}
+
+// reverseNames looks up the IPs of unnamed clients. At most rdnsMaxPerPoll uncached
+// lookups run per poll, four at a time, within rdnsPollBudget.
+func (a *app) reverseNames(parent context.Context, pending map[string]string) map[string]string {
+	if len(pending) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(parent, rdnsPollBudget)
+	defer cancel()
+	var (
+		mu    sync.Mutex
+		wg    sync.WaitGroup
+		out   = map[string]string{}
+		slots = make(chan struct{}, 4)
+		n     = 0
+	)
+	for mac, ip := range pending {
+		if n++; n > rdnsMaxPerPoll {
+			break
+		}
+		slots <- struct{}{}
+		wg.Add(1)
+		go func(mac, ip string) {
+			defer func() { <-slots; wg.Done() }()
+			if name := a.rdns.name(ctx, ip); name != "" {
+				mu.Lock()
+				out[mac] = name
+				mu.Unlock()
+			}
+		}(mac, ip)
+	}
+	wg.Wait()
+	return out
+}
+
+// applyLeaseNames names clients that are already tracked from one device's leases. It
+// never creates a client: a lease alone (a wired PC, say) is not a Wi-Fi client.
+func (a *app) applyLeaseNames(ctx context.Context, leases map[string]string) {
+	if len(leases) == 0 {
+		return
+	}
+	key, err := encryptionKey()
+	if err != nil {
+		return
+	}
+	for mac, name := range leases {
+		if _, err := a.db.Exec(ctx, `UPDATE wifi_clients SET dhcp_name=$2 WHERE client_key=$1 AND dhcp_name <> $2`,
+			clientKey(key, mac), name); err != nil {
+			log.Printf("client tracking could not store DHCP names")
+			return
+		}
 	}
 }
 
@@ -216,8 +368,9 @@ func (a *app) applyClientPoll(ctx context.Context, deviceID string, clients []po
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO wifi_clients(client_key,mac_ciphertext,mac_hint) VALUES($1,$2,$3)
-			ON CONFLICT (client_key) DO UPDATE SET last_seen=NOW()`, k, sealed, maskMAC(c.MAC)); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO wifi_clients(client_key,mac_ciphertext,mac_hint,dhcp_name) VALUES($1,$2,$3,$4)
+			ON CONFLICT (client_key) DO UPDATE SET last_seen=NOW(),
+				dhcp_name=CASE WHEN $4 <> '' THEN $4 ELSE wifi_clients.dhcp_name END`, k, sealed, maskMAC(c.MAC), c.Name); err != nil {
 			return err
 		}
 		var prev clientState
@@ -295,6 +448,7 @@ func (a *app) pruneWifiClients(parent context.Context) {
 type wifiClientView struct {
 	ID             string     `json:"id"`
 	Label          string     `json:"label"`
+	Name           string     `json:"name"` // hostname the router's DHCP server knows, if any
 	MACHint        string     `json:"mac_hint"`
 	Hidden         bool       `json:"hidden"`
 	DeviceID       string     `json:"device_id"`
@@ -308,7 +462,7 @@ type wifiClientView struct {
 // listWifiClients returns clients seen in the last 24 hours. A client counts as
 // connected only if its AP was polled recently enough to trust the record.
 func (a *app) listWifiClients(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.Query(r.Context(), `SELECT encode(c.client_key,'hex'), c.label, c.mac_hint, c.hidden,
+	rows, err := a.db.Query(r.Context(), `SELECT encode(c.client_key,'hex'), c.label, c.dhcp_name, c.mac_hint, c.hidden,
 			s.device_id::text, s.interface, s.signal_dbm,
 			s.connected AND s.last_seen > NOW() - (2 * m.client_poll_interval_seconds * INTERVAL '1 second'),
 			s.connected_since, s.last_seen
@@ -325,7 +479,7 @@ func (a *app) listWifiClients(w http.ResponseWriter, r *http.Request) {
 	out := []wifiClientView{}
 	for rows.Next() {
 		var v wifiClientView
-		if err := rows.Scan(&v.ID, &v.Label, &v.MACHint, &v.Hidden, &v.DeviceID, &v.Interface, &v.SignalDBM,
+		if err := rows.Scan(&v.ID, &v.Label, &v.Name, &v.MACHint, &v.Hidden, &v.DeviceID, &v.Interface, &v.SignalDBM,
 			&v.Connected, &v.ConnectedSince, &v.LastSeen); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not load Wi-Fi clients")
 			return
@@ -449,7 +603,7 @@ func (a *app) listWifiClientEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid client ID")
 		return
 	}
-	rows, err := a.db.Query(r.Context(), `SELECT e.id, encode(e.client_key,'hex'), c.label, c.mac_hint, e.kind,
+	rows, err := a.db.Query(r.Context(), `SELECT e.id, encode(e.client_key,'hex'), COALESCE(NULLIF(c.label,''),c.dhcp_name), c.mac_hint, e.kind,
 			e.from_device_id::text, e.to_device_id::text, e.signal_dbm, e.at
 		FROM wifi_client_events e JOIN wifi_clients c ON c.client_key=e.client_key
 		WHERE ($1 = '' OR e.client_key = decode($1,'hex'))

@@ -23,7 +23,7 @@ iPhone caveat: iOS "Private Wi-Fi Address" gives a per-SSID random MAC; it is st
 Two fixed read-only operations through the existing engine (no generic shell, bounded output/timeout):
 - `wifi_ap_list`: `ubus list 'hostapd.*'` to find AP interfaces.
 - `wifi_clients`: `ubus call hostapd.<iface> get_clients` for each interface returned by the allow-listed pattern `^hostapd\.[A-Za-z0-9_.-]{1,32}$` (name validated server-side, never user supplied). Returns client MAC, auth/assoc flags, signal (RSSI), rx/tx bytes.
-- Hostname/IP enrichment (optional later): read `/tmp/dhcp.leases` via a fixed read op.
+- Device names (built): the same `wifi_clients` op also prints two capped side tables, `/tmp/dhcp.leases` (MAC and hostname) and `ip -4 neigh show` (MAC and IP). Names come from, in order: the user's label; the lease file of a device marked **DHCP host** (`PATCH /api/devices/{id}` with `dhcp_host`; leases from other devices are ignored; a router that is not an AP can name clients seen on any AP); reverse DNS (PTR) of the client's IP from the AP's neighbour table, private IPv4 only, 1 s timeout, at most 16 uncached lookups per poll, cached in memory (1 h hit, 5 min miss). Only plain hostnames are kept. A bridge AP may know few client IPs, so reverse DNS is best effort.
 Run by the existing opt-in monitoring loop (same advisory lock, 3 workers), at the monitoring interval (suggest 60 s min; default 5 min), so no new service. Opt-in toggle `client_tracking_enabled` in monitoring settings, default off.
 
 ## 3. Storage and 24 h retention
