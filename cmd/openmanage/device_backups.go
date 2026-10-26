@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,8 +31,10 @@ const (
 	// backupsPerDevice is how many unpinned backups are kept per device.
 	backupsPerDevice = 5
 	backupBodyLimit  = 2 * 1024
-	// backupJobTimeout covers connecting plus the three reads of one capture.
-	backupJobTimeout = 60 * time.Second
+	// backupJobTimeout covers connecting plus the three reads of one capture. Scheduled
+	// batches run inside the monitoring loop, so it stays short; manual requests are
+	// further bounded by the API deadline.
+	backupJobTimeout = 30 * time.Second
 )
 
 // backupOperation streams the archive on stdout. umask keeps any file sysupgrade
@@ -77,6 +80,9 @@ func (j *deviceJobs) finish(deviceID string) {
 	delete(j.busy, deviceID)
 }
 
+// backupAAD takes canonical (lower-case) UUIDs, which is how PostgreSQL returns them.
+// Every handler lower-cases path IDs, so an upper-case request cannot seal a backup
+// that a later download would fail to open.
 func backupAAD(deviceID, backupID string) string {
 	return "openmanage:firmware-backup:v1:" + deviceID + ":" + backupID
 }
@@ -146,7 +152,7 @@ func newBackupID() (string, error) {
 }
 
 func (a *app) createDeviceBackup(w http.ResponseWriter, r *http.Request) {
-	deviceID := r.PathValue("id")
+	deviceID := strings.ToLower(r.PathValue("id"))
 	if !validUUID(deviceID) {
 		writeError(w, http.StatusBadRequest, "invalid device ID")
 		return
@@ -267,7 +273,7 @@ func backupAuditDetails(b deviceBackup, digest string, scheduled, unchanged bool
 }
 
 func (a *app) listDeviceBackups(w http.ResponseWriter, r *http.Request) {
-	deviceID := r.PathValue("id")
+	deviceID := strings.ToLower(r.PathValue("id"))
 	if !validUUID(deviceID) {
 		writeError(w, http.StatusBadRequest, "invalid device ID")
 		return
@@ -302,7 +308,7 @@ func (a *app) listDeviceBackups(w http.ResponseWriter, r *http.Request) {
 // re-entered their password. The audit event commits before any byte is sent. It is a
 // POST so the password travels in the body, never in a URL or log line.
 func (a *app) downloadDeviceBackup(w http.ResponseWriter, r *http.Request) {
-	deviceID, backupID := r.PathValue("id"), r.PathValue("backup")
+	deviceID, backupID := strings.ToLower(r.PathValue("id")), strings.ToLower(r.PathValue("backup"))
 	if !validUUID(deviceID) || !validUUID(backupID) {
 		writeError(w, http.StatusBadRequest, "invalid device or backup ID")
 		return
@@ -371,7 +377,7 @@ func (a *app) auditBackup(ctx context.Context, userID, action string, b deviceBa
 }
 
 func (a *app) deleteDeviceBackup(w http.ResponseWriter, r *http.Request) {
-	deviceID, backupID := r.PathValue("id"), r.PathValue("backup")
+	deviceID, backupID := strings.ToLower(r.PathValue("id")), strings.ToLower(r.PathValue("backup"))
 	if !validUUID(deviceID) || !validUUID(backupID) {
 		writeError(w, http.StatusBadRequest, "invalid device or backup ID")
 		return
