@@ -68,14 +68,14 @@ tr.selected td{background:#1a1e2a}
 .fp-seg button.on{background:#2b2f40;color:#f0f1f6}
 .fp-svg{display:block;width:100%;height:auto;touch-action:none;background:radial-gradient(ellipse at 30% 0%,#171b27 0%,#0f121a 70%)}
 .fp-stage{position:relative}
-.fp-room{fill:rgba(141,120,245,.05);stroke:rgba(141,120,245,.55);stroke-width:2px;vector-effect:non-scaling-stroke}
-.fp-room-name{fill:#9aa1b4;font-weight:600;letter-spacing:.14em;pointer-events:none}
+.fp-room{fill:#e7e9ef;stroke:#9aa1b4;stroke-width:2px;vector-effect:non-scaling-stroke}
+.fp-room-name{fill:#4a5166;font-weight:600;letter-spacing:.14em;pointer-events:none}
 .fp-room-name.edit{pointer-events:auto;cursor:text}
-.fp-room-size{fill:#596079;pointer-events:none}
+.fp-room-size{fill:#7c8398;pointer-events:none}
 .fp-ap{fill:#0f121a;stroke:#8d78f5;stroke-width:2px;vector-effect:non-scaling-stroke}
-.fp-ap-name{fill:#d6d1f7;font-weight:600}
-.fp-client.on{fill:#7be0a4}
-.fp-client.off{fill:#e07b7b;opacity:.75}
+.fp-ap-name{fill:#eceef5;font-weight:600;paint-order:stroke;stroke:#0f121a;stroke-linejoin:round}
+.fp-client.on{fill:#12a15e;stroke:#fff;stroke-width:1px;vector-effect:non-scaling-stroke}
+.fp-client.off{fill:#e5484d;stroke:#fff;stroke-width:1px;vector-effect:non-scaling-stroke;opacity:.8}
 .fp-hit{cursor:default}
 .fp-tip{position:absolute;z-index:2;display:grid;gap:2px;min-width:150px;padding:9px 12px;border:1px solid #2d3448;border-radius:8px;background:#1a1f2e;box-shadow:0 6px 18px rgba(0,0,0,.4);pointer-events:none;font-size:11px;color:#8a91a5}
 .fp-tip b{font-size:13px;color:#eceef5}

@@ -124,9 +124,9 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
     <svg ref={svg} viewBox={`${-PAD} ${-PAD} ${extentX+PAD} ${extentY+PAD}`} className="fp-svg" onPointerMove={move} onPointerUp={()=>setDrag(null)} role="img" aria-label="Floor plan">
      <defs>
       <pattern id="fp-grid" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="rgba(255,255,255,.035)" strokeWidth="0.02"/></pattern>
-      <radialGradient id="fp-coverage"><stop offset="0" stopColor="#8d78f5" stopOpacity=".22"/><stop offset="1" stopColor="#8d78f5" stopOpacity="0"/></radialGradient>
-      <radialGradient id="fp-glow-on"><stop offset="0" stopColor="#7be0a4" stopOpacity=".75"/><stop offset=".45" stopColor="#7be0a4" stopOpacity=".22"/><stop offset="1" stopColor="#7be0a4" stopOpacity="0"/></radialGradient>
-      <radialGradient id="fp-glow-off"><stop offset="0" stopColor="#e07b7b" stopOpacity=".4"/><stop offset="1" stopColor="#e07b7b" stopOpacity="0"/></radialGradient>
+      <radialGradient id="fp-coverage"><stop offset="0" stopColor="#8d78f5" stopOpacity=".12"/><stop offset="1" stopColor="#8d78f5" stopOpacity="0"/></radialGradient>
+      <radialGradient id="fp-glow-on"><stop offset="0" stopColor="#12a15e" stopOpacity=".6"/><stop offset=".5" stopColor="#12a15e" stopOpacity=".18"/><stop offset="1" stopColor="#12a15e" stopOpacity="0"/></radialGradient>
+      <radialGradient id="fp-glow-off"><stop offset="0" stopColor="#e5484d" stopOpacity=".35"/><stop offset="1" stopColor="#e5484d" stopOpacity="0"/></radialGradient>
      </defs>
      <rect x={-PAD} y={-PAD} width={extentX+PAD} height={extentY+PAD} fill="url(#fp-grid)"/>
      {plan.rooms.map(r=><g key={r.id} onPointerEnter={()=>setHoverRoom(r.id)} onPointerLeave={()=>setHoverRoom("")}>
@@ -137,7 +137,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
      {plan.placements.map(a=><g key={a.device_id} onPointerDown={e=>start(e,"ap",a.device_id,a.x,a.y)} style={{cursor:canEdit?"grab":"default"}}>
       <circle cx={a.x} cy={a.y} r={3} fill="url(#fp-coverage)" pointerEvents="none"/>
       <circle cx={a.x} cy={a.y} r={P(8)} className="fp-ap"/><circle cx={a.x} cy={a.y} r={P(3)} fill="#8d78f5" pointerEvents="none"/>
-      <text x={a.x+P(14)} y={a.y+P(4)} className="fp-ap-name" style={{fontSize:P(12)}} pointerEvents="none">{nameOf(a.device_id)}</text></g>)}
+      <text x={a.x+P(14)} y={a.y+P(4)} className="fp-ap-name" style={{fontSize:P(12),strokeWidth:P(3)}} pointerEvents="none">{nameOf(a.device_id)}</text></g>)}
      {dots.map(({c,x,y})=><g key={c.id} onPointerEnter={()=>setHover(c.id)} onPointerLeave={()=>setHover("")}>
       <circle cx={x} cy={y} r={P(c.connected?9:6)} fill={c.connected?"url(#fp-glow-on)":"url(#fp-glow-off)"} pointerEvents="none"/>
       <circle cx={x} cy={y} r={P(c.connected?2.6:2.2)} className={c.connected?"fp-client on":"fp-client off"} pointerEvents="none"/>
