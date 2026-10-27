@@ -37,26 +37,37 @@ export function snapToWall(rooms:FloorRoom[],x:number,y:number){
  return best?{x:best.x,y:best.y}:{x,y};
 }
 
-// A client's dot goes in the room that holds the AP it is associated with (the nearest
-// room if the AP sits outside every room), spread around the AP so dots do not stack.
-export function dotPosition(rooms:FloorRoom[],ap:{x:number;y:number},index:number,count:number){
- const room=rooms.find(r=>inRoom(r,ap.x,ap.y))??[...rooms].sort((a,b)=>Math.hypot(a.x+a.w/2-ap.x,a.y+a.h/2-ap.y)-Math.hypot(b.x+b.w/2-ap.x,b.y+b.h/2-ap.y))[0];
- // Dots fan out in an arc facing into the room (away from the wall the AP hangs on).
- const toward=room?Math.atan2(room.y+room.h/2-ap.y,room.x+room.w/2-ap.x):Math.PI/2,spread=Math.min(Math.PI*0.9,0.55*(count-1));
- const angle=count>1?toward-spread/2+spread*index/(count-1):toward,radius=count>1?1.15:0.95;
- const x=ap.x+Math.cos(angle)*radius,y=ap.y+Math.sin(angle)*radius;
- const within=(v:number,lo:number,size:number)=>Math.min(Math.max(v,lo+0.3),lo+size-0.3);
- return room?{x:within(x,room.x,room.w),y:within(y,room.y,room.h),room:room.name}:{x,y,room:""};
+const hash=(s:string)=>{let h=2166136261;for(const ch of s){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return h>>>0};
+const frac=(v:number)=>v-Math.floor(v);
+// A client's dot goes in the room that holds the AP it is associated with (the nearest room if
+// the AP sits outside every room). Each device gets its own stable spot inside that room, nudged
+// apart so dots (minD plan units) do not overlap. Not a measured position.
+export function placeDots(rooms:FloorRoom[],items:{id:string;ap:{x:number;y:number}}[],minD:number){
+ const out=new Map<string,{x:number;y:number;room:string}>(),taken=new Map<string,{x:number;y:number}[]>();
+ for(const it of [...items].sort((a,b)=>a.id<b.id?-1:1)){
+  const room=rooms.find(r=>inRoom(r,it.ap.x,it.ap.y))??[...rooms].sort((a,b)=>Math.hypot(a.x+a.w/2-it.ap.x,a.y+a.h/2-it.ap.y)-Math.hypot(b.x+b.w/2-it.ap.x,b.y+b.h/2-it.ap.y))[0];
+  if(!room){out.set(it.id,{x:it.ap.x+(frac(hash(it.id)/4294967296)-0.5)*2,y:it.ap.y+0.3+0.6*frac(hash(it.id+"y")/4294967296),room:""});continue}
+  const used=taken.get(room.id)??[],m=Math.min(0.4,room.w/4,room.h/4),h1=hash(it.id)/4294967296,h2=hash(it.id+"y")/4294967296;
+  let best={x:room.x+room.w/2,y:room.y+room.h/2},bestD=-1;
+  for(let k=0;k<40;k++){
+   const x=room.x+m+frac(h1+k*0.6180339887)*(room.w-2*m),y=room.y+m+frac(h2+k*0.7548776662)*(room.h-2*m);
+   const d=used.length?Math.min(...used.map(u=>Math.hypot(u.x-x,u.y-y))):Infinity;
+   if(d>bestD){best={x,y};bestD=d}
+   if(d>=minD)break;
+  }
+  used.push(best);taken.set(room.id,used);out.set(it.id,{...best,room:room.name});
+ }
+ return out;
 }
 
-// Rooms and AP positions (kept in metres, shown in feet), with the devices connected to each AP drawn on top.
+// Rooms and AP positions (kept in metres, shown in feet). Markers are drawn at a fixed pixel size so they stay small at any zoom, with the devices connected to each AP drawn on top.
 // Drawing only: nothing here touches a router.
 export default function FloorPlan({devices,role,onChanged}:{devices:Device[];role:Role;onChanged:()=>void}){
  const canEdit=role!=="readonly",isAdmin=role==="admin";
  const [plan,setPlan]=useState<Plan>({rooms:[],placements:[]}),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState<{text:string;tone:"notice"|"error"}|null>(null);
  const [drag,setDrag]=useState<{kind:"room"|"ap"|"size";key:string;dx:number;dy:number;extent:{x:number;y:number}}|null>(null),[pick,setPick]=useState("");
  const [settings,setSettings]=useState<MonitoringSettings|null>(null),[clients,setClients]=useState<WifiClient[]>([]),[events,setEvents]=useState<WifiClientEvent[]>([]),[trackBusy,setTrackBusy]=useState(false);
- const svg=useRef<SVGSVGElement>(null),editor=useRef<HTMLDetailsElement>(null),[focusRoom,setFocusRoom]=useState("");
+ const svg=useRef<SVGSVGElement>(null),editor=useRef<HTMLDetailsElement>(null),[focusRoom,setFocusRoom]=useState(""),[hover,setHover]=useState(""),[hoverRoom,setHoverRoom]=useState(""),[width,setWidth]=useState(900);
  const tracking=Boolean(settings?.client_tracking_enabled);
 
  async function loadClients(){try{const [c,e]=await Promise.all([apiFetch("/api/wifi-clients"),apiFetch("/api/wifi-client-events?limit=20")]);if(c.ok)setClients(await c.json());if(e.ok)setEvents(await e.json())}catch{/* the map still works without client data */}}
@@ -68,11 +79,13 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  async function patchClient(c:WifiClient,change:{label?:string;hidden?:boolean}){setMessage(null);try{const r=await apiFetch("/api/wifi-clients/"+c.id,"PATCH",change);if(!r.ok)throw Error();setClients(prev=>prev.map(x=>x.id===c.id?{...x,...change}:x))}catch{setMessage({tone:"error",text:"Could not update the device."})}}
  async function clearClients(){if(!window.confirm("Delete every tracked device, its last location and its roaming history?"))return;try{const r=await apiFetch("/api/wifi-clients","DELETE");if(!r.ok)throw Error();setClients([]);setEvents([]);setMessage({tone:"notice",text:"Device data cleared."});onChanged()}catch{setMessage({tone:"error",text:"Could not clear device data."})}}
 
+ useEffect(()=>{const el=svg.current;if(!el)return;const ro=new ResizeObserver(()=>setWidth(el.getBoundingClientRect().width||900));ro.observe(el);setWidth(el.getBoundingClientRect().width||900);return()=>ro.disconnect()},[]);
  useEffect(()=>{if(!focusRoom)return;const el=editor.current?.querySelector<HTMLInputElement>(`input[data-room="${focusRoom}"]`);el?.focus();el?.select();setFocusRoom("")},[focusRoom]);
  const nameOf=(id:string)=>devices.find(d=>d.id===id)?.name??"Unknown access point";
  const fit={x:Math.max(6,...plan.rooms.map(r=>r.x+r.w+1),...plan.placements.map(a=>a.x+1)),y:Math.max(4,...plan.rooms.map(r=>r.y+r.h+1),...plan.placements.map(a=>a.y+1))};
  // The canvas is held still while dragging so the pointer-to-plan mapping does not shift under the cursor.
  const {x:extentX,y:extentY}=drag?.extent??fit;
+ const px=(extentX+PAD)/Math.max(width,200),P=(n:number)=>n*px; // P(n): n screen pixels in plan units
  const change=(next:Plan)=>{setPlan(next);setDirty(true)};
  function toPlan(e:{clientX:number;clientY:number}){const r=svg.current!.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*(extentX+PAD)-PAD,y:(e.clientY-r.top)/r.height*(extentY+PAD)-PAD}}
  function start(e:React.PointerEvent,kind:"room"|"ap"|"size",key:string,ox:number,oy:number){if(!canEdit)return;const p=toPlan(e);(e.currentTarget as Element).setPointerCapture(e.pointerId);setDrag({kind,key,dx:p.x-ox,dy:p.y-oy,extent:fit})}
@@ -87,9 +100,8 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  async function save(){setSaving(true);setMessage(null);try{const saved=await apiJSON<Plan>("/api/floor-plan","PUT",{rooms:plan.rooms,placements:plan.placements},"Could not save the floor plan");setPlan(saved);setDirty(false);setMessage({tone:"notice",text:"Floor plan saved."});onChanged()}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not save the floor plan"})}finally{setSaving(false)}}
 
  const apOf=(id:string)=>plan.placements.find(a=>a.device_id===id);
- const onMap=clients.filter(c=>!c.hidden&&apOf(c.device_id)),perAp=new Map<string,WifiClient[]>();
- onMap.forEach(c=>perAp.set(c.device_id,[...(perAp.get(c.device_id)??[]),c]));
- const dots=[...perAp.entries()].flatMap(([ap,list])=>list.map((c,i)=>({c,...dotPosition(plan.rooms,apOf(ap)!,i,list.length)})));
+ const onMap=clients.filter(c=>!c.hidden&&apOf(c.device_id));
+ const placed=placeDots(plan.rooms,onMap.map(c=>({id:c.id,ap:apOf(c.device_id)!})),P(16)),dots=onMap.map(c=>({c,...placed.get(c.id)!}));
  const unplaced=devices.filter(d=>!plan.placements.some(a=>a.device_id===d.id));
  const connectedCount=clients.filter(c=>c.connected).length;
  const eventText=(e:WifiClientEvent)=>e.kind==="roam"?"roamed"+(e.from_device_id?" from "+nameOf(e.from_device_id):"")+" to "+(e.to_device_id?nameOf(e.to_device_id):"another AP"):e.kind==="connect"?"joined "+(e.to_device_id?nameOf(e.to_device_id):"the network"):"left "+(e.from_device_id?nameOf(e.from_device_id):"the network");
@@ -108,26 +120,31 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
       {isAdmin&&settings&&tracking&&<div className="fp-seg" role="group" aria-label="Poll interval">{pollChoices.map(([s,l])=><button type="button" key={s} className={settings.client_poll_interval_seconds===s?"on":""} disabled={trackBusy} onClick={()=>void saveTracking(true,s)}>{l}</button>)}</div>}
      </div>
     </div>
+    <div className="fp-stage">
     <svg ref={svg} viewBox={`${-PAD} ${-PAD} ${extentX+PAD} ${extentY+PAD}`} className="fp-svg" onPointerMove={move} onPointerUp={()=>setDrag(null)} role="img" aria-label="Floor plan">
      <defs>
-      <pattern id="fp-grid" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="rgba(255,255,255,.045)" strokeWidth="0.03"/></pattern>
-      <radialGradient id="fp-coverage"><stop offset="0" stopColor="#8d78f5" stopOpacity=".28"/><stop offset="1" stopColor="#8d78f5" stopOpacity="0"/></radialGradient>
+      <pattern id="fp-grid" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="rgba(255,255,255,.035)" strokeWidth="0.02"/></pattern>
+      <radialGradient id="fp-coverage"><stop offset="0" stopColor="#8d78f5" stopOpacity=".12"/><stop offset="1" stopColor="#8d78f5" stopOpacity="0"/></radialGradient>
+      <radialGradient id="fp-glow-on"><stop offset="0" stopColor="#12a15e" stopOpacity=".6"/><stop offset=".5" stopColor="#12a15e" stopOpacity=".18"/><stop offset="1" stopColor="#12a15e" stopOpacity="0"/></radialGradient>
+      <radialGradient id="fp-glow-off"><stop offset="0" stopColor="#e5484d" stopOpacity=".35"/><stop offset="1" stopColor="#e5484d" stopOpacity="0"/></radialGradient>
      </defs>
      <rect x={-PAD} y={-PAD} width={extentX+PAD} height={extentY+PAD} fill="url(#fp-grid)"/>
-     {plan.rooms.map(r=><g key={r.id}>
-      <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={0.18} className="fp-room" onPointerDown={e=>start(e,"room",r.id,r.x,r.y)} style={{cursor:canEdit?"move":"default"}}/>
-      <text x={r.x+0.35} y={r.y+0.75} className={canEdit?"fp-room-name edit":"fp-room-name"} onClick={()=>canEdit&&renameRoom(r.id)}>{canEdit&&<title>Click to rename</title>}{r.name.toUpperCase()}</text>
-      <text x={r.x+0.35} y={r.y+r.h-0.3} className="fp-room-size">{toFt(r.w)} × {toFt(r.h)} ft</text>
-      {canEdit&&<circle cx={r.x+r.w} cy={r.y+r.h} r={0.3} className="fp-handle" onPointerDown={e=>start(e,"size",r.id,0,0)}><title>Drag to resize</title></circle>}</g>)}
+     {plan.rooms.map(r=><g key={r.id} onPointerEnter={()=>setHoverRoom(r.id)} onPointerLeave={()=>setHoverRoom("")}>
+      <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={P(3)} className="fp-room" onPointerDown={e=>start(e,"room",r.id,r.x,r.y)} style={{cursor:canEdit?"move":"default"}}/>
+      <text x={r.x+P(14)} y={r.y+P(24)} className={canEdit?"fp-room-name edit":"fp-room-name"} style={{fontSize:P(11)}} onClick={()=>canEdit&&renameRoom(r.id)}>{canEdit&&<title>Click to rename</title>}{r.name.toUpperCase()}</text>
+      <text x={r.x+P(14)} y={r.y+r.h-P(12)} className="fp-room-size" style={{fontSize:P(10)}}>{toFt(r.w)} × {toFt(r.h)} ft</text>
+      {canEdit&&<rect x={r.x+r.w-P(5)} y={r.y+r.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className={hoverRoom===r.id||drag?.key===r.id?"fp-handle show":"fp-handle"} onPointerDown={e=>start(e,"size",r.id,0,0)}><title>Drag to resize</title></rect>}</g>)}
      {plan.placements.map(a=><g key={a.device_id} onPointerDown={e=>start(e,"ap",a.device_id,a.x,a.y)} style={{cursor:canEdit?"grab":"default"}}>
-      <circle cx={a.x} cy={a.y} r={2.4} fill="url(#fp-coverage)" pointerEvents="none"/>
-      <circle cx={a.x} cy={a.y} r={0.42} className="fp-ap"/><circle cx={a.x} cy={a.y} r={0.14} fill="#0c0f15" pointerEvents="none"/>
-      <text x={a.x} y={a.y-0.7} textAnchor="middle" className="fp-ap-name" pointerEvents="none">{nameOf(a.device_id)}</text></g>)}
-     {dots.map(({c,x,y,room})=><g key={c.id}>
-      {c.connected&&<circle cx={x} cy={y} r={0.5} className="fp-halo"/>}
-      <circle cx={x} cy={y} r={0.26} className={c.connected?"fp-client on":"fp-client off"}><title>{(c.label||c.name||"Unknown device")+" ("+c.mac_hint+") · "+(c.connected?"connected":"not connected, last seen "+ago(c.last_seen))+" · "+nameOf(c.device_id)+(room?" · "+room:"")+(c.signal_dbm!==null&&c.connected?" · "+c.signal_dbm+" dBm":"")}</title></circle>
-      {(c.label||c.name)&&<text x={x+0.42} y={y+0.12} className="fp-client-name" pointerEvents="none">{c.label||c.name}</text>}</g>)}
+      <circle cx={a.x} cy={a.y} r={3} fill="url(#fp-coverage)" pointerEvents="none"/>
+      <circle cx={a.x} cy={a.y} r={P(8)} className="fp-ap"/><circle cx={a.x} cy={a.y} r={P(3)} fill="#8d78f5" pointerEvents="none"/>
+      <text x={a.x+P(14)} y={a.y+P(4)} className="fp-ap-name" style={{fontSize:P(12),strokeWidth:P(3)}} pointerEvents="none">{nameOf(a.device_id)}</text></g>)}
+     {dots.map(({c,x,y})=><g key={c.id} onPointerEnter={()=>setHover(c.id)} onPointerLeave={()=>setHover("")}>
+      <circle cx={x} cy={y} r={P(c.connected?9:6)} fill={c.connected?"url(#fp-glow-on)":"url(#fp-glow-off)"} pointerEvents="none"/>
+      <circle cx={x} cy={y} r={P(c.connected?2.6:2.2)} className={c.connected?"fp-client on":"fp-client off"} pointerEvents="none"/>
+      <circle cx={x} cy={y} r={P(9)} fill="transparent" className="fp-hit"/></g>)}
     </svg>
+    {(()=>{const d=dots.find(v=>v.c.id===hover);if(!d)return null;const c=d.c,fx=(d.x+PAD)/(extentX+PAD),fy=(d.y+PAD)/(extentY+PAD);return <div className="fp-tip" role="status" style={{left:fx*100+"%",top:fy*100+"%",transform:`translate(${fx>0.6?"calc(-100% - 14px)":"14px"},${fy<0.2?"-15%":fy>0.8?"-85%":"-50%"})`}}><b>{c.label||c.name||"Unknown device"}</b><span>{nameOf(c.device_id)}{d.room?" · "+d.room:""}{c.connected&&c.signal_dbm!==null?" · "+c.signal_dbm+" dBm":""}</span><small>{c.mac_hint} · {c.connected?"connected":"last seen "+ago(c.last_seen)}</small></div>})()}
+    </div>
     {plan.rooms.length===0&&<div className="fp-empty">{canEdit?"Add a room to start drawing your floor plan.":"No floor plan has been drawn yet."}</div>}
     <p className="fp-note">A device is shown in the room of the access point it is connected to. This is not a measured position.</p>
    </div>
