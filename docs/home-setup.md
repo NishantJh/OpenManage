@@ -88,7 +88,7 @@ To use a key you made instead of the root password, choose **Advanced / manual**
 
 ## 4. Turn on RADIUS (optional)
 
-Skip this unless you want Wi-Fi sign-in. The RADIUS tick box is always shown, but stays greyed out until the listener is on, so turn it on first:
+Skip this unless you want Wi-Fi sign-in; it is off by default and nothing about RADIUS appears in the dashboard's add-device screens until you turn it on:
 
 1. Add `OPENMANAGE_RADIUS_LISTEN=:1812` to `.env`.
 2. In `compose.yaml`, under the `app` service `ports:`, add the container's address: `- "192.168.1.10:1812:1812/udp"`.
@@ -96,7 +96,7 @@ Skip this unless you want Wi-Fi sign-in. The RADIUS tick box is always shown, bu
 
 Then tick **Also let this device check Wi-Fi sign-ins (RADIUS)** when you add each access point. The tick box is in the Add device wizard, in the **Advanced / manual** form, and in the wizard the key icon opens for a device without a key. For a device that is already set up, press **+** (Create secret) on its row on the Configuration page.
 
-OpenManage creates the shared secret and shows it once, together with every step to finish on the AP: the SSH command, a check that the AP can do WPA2-Enterprise, a backup of its Wi-Fi settings, the commands that turn on RADIUS on its **existing** Wi-Fi networks (all of them, or only the ones you name), and the undo command. The secret and port are already filled in. Type the OpenManage LAN address the first time; it is saved and filled in for every later device. No new Wi-Fi network is created.
+OpenManage creates the shared secret and shows it once, together with every step to finish on the AP: the SSH command, a check that the AP can do WPA2-Enterprise, a backup of its Wi-Fi settings, the commands that turn on RADIUS on its **existing** Wi-Fi networks (all of them, or only the ones you name), and the undo command. The secret and port are already filled in. Type the OpenManage LAN address the first time; it is saved and filled in for every later device. No new Wi-Fi network is created. **Switching changes those networks for every device on them: the old Wi-Fi password stops working, and devices can only rejoin with a Wi-Fi user (username and password). Most smart-home devices cannot do that.** The commands stay hidden until you tick that you understand this.
 
 Then follow [Wi-Fi sign-in setup](radius-client-setup.md) from step 2 to add a Wi-Fi user and install the iPhone profile.
 
