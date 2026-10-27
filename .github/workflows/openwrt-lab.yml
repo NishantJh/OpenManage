@@ -1,6 +1,7 @@
 name: OpenWrt lab
 # Opt-in: runs enrollment, health checks and monitoring against a disposable OpenWrt
-# rootfs container. GitHub-hosted only; it never runs on the self-hosted runner.
+# rootfs container. Runs on the self-hosted runner, so it is dispatch/schedule only:
+# never add a pull_request trigger (the repository is public).
 on:
   workflow_dispatch:
   schedule:
@@ -12,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   lab:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, WSL2]
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
@@ -21,7 +22,7 @@ jobs:
           go-version: "1.27.3"
           cache: false
       - name: Install eapol_test
-        run: sudo apt-get update && sudo apt-get install -y eapoltest
+        run: command -v eapol_test >/dev/null || (sudo apt-get update && sudo apt-get install -y eapoltest)
       - name: Run OpenWrt lab test
         env:
           OPENMANAGE_LAB_BROWSER: "1"
