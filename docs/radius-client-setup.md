@@ -35,7 +35,7 @@ Never forward UDP 1812 from the internet.
 1. **Add Wi-Fi user**, for example `nishant-iphone`, with a 12+ character password.
 2. Get the AP's secret. Tick **Also let this device check Wi-Fi sign-ins (RADIUS)** when you add the AP (Add device wizard, **Advanced / manual** form, or the key icon on a device without a key). For an AP that is already set up, press **+** (Create secret) on its row on the Configuration page. The secret is shown only once; if lost, rotate it.
 
-The screen that shows the secret also shows every command in step 3, with the secret, port and OpenManage address filled in. Leave **Wi-Fi networks to change** empty to change every network on the AP, or list network names (comma separated) to change only those.
+The screen that shows the secret also shows every command in step 3, with the secret, port and OpenManage address filled in. The first time, type the OpenManage host's LAN IP in **OpenManage LAN address**; it is saved and filled in for every device after that. Leave **Wi-Fi networks to change** empty to change every network on the AP, or list network names (comma separated) to change only those.
 
 ## 3. Configure the AP
 

@@ -1,6 +1,7 @@
 import { AlertTriangle, Copy } from "lucide-react";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../api";
+import type { RadiusStatus } from "../types";
 
 const quote=(s:string)=>"'"+s.replace(/'/g,"'\\''")+"'";
 // wideModal fits the commands on screen; long dialogs scroll inside the overlay.
@@ -37,14 +38,16 @@ function Block({label,text}:{label:string;text:string}){
 // RadiusSetupSteps shows a new RADIUS shared secret with every step needed to use it on the AP.
 export default function RadiusSetupSteps({deviceName,deviceAddress,secret}:{deviceName:string;deviceAddress:string;secret:string}){
  const host=typeof location!=="undefined"?location.hostname:"";
- const [server,setServer]=useState(ipv4.test(host)?host:""),[port,setPort]=useState("1812"),[networks,setNetworks]=useState("");
- useEffect(()=>{apiFetch("/api/radius").then(r=>r.ok?r.json():null).then(d=>{const p=String(d?.listen_addr??"").split(":").pop();if(p&&/^\d+$/.test(p))setPort(p)}).catch(()=>{})},[]);
+ const [server,setServer]=useState(ipv4.test(host)?host:""),[saved,setSaved]=useState(""),[saveNote,setSaveNote]=useState(""),[port,setPort]=useState("1812"),[networks,setNetworks]=useState("");
+ // The address is saved once on the server and filled in for every device after that.
+ useEffect(()=>{apiFetch("/api/radius").then(r=>r.ok?r.json():null).then((d:RadiusStatus|null)=>{const p=String(d?.listen_addr??"").split(":").pop();if(p&&/^\d+$/.test(p))setPort(p);if(d?.server_address){setServer(d.server_address);setSaved(d.server_address)}}).catch(()=>{})},[]);
+ async function save(){if(!server||server===saved)return;if(!ipv4.test(server)){setSaveNote("Enter the IP address, such as 192.168.1.10.");return}try{const r=await apiFetch("/api/radius/settings","PUT",{server_address:server});const d=await r.json().catch(()=>({}));if(r.ok){setSaved(server);setSaveNote("Saved. Every device's steps use this address from now on.")}else setSaveNote(d.error||"Could not save the address.")}catch{setSaveNote("Could not save the address.")}}
  const ssids=networks.split(",").map(s=>s.trim()).filter(Boolean);
  const small={fontSize:10,lineHeight:1.6,color:"#888e9e",fontWeight:400} as const;
  return <div>
   <label>RADIUS shared secret<input readOnly value={secret} onFocus={e=>e.currentTarget.select()} aria-label="RADIUS shared secret"/><small className="field-help">Shown only now. The commands below already contain it. If it is lost, rotate it on the Configuration page.</small></label>
-  <div className="form-row"><label>OpenManage LAN address<input value={server} onChange={e=>setServer(e.target.value.trim())} placeholder="e.g. 192.168.1.10" aria-label="OpenManage LAN address"/></label><label>RADIUS port<input value={port} onChange={e=>setPort(e.target.value.trim())} aria-label="RADIUS port"/></label></div>
-  <label>Wi-Fi networks to change<input value={networks} onChange={e=>setNetworks(e.target.value)} placeholder="All Wi-Fi networks on this device" aria-label="Wi-Fi networks to change"/><small className="field-help">Leave empty for every Wi-Fi network the device broadcasts, or list network names separated by commas. The address must be the IP address of the machine running OpenManage on your LAN.</small></label>
+  <div className="form-row"><label>OpenManage LAN address<input value={server} onChange={e=>{setServer(e.target.value.trim());setSaveNote("")}} onBlur={()=>void save()} placeholder="e.g. 192.168.1.10" aria-label="OpenManage LAN address"/><small className="field-help">{saveNote||(saved&&saved===server?"Saved once for all devices.":"The LAN IP of the machine running OpenManage. Entered once, then saved for all devices.")}</small></label><label>RADIUS port<input value={port} onChange={e=>setPort(e.target.value.trim())} aria-label="RADIUS port"/></label></div>
+  <label>Wi-Fi networks to change<input value={networks} onChange={e=>setNetworks(e.target.value)} placeholder="All Wi-Fi networks on this device" aria-label="Wi-Fi networks to change"/><small className="field-help">Leave empty for every Wi-Fi network the device broadcasts, or list network names separated by commas.</small></label>
   <div className="warning" style={{marginBottom:15}}><AlertTriangle size={15}/><span>Your existing networks keep their names and radios but switch to per-person sign-in. Phones and laptops then join with a Wi-Fi user. Devices that only know the old Wi-Fi password, such as printers or smart plugs, will drop off those networks.</span></div>
   <ol style={{paddingLeft:18,margin:"0 0 6px",color:"#bfc3cf",fontSize:11,lineHeight:1.6}}>
    <li>Sign in to {deviceName} over SSH from a computer on your network:<Block label="SSH command" text={"ssh root@"+deviceAddress}/></li>

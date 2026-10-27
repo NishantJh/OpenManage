@@ -24,10 +24,20 @@ const lanAddress = "192.168.1.10";
 const shot = (page, file) => process.env.OPENMANAGE_UI_SCREENSHOT_DIR ? page.screenshot({ path: process.env.OPENMANAGE_UI_SCREENSHOT_DIR + "/" + file, fullPage: true }) : null;
 
 // readSteps checks the RADIUS steps on screen and returns the commands shown.
-async function readSteps(page) {
+// The first time, it types the OpenManage address and checks it is saved; after that the
+// address must already be filled in.
+async function readSteps(page, { first = false } = {}) {
   const secret = await page.getByLabel("RADIUS shared secret").inputValue();
   assert.ok(secret.length >= 16, "RADIUS secret missing or too short");
-  await page.getByLabel("OpenManage LAN address").fill(lanAddress);
+  const addressField = page.getByLabel("OpenManage LAN address");
+  if (first) {
+    await addressField.fill(lanAddress);
+    await addressField.blur();
+    await page.getByText("Saved. Every device's steps use this address", { exact: false }).waitFor();
+  } else {
+    await page.getByText("Saved once for all devices.").waitFor();
+    assert.equal(await addressField.inputValue(), lanAddress, "saved OpenManage address not filled in");
+  }
   await page.getByLabel("Wi-Fi networks to change").fill("Home");
   const text = label => page.getByLabel(label, { exact: true }).innerText();
   const out = { secret, check: await text("Check command"), ssh: await text("SSH command"), backup: await text("Backup command"), setup: await text("AP setup commands"), undo: await text("Undo commands") };
@@ -57,7 +67,7 @@ try {
   await shot(page, "1-manual-form.png");
   await page.locator("form").getByRole("button", { name: /add device/i }).click();
   await page.getByRole("heading", { name: "RADIUS secret for " + name }).waitFor();
-  await readSteps(page);
+  await readSteps(page, { first: true });
   await page.getByRole("button", { name: /I have saved it/i }).click();
   await page.locator("table td", { hasText: name }).first().waitFor();
   console.log("PASS: the Advanced / manual form has the RADIUS tick box and shows the secret with the AP steps");

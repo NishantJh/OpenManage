@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -251,13 +252,60 @@ func (a *app) getRADIUSStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not load the RADIUS certificate")
 		return
 	}
+	var serverAddress string
+	err = a.db.QueryRow(r.Context(), `SELECT server_address FROM radius_settings`).Scan(&serverAddress)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "could not load RADIUS settings")
+		return
+	}
 	out := map[string]any{"enabled": a.radius != nil, "listen_addr": "", "dropped_packets": int64(0), "clients": clients,
-		"certificate": certificate}
+		"certificate": certificate, "server_address": serverAddress}
 	if a.radius != nil {
 		out["listen_addr"] = a.radius.addr
 		out["dropped_packets"] = a.radius.dropped.Load()
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// updateRADIUSSettings saves the OpenManage LAN address that APs send RADIUS requests to,
+// so the AP setup commands are filled in for every device without asking again.
+func (a *app) updateRADIUSSettings(w http.ResponseWriter, r *http.Request) {
+	if !requireAnyRole(w, r, "admin") {
+		return
+	}
+	var in struct {
+		ServerAddress string `json:"server_address"`
+	}
+	if err := decodeJSONBody(w, r, monitoringBodyLimit, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid RADIUS settings")
+		return
+	}
+	in.ServerAddress = strings.TrimSpace(in.ServerAddress)
+	if !isPrivateDeviceIP(in.ServerAddress) {
+		writeError(w, http.StatusBadRequest, "the OpenManage address must be a private IP address, such as 192.168.1.10")
+		return
+	}
+	actor := r.Context().Value(userContextKey).(authUser)
+	tx, err := a.db.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not save RADIUS settings")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	_, err = tx.Exec(r.Context(), `INSERT INTO radius_settings (id, server_address, updated_by, updated_at) VALUES (TRUE, $1, $2, NOW())
+		ON CONFLICT (id) DO UPDATE SET server_address=EXCLUDED.server_address, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
+		in.ServerAddress, actor.ID)
+	if err == nil {
+		err = insertAuditEvent(r.Context(), tx, actor.ID, "radius.settings_update", "radius", "settings", map[string]string{"server_address": in.ServerAddress})
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not save RADIUS settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"server_address": in.ServerAddress})
 }
 
 // rotateRADIUSSecret creates or replaces a device's shared secret and returns it
