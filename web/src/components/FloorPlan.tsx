@@ -29,17 +29,20 @@ function SizeInput({label,value,onCommit,minFt=MIN_FT}:{label:string;value:numbe
  return <input aria-label={label} type="number" inputMode="decimal" min={minFt} max={MAX_FT} step={0.25} value={text} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e=>{setText(e.target.value);const v=Number(e.target.value);if(e.target.value!==""&&v>=minFt&&v<=MAX_FT)onCommit(v*FT)}}/>;
 }
 
-const WALL_SNAP=0.8,PAD=1.4; // PAD leaves room around the plan for APs on outer walls and their labels
+const WALL_SNAP=0.8,WALL_INSET=0.15,PAD=1.4; // PAD leaves room around the plan for APs on outer walls and their labels
 // Access points hang on walls, so a dragged AP snaps to the nearest wall of the room it is
-// in (or next to) when it is within WALL_SNAP metres of it.
+// in (or next to) when it is within WALL_SNAP metres of it. Rooms often share walls, so an AP
+// dropped inside a room is set just inside that room's wall (WALL_INSET) so it belongs to that
+// room alone; one dropped outside every room sits on the outer wall.
 export function snapToWall(rooms:FloorRoom[],x:number,y:number){
- let best:{x:number;y:number;d:number}|null=null;
+ let best:{x:number;y:number;d:number;in:boolean}|null=null;
  for(const r of rooms){
   const cx=Math.min(Math.max(x,r.x),r.x+r.w),cy=Math.min(Math.max(y,r.y),r.y+r.h);
-  const edges=[{x:r.x,y:cy,d:Math.abs(x-r.x)},{x:r.x+r.w,y:cy,d:Math.abs(x-r.x-r.w)},{x:cx,y:r.y,d:Math.abs(y-r.y)},{x:cx,y:r.y+r.h,d:Math.abs(y-r.y-r.h)}];
+  const inside=x>r.x&&x<r.x+r.w&&y>r.y&&y<r.y+r.h,k=inside?Math.min(WALL_INSET,r.w/2,r.h/2):0;
+  const edges=[{x:r.x+k,y:cy,d:Math.abs(x-r.x)},{x:r.x+r.w-k,y:cy,d:Math.abs(x-r.x-r.w)},{x:cx,y:r.y+k,d:Math.abs(y-r.y)},{x:cx,y:r.y+r.h-k,d:Math.abs(y-r.y-r.h)}];
   const near=x>=r.x-WALL_SNAP&&x<=r.x+r.w+WALL_SNAP&&y>=r.y-WALL_SNAP&&y<=r.y+r.h+WALL_SNAP;
   if(!near)continue;
-  for(const e of edges)if(e.d<=WALL_SNAP&&(!best||e.d<best.d))best=e;
+  for(const e of edges)if(e.d<=WALL_SNAP&&(!best||(inside&&!best.in)||(inside===best.in&&e.d<best.d)))best={...e,in:inside};
  }
  return best?{x:best.x,y:best.y}:{x,y};
 }

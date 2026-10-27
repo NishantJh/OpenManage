@@ -185,8 +185,24 @@ try {
     return n;
   });
   assert.ok(perRoom[0] >= 4 && perRoom[1] >= 1, `clients of AP-One stay in Living and the shared-wall AP-Two reaches Office, got ${perRoom}`);
+  // Moving an AP into a room next to the shared wall puts it inside that room, and its clients follow it.
+  const toScreen = (px, py) => mocked.evaluate(([x, y]) => {
+    const svg = document.querySelector("svg.fp-svg"), r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal;
+    return { x: r.left + (x - vb.x) / vb.width * r.width, y: r.top + (y - vb.y) / vb.height * r.height };
+  }, [px, py]);
+  const from = await toScreen(6, 2.5), to = await toScreen(6.4, 2.5);
+  await mocked.mouse.move(from.x, from.y);
+  await mocked.mouse.down();
+  await mocked.mouse.move(to.x, to.y, { steps: 6 });
+  await mocked.mouse.up();
+  await mocked.waitForFunction(() => {
+    const rooms = [...document.querySelectorAll("rect.fp-room")].map(r => ["x", "y", "width", "height"].map(k => Number(r.getAttribute(k))));
+    const n = [0, 0];
+    document.querySelectorAll("circle.fp-client").forEach(c => { const x = Number(c.getAttribute("cx")), y = Number(c.getAttribute("cy")); rooms.forEach(([rx, ry, rw, rh], i) => { if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) n[i]++; }); });
+    return n[0] === 4 && n[1] === 4;
+  }, null, { timeout: 5000 });
   await mocked.unrouteAll({ behavior: "ignoreErrors" });
-  console.log("PASS: client dots follow their AP's room, shared-wall AP spreads over both rooms");
+  console.log("PASS: client dots follow their AP into its room, shared-wall AP spreads over both rooms");
   assert.deepEqual(errors, [], "uncaught page errors");
   console.log("PASS: back button, deep link, no page errors");
 } finally {
