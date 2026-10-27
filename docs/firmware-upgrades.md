@@ -149,7 +149,7 @@ A `sysupgrade -b` archive is root-equivalent for the router. As data it holds Wi
 | Scheduled run | system | `device.backup_create` with `scheduled: true` |
 | List (metadata only) | any role that can see the device | none |
 | Download | admin, after password re-entry | `device.backup_download` |
-| Restore | admin, after explicit per-device confirmation | `device.backup_restore`, written in the same transaction that starts the job |
+| Restore | admin, after re-entering their password and typing the device name | `device.backup_restore`, written in the same transaction that starts the job |
 | Delete | admin | `device.backup_delete` |
 
 Audit details carry only backup id, device id, size, keyed digest, actor and scheduled flag. Never file names from the archive and never content. Readonly users never see backup content.
