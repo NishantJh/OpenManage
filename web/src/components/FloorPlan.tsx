@@ -113,8 +113,8 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
    const ok=tries.find(t=>isFree({...cur,...t},plan.rooms));
    if(ok)change({...plan,rooms:plan.rooms.map(r=>r.id===cur.id?{...r,...ok}:r)})}
   else{const pos=snapToWall(plan.rooms,clamp(snap(p.x-drag.dx),MAX),clamp(snap(p.y-drag.dy),MAX));change({...plan,placements:plan.placements.map(a=>a.device_id===drag.key?{...a,...pos}:a)})}}
- // Moves the picture, rooms and access points together so the top-left-most thing sits on the canvas corner.
- function latch(p:Plan):Plan{if(!p.image)return p;const dx=Math.min(p.image.x,...p.rooms.map(r=>r.x),...p.placements.map(a=>a.x)),dy=Math.min(p.image.y,...p.rooms.map(r=>r.y),...p.placements.map(a=>a.y));if(dx<=0&&dy<=0)return p;const mx=Math.max(0,dx),my=Math.max(0,dy);return {...p,image:{...p.image,x:p.image.x-mx,y:p.image.y-my},rooms:p.rooms.map(r=>({...r,x:r.x-mx,y:r.y-my})),placements:p.placements.map(a=>({...a,x:a.x-mx,y:a.y-my}))}}
+ // Moves the picture, rooms and access points together so the top-left-most thing sits on the canvas corner (also pulls back anything that ended up before the origin, e.g. after widening a crop).
+ function latch(p:Plan):Plan{if(!p.image)return p;const dx=Math.min(p.image.x,...p.rooms.map(r=>r.x),...p.placements.map(a=>a.x)),dy=Math.min(p.image.y,...p.rooms.map(r=>r.y),...p.placements.map(a=>a.y));if(dx===0&&dy===0)return p;const mx=dx,my=dy;return {...p,image:{...p.image,x:p.image.x-mx,y:p.image.y-my},rooms:p.rooms.map(r=>({...r,x:r.x-mx,y:r.y-my})),placements:p.placements.map(a=>({...a,x:a.x-mx,y:a.y-my}))}}
  function startCrop(){setAdjust(false);setDraft({...cr})}
  function applyCrop(){if(!img||!draft)return;const w=draft.w*img.fullW;if(w<1){setMessage({tone:"error",text:"The cropped picture would be under 3 ft wide. Keep more of it."});return}
   const full=draft.x<.001&&draft.y<.001&&draft.w>.999&&draft.h>.999;
