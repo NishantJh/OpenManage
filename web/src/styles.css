@@ -128,6 +128,7 @@ tr.selected td{background:#1a1e2a}
 
 .fp-plan-image{pointer-events:none}.fp-svg.adjusting .fp-plan-image{pointer-events:auto;cursor:move}
 .fp-image-frame{fill:none;stroke:#8d78f5;stroke-width:1.5px;stroke-dasharray:6 4;vector-effect:non-scaling-stroke}
+.fp-crop-box{fill:none;stroke:#0b6bcb;stroke-width:2px;vector-effect:non-scaling-stroke}
 .fp-svg.adjusting .fp-room,.fp-svg.adjusting .fp-room-name,.fp-svg.adjusting .fp-ap-g,.fp-svg.adjusting .fp-handle:not(.img){pointer-events:none}
 .fp-svg.has-image .fp-room{fill:rgba(141,120,245,.1);stroke:#6f5ce0}
 .fp-image-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #232835}

@@ -93,16 +93,34 @@ try {
   await page.keyboard.type("Kitchen");
   await page.locator(".fp-room-name", { hasText: "KITCHEN" }).waitFor();
   console.log("PASS: floor plan rooms in feet, renamable, canvas fits rooms");
-  // Plan image: upload a PNG, scale it by typing a width in feet, then remove it again.
+  // Plan image: upload a PNG (it lands on the top-left corner), scale it by typing a width in feet,
+  // crop it to its top-left quarter, then remove it again.
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==", "base64");
   await page.locator('input[aria-label="Upload plan image"]').setInputFiles({ name: "plan.png", mimeType: "image/png", buffer: png });
-  await page.locator("image.fp-plan-image").waitFor();
+  const planImg = page.locator("svg.fp-plan-image");
+  await planImg.waitFor();
+  const geom = () => planImg.evaluate(e => ["x", "y", "width", "height"].map(k => Number(e.getAttribute(k))));
+  const [ix, iy] = await geom();
+  assert.ok(ix === 0 && iy === 0, `plan image should sit on the top-left corner, got ${ix},${iy}`);
   await page.getByLabel("Plan image width").fill("30");
-  await page.waitForFunction(() => Math.abs(Number(document.querySelector("image.fp-plan-image").getAttribute("width")) - 30 * 0.3048) < 0.01);
+  await page.getByLabel("Plan image width").press("Enter");
+  await page.waitForFunction(() => Math.abs(Number(document.querySelector("svg.fp-plan-image").getAttribute("width")) - 30 * 0.3048) < 0.01);
+  await page.getByRole("button", { name: "Crop" }).click();
+  const [tl, br] = await page.locator("rect.fp-handle.img").all();
+  const a = await tl.boundingBox(), z = await br.boundingBox();
+  await page.mouse.move(z.x + z.width / 2, z.y + z.height / 2);
+  await page.mouse.down();
+  await page.mouse.move((a.x + z.x) / 2 + z.width / 2, (a.y + z.y) / 2 + z.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await page.getByRole("button", { name: "Apply crop" }).click();
+  await planImg.waitFor();
+  const [cx, cy, cw, ch] = await geom();
+  assert.ok(cx === 0 && cy === 0, `cropped image should stay on the corner, got ${cx},${cy}`);
+  assert.ok(Math.abs(cw - 15 * 0.3048) < 0.3 && Math.abs(ch - cw) < 0.01, `crop should keep about half the width, got ${cw}x${ch}`);
   page.once("dialog", d => d.accept());
   await page.getByRole("button", { name: "Remove plan image" }).click();
-  await page.locator("image.fp-plan-image").waitFor({ state: "detached" });
-  console.log("PASS: floor plan image upload, scale and removal");
+  await planImg.waitFor({ state: "detached" });
+  console.log("PASS: floor plan image upload on the corner, scale, crop and removal");
   assert.deepEqual(errors, [], "uncaught page errors");
   console.log("PASS: back button, deep link, no page errors");
 } finally {

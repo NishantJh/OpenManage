@@ -61,3 +61,22 @@ func TestFloorImageHeight(t *testing.T) {
 		t.Fatal("an image with unknown pixels should have no height")
 	}
 }
+
+func TestFloorImageCrop(t *testing.T) {
+	i := floorImage{WidthM: 10, PxW: 800, PxH: 400, Crop: &floorCrop{X: 0.25, Y: 0, W: 0.5, H: 0.5}}
+	if got := i.heightM(); got != 5 {
+		t.Fatalf("cropped height = %v, want 5", got)
+	}
+	bad := []floorCrop{{X: -0.1, W: 0.5, H: 0.5}, {X: 0.6, W: 0.5, H: 0.5}, {W: 0.01, H: 0.5}, {Y: 0.9, W: 0.5, H: 0.2}}
+	for _, c := range bad {
+		c := c
+		img := floorImage{WidthM: 10, Crop: &c}
+		if img.validate() == nil {
+			t.Fatalf("crop %+v should be rejected", c)
+		}
+	}
+	ok := floorImage{WidthM: 10, Crop: &floorCrop{X: 0.5, Y: 0.5, W: 0.5, H: 0.5}}
+	if err := ok.validate(); err != nil {
+		t.Fatalf("crop to the bottom-right quarter should pass: %v", err)
+	}
+}

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, Image as ImageIcon, Move, Plus, Radio, Save, Trash2, Upload, Wifi } from "lucide-react";
+import { Crop, Eye, EyeOff, Image as ImageIcon, Move, Plus, Radio, Save, Trash2, Upload, Wifi } from "lucide-react";
 import { apiFetch, apiJSON, csrfToken } from "../api";
-import type { Device, FloorPlan as Plan, FloorRoom, MonitoringSettings, Role, WifiClient, WifiClientEvent } from "../types";
+import type { Device, FloorPlan as Plan, FloorRoom, ImageCrop, MonitoringSettings, Role, WifiClient, WifiClientEvent } from "../types";
 
 // Plans are stored and drawn in metres; people see and type feet, snapped to whole feet.
+const FULL_CROP:ImageCrop={x:0,y:0,w:1,h:1},CROP_MIN=0.05;
 const FT=0.3048,MAX=500,MIN_FT=2,MAX_FT=300,REFRESH_MS=60000;
 const toFt=(m:number)=>Math.round(m/FT*10)/10;
 const MIN_SIZE=MIN_FT*FT,MAX_SIZE=MAX_FT*FT;
@@ -69,8 +70,8 @@ export function placeDots(rooms:FloorRoom[],items:{id:string;ap:{x:number;y:numb
 export default function FloorPlan({devices,role,onChanged}:{devices:Device[];role:Role;onChanged:()=>void}){
  const canEdit=role!=="readonly",isAdmin=role==="admin";
  const [plan,setPlan]=useState<Plan>({rooms:[],placements:[]}),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState<{text:string;tone:"notice"|"error"}|null>(null);
- const [adjust,setAdjust]=useState(false),[imgBusy,setImgBusy]=useState(false);
- const [drag,setDrag]=useState<{kind:"room"|"ap"|"size"|"image"|"imgsize";key:string;dx:number;dy:number;extent:{x:number;y:number}}|null>(null),[pick,setPick]=useState("");
+ const [adjust,setAdjust]=useState(false),[imgBusy,setImgBusy]=useState(false),[draft,setDraft]=useState<ImageCrop|null>(null);
+ const [drag,setDrag]=useState<{kind:"room"|"ap"|"size"|"image"|"imgsize"|"cropa"|"cropb";key:string;dx:number;dy:number;extent:{x:number;y:number}}|null>(null),[pick,setPick]=useState("");
  const [settings,setSettings]=useState<MonitoringSettings|null>(null),[clients,setClients]=useState<WifiClient[]>([]),[events,setEvents]=useState<WifiClientEvent[]>([]),[trackBusy,setTrackBusy]=useState(false);
  const svg=useRef<SVGSVGElement>(null),editor=useRef<HTMLDetailsElement>(null),[focusRoom,setFocusRoom]=useState(""),[hover,setHover]=useState(""),[hoverRoom,setHoverRoom]=useState(""),[width,setWidth]=useState(900);
  const tracking=Boolean(settings?.client_tracking_enabled);
@@ -87,16 +88,23 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  useEffect(()=>{const el=svg.current;if(!el)return;const ro=new ResizeObserver(()=>setWidth(el.getBoundingClientRect().width||900));ro.observe(el);setWidth(el.getBoundingClientRect().width||900);return()=>ro.disconnect()},[]);
  useEffect(()=>{if(!focusRoom)return;const el=editor.current?.querySelector<HTMLInputElement>(`input[data-room="${focusRoom}"]`);el?.focus();el?.select();setFocusRoom("")},[focusRoom]);
  const nameOf=(id:string)=>devices.find(d=>d.id===id)?.name??"Unknown access point";
- const img=plan.image&&plan.image.px_w&&plan.image.px_h?{...plan.image,h:plan.image.width_m*plan.image.px_h/plan.image.px_w}:null;
- const fit={x:Math.max(6,...plan.rooms.map(r=>r.x+r.w+1),...plan.placements.map(a=>a.x+1),img?img.x+img.width_m+1:0),y:Math.max(4,...plan.rooms.map(r=>r.y+r.h+1),...plan.placements.map(a=>a.y+1),img?img.y+img.h+1:0)};
+ // The shown part of the picture is `cr` (fractions); the full picture is drawn larger and clipped to it.
+ const cr=plan.image?.crop??FULL_CROP;
+ const img=plan.image&&plan.image.px_w&&plan.image.px_h?(()=>{const fullW=plan.image.width_m/cr.w,fullH=fullW*plan.image.px_h/plan.image.px_w;return {...plan.image,cr,fullW,fullH,fullX:plan.image.x-cr.x*fullW,fullY:plan.image.y-cr.y*fullH,h:fullH*cr.h}})():null;
+ const cropping=draft!==null&&img!==null;
+ const fit={x:Math.max(6,cropping&&img?img.fullX+img.fullW+1:0,...plan.rooms.map(r=>r.x+r.w+1),...plan.placements.map(a=>a.x+1),img?img.x+img.width_m+1:0),y:Math.max(4,...plan.rooms.map(r=>r.y+r.h+1),...plan.placements.map(a=>a.y+1),cropping&&img?img.fullY+img.fullH+1:0,img?img.y+img.h+1:0)};
  // The canvas is held still while dragging so the pointer-to-plan mapping does not shift under the cursor.
  const {x:extentX,y:extentY}=drag?.extent??fit;
  const px=(extentX+PAD)/Math.max(width,200),P=(n:number)=>n*px; // P(n): n screen pixels in plan units
  const change=(next:Plan)=>{setPlan(next);setDirty(true)};
  function toPlan(e:{clientX:number;clientY:number}){const r=svg.current!.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*(extentX+PAD)-PAD,y:(e.clientY-r.top)/r.height*(extentY+PAD)-PAD}}
- function start(e:React.PointerEvent,kind:"room"|"ap"|"size"|"image"|"imgsize",key:string,ox:number,oy:number){if(!canEdit)return;const p=toPlan(e);(e.currentTarget as Element).setPointerCapture(e.pointerId);setDrag({kind,key,dx:p.x-ox,dy:p.y-oy,extent:fit})}
+ function start(e:React.PointerEvent,kind:"room"|"ap"|"size"|"image"|"imgsize"|"cropa"|"cropb",key:string,ox:number,oy:number){if(!canEdit)return;const p=toPlan(e);(e.currentTarget as Element).setPointerCapture(e.pointerId);setDrag({kind,key,dx:p.x-ox,dy:p.y-oy,extent:fit})}
  function move(e:React.PointerEvent){if(!drag)return;const p=toPlan(e);
   if(drag.kind==="image"&&plan.image)change({...plan,image:{...plan.image,x:clamp(p.x-drag.dx,MAX),y:clamp(p.y-drag.dy,MAX)}});
+  else if((drag.kind==="cropa"||drag.kind==="cropb")&&img&&draft){
+   const fx=Math.min(1,Math.max(0,(p.x-img.fullX)/img.fullW)),fy=Math.min(1,Math.max(0,(p.y-img.fullY)/img.fullH));
+   if(drag.kind==="cropa"){const nx=Math.min(fx,draft.x+draft.w-CROP_MIN),ny=Math.min(fy,draft.y+draft.h-CROP_MIN);setDraft({x:nx,y:ny,w:draft.x+draft.w-nx,h:draft.y+draft.h-ny})}
+   else setDraft({...draft,w:Math.max(CROP_MIN,fx-draft.x),h:Math.max(CROP_MIN,fy-draft.y)})}
   else if(drag.kind==="imgsize"&&plan.image)change({...plan,image:{...plan.image,width_m:Math.min(MAX_SIZE,Math.max(1,p.x-plan.image.x))}});
   else if(drag.kind==="size"||drag.kind==="room"){
    const cur=plan.rooms.find(r=>r.id===drag.key);if(!cur)return;
@@ -105,15 +113,22 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
    const ok=tries.find(t=>isFree({...cur,...t},plan.rooms));
    if(ok)change({...plan,rooms:plan.rooms.map(r=>r.id===cur.id?{...r,...ok}:r)})}
   else{const pos=snapToWall(plan.rooms,clamp(snap(p.x-drag.dx),MAX),clamp(snap(p.y-drag.dy),MAX));change({...plan,placements:plan.placements.map(a=>a.device_id===drag.key?{...a,...pos}:a)})}}
+ // Moves the picture, rooms and access points together so the top-left-most thing sits on the canvas corner.
+ function latch(p:Plan):Plan{if(!p.image)return p;const dx=Math.min(p.image.x,...p.rooms.map(r=>r.x),...p.placements.map(a=>a.x)),dy=Math.min(p.image.y,...p.rooms.map(r=>r.y),...p.placements.map(a=>a.y));if(dx<=0&&dy<=0)return p;const mx=Math.max(0,dx),my=Math.max(0,dy);return {...p,image:{...p.image,x:p.image.x-mx,y:p.image.y-my},rooms:p.rooms.map(r=>({...r,x:r.x-mx,y:r.y-my})),placements:p.placements.map(a=>({...a,x:a.x-mx,y:a.y-my}))}}
+ function startCrop(){setAdjust(false);setDraft({...cr})}
+ function applyCrop(){if(!img||!draft)return;const w=draft.w*img.fullW;if(w<1){setMessage({tone:"error",text:"The cropped picture would be under 3 ft wide. Keep more of it."});return}
+  const full=draft.x<.001&&draft.y<.001&&draft.w>.999&&draft.h>.999;
+  const {crop:_old,...rest}=plan.image!;
+  change(latch({...plan,image:{...rest,x:img.fullX+draft.x*img.fullW,y:img.fullY+draft.y*img.fullH,width_m:w,...(full?{}:{crop:draft})}}));setDraft(null)}
  function renameRoom(id:string){if(editor.current)editor.current.open=true;setFocusRoom(id)}
  function addRoom(){const n=plan.rooms.length+1,x=Math.min(MAX-12*FT,Math.max(0,...plan.rooms.map(r=>r.x+r.w)));change({...plan,rooms:[...plan.rooms,{id:"r"+Date.now().toString(36),name:"Room "+n,x,y:0,w:12*FT,h:10*FT}]})}
  function patchRoom(id:string,p:Partial<FloorRoom>){const next=plan.rooms.map(r=>r.id===id?{...r,...p}:r);if(!next.every(r=>isFree(r,next))){setMessage({tone:"error",text:"Rooms cannot overlap. Move the other room first or pick a smaller size."});return}change({...plan,rooms:next})}
  function place(){if(!pick)return;const r=plan.rooms[0],pos=r?{x:r.x+r.w/2,y:r.y}:{x:1,y:1};change({...plan,placements:[...plan.placements,{device_id:pick,...pos}]});setPick("")}
  // Uploading stores the picture on the server at once; only its facts are merged here so
  // room edits that are not saved yet are kept.
- async function uploadImage(file:File){setImgBusy(true);setMessage(null);try{const r=await fetch("/api/floor-plan/image",{method:"PUT",headers:{"X-CSRF-Token":csrfToken()},body:file});const data=await r.json();if(!r.ok)throw Error(data.error||"Could not upload the image");setPlan(p=>({...p,image:p.image&&data.image?{...data.image,x:p.image.x,y:p.image.y,width_m:p.image.width_m}:data.image}));setAdjust(true);setMessage({tone:"notice",text:"Plan image uploaded. Set its width in feet or drag its corner so it lines up, then draw the rooms over it."})}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not upload the image"})}finally{setImgBusy(false)}}
- async function removeImage(){if(!window.confirm("Remove the plan image? Rooms and access points stay."))return;setImgBusy(true);try{const r=await apiFetch("/api/floor-plan/image","DELETE");if(!r.ok)throw Error();setPlan(p=>({...p,image:undefined}));setAdjust(false)}catch{setMessage({tone:"error",text:"Could not remove the plan image."})}finally{setImgBusy(false)}}
- async function save(){setSaving(true);setMessage(null);try{const saved=await apiJSON<Plan>("/api/floor-plan","PUT",{rooms:plan.rooms,placements:plan.placements,image:plan.image?{x:plan.image.x,y:plan.image.y,width_m:plan.image.width_m}:undefined},"Could not save the floor plan");setPlan(saved);setDirty(false);setMessage({tone:"notice",text:"Floor plan saved."});onChanged()}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not save the floor plan"})}finally{setSaving(false)}}
+ async function uploadImage(file:File){setImgBusy(true);setMessage(null);try{const r=await fetch("/api/floor-plan/image",{method:"PUT",headers:{"X-CSRF-Token":csrfToken()},body:file});const data=await r.json();if(!r.ok)throw Error(data.error||"Could not upload the image");setPlan(p=>latch({...p,image:p.image&&data.image?{...data.image,x:p.image.x,y:p.image.y,width_m:p.image.width_m}:data.image}));setDirty(true);setDraft(null);setAdjust(true);setMessage({tone:"notice",text:"Plan image uploaded. Set its width in feet or drag its corner so it lines up, then draw the rooms over it."})}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not upload the image"})}finally{setImgBusy(false)}}
+ async function removeImage(){if(!window.confirm("Remove the plan image? Rooms and access points stay."))return;setImgBusy(true);try{const r=await apiFetch("/api/floor-plan/image","DELETE");if(!r.ok)throw Error();setPlan(p=>({...p,image:undefined}));setAdjust(false);setDraft(null)}catch{setMessage({tone:"error",text:"Could not remove the plan image."})}finally{setImgBusy(false)}}
+ async function save(){setSaving(true);setMessage(null);try{const saved=await apiJSON<Plan>("/api/floor-plan","PUT",{rooms:plan.rooms,placements:plan.placements,image:plan.image?{x:plan.image.x,y:plan.image.y,width_m:plan.image.width_m,crop:plan.image.crop}:undefined},"Could not save the floor plan");setPlan(saved);setDirty(false);setMessage({tone:"notice",text:"Floor plan saved."});onChanged()}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not save the floor plan"})}finally{setSaving(false)}}
 
  const apOf=(id:string)=>plan.placements.find(a=>a.device_id===id);
  const onMap=clients.filter(c=>!c.hidden&&apOf(c.device_id));
@@ -137,7 +152,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
      </div>
     </div>
     <div className="fp-stage">
-    <svg ref={svg} viewBox={`${-PAD} ${-PAD} ${extentX+PAD} ${extentY+PAD}`} className={"fp-svg"+(plan.image?" has-image":"")+(adjust&&img?" adjusting":"")} onPointerMove={move} onPointerUp={()=>setDrag(null)} role="img" aria-label="Floor plan">
+    <svg ref={svg} viewBox={`${-PAD} ${-PAD} ${extentX+PAD} ${extentY+PAD}`} className={"fp-svg"+(plan.image?" has-image":"")+((adjust||cropping)&&img?" adjusting":"")} onPointerMove={move} onPointerUp={()=>setDrag(null)} role="img" aria-label="Floor plan">
      <defs>
       <pattern id="fp-grid" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="rgba(255,255,255,.035)" strokeWidth="0.02"/></pattern>
       <radialGradient id="fp-coverage"><stop offset="0" stopColor="#8d78f5" stopOpacity=".12"/><stop offset="1" stopColor="#8d78f5" stopOpacity="0"/></radialGradient>
@@ -146,8 +161,15 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
      </defs>
      <rect x={-PAD} y={-PAD} width={extentX+PAD} height={extentY+PAD} fill="url(#fp-grid)"/>
      {img&&<g>
-      <image href={"/api/floor-plan/image?v="+(img.version??"")} x={img.x} y={img.y} width={img.width_m} height={img.h} preserveAspectRatio="none" className="fp-plan-image" onPointerDown={e=>adjust&&start(e,"image","img",img.x,img.y)}/>
-      {canEdit&&adjust&&<><rect x={img.x} y={img.y} width={img.width_m} height={img.h} className="fp-image-frame" pointerEvents="none"/><rect x={img.x+img.width_m-P(5)} y={img.y+img.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className="fp-handle show img" onPointerDown={e=>start(e,"imgsize","img",0,0)}><title>Drag to scale the image</title></rect></>}</g>}
+      {cropping&&draft?<>
+       <image href={"/api/floor-plan/image?v="+(img.version??"")} x={img.fullX} y={img.fullY} width={img.fullW} height={img.fullH} preserveAspectRatio="none" opacity=".55" pointerEvents="none"/>
+       <rect x={img.fullX} y={img.fullY} width={img.fullW} height={img.fullH} className="fp-image-frame" pointerEvents="none"/>
+       <svg x={img.fullX+draft.x*img.fullW} y={img.fullY+draft.y*img.fullH} width={draft.w*img.fullW} height={draft.h*img.fullH} overflow="hidden" pointerEvents="none"><image href={"/api/floor-plan/image?v="+(img.version??"")} x={-draft.x*img.fullW} y={-draft.y*img.fullH} width={img.fullW} height={img.fullH} preserveAspectRatio="none"/></svg>
+       <rect x={img.fullX+draft.x*img.fullW} y={img.fullY+draft.y*img.fullH} width={draft.w*img.fullW} height={draft.h*img.fullH} className="fp-crop-box" pointerEvents="none"/>
+       <rect x={img.fullX+draft.x*img.fullW-P(5)} y={img.fullY+draft.y*img.fullH-P(5)} width={P(10)} height={P(10)} rx={P(2)} className="fp-handle show img" onPointerDown={e=>start(e,"cropa","crop",0,0)}><title>Drag to move the top-left edge of the crop</title></rect>
+       <rect x={img.fullX+(draft.x+draft.w)*img.fullW-P(5)} y={img.fullY+(draft.y+draft.h)*img.fullH-P(5)} width={P(10)} height={P(10)} rx={P(2)} className="fp-handle show img" onPointerDown={e=>start(e,"cropb","crop",0,0)}><title>Drag to move the bottom-right edge of the crop</title></rect></>:<>
+       <svg x={img.x} y={img.y} width={img.width_m} height={img.h} overflow="hidden" className="fp-plan-image" onPointerDown={e=>adjust&&start(e,"image","img",img.x,img.y)}><image href={"/api/floor-plan/image?v="+(img.version??"")} x={-img.cr.x*img.fullW} y={-img.cr.y*img.fullH} width={img.fullW} height={img.fullH} preserveAspectRatio="none"/></svg>
+       {canEdit&&adjust&&<><rect x={img.x} y={img.y} width={img.width_m} height={img.h} className="fp-image-frame" pointerEvents="none"/><rect x={img.x+img.width_m-P(5)} y={img.y+img.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className="fp-handle show img" onPointerDown={e=>start(e,"imgsize","img",0,0)}><title>Drag to scale the image</title></rect></>}</>}</g>}
      {plan.rooms.map(r=><g key={r.id} onPointerEnter={()=>setHoverRoom(r.id)} onPointerLeave={()=>setHoverRoom("")}>
       <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={P(3)} className="fp-room" onPointerDown={e=>start(e,"room",r.id,r.x,r.y)} style={{cursor:canEdit?"move":"default"}}/>
       <text x={r.x+P(14)} y={r.y+P(24)} className={canEdit?"fp-room-name edit":"fp-room-name"} style={{fontSize:P(11)}} onClick={()=>canEdit&&renameRoom(r.id)}>{canEdit&&<title>Click to rename</title>}{r.name.toUpperCase()}</text>
@@ -185,7 +207,8 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
     <div className="fp-image-row">
      <span className="fp-image-title"><ImageIcon size={14}/> Plan image</span>
      <label className={"secondary fp-file"+(imgBusy?" disabled":"")}><Upload size={14}/> {plan.image?"Replace":"Upload"}<input type="file" accept="image/png,image/jpeg" disabled={imgBusy} aria-label="Upload plan image" onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f)void uploadImage(f)}}/></label>
-     {plan.image&&<><button className={"secondary"+(adjust?" on":"")} aria-pressed={adjust} onClick={()=>setAdjust(!adjust)}><Move size={14}/> {adjust?"Done adjusting":"Move and scale"}</button>
+     {plan.image&&<>{cropping?<><button onClick={applyCrop}>Apply crop</button><button className="secondary" onClick={()=>setDraft(null)}>Cancel</button></>:canEdit&&<><button className="secondary" onClick={startCrop}><Crop size={14}/> Crop</button><button className="secondary" onClick={()=>change(latch({...plan}))} title="Move the picture, rooms and access points to the top-left corner of the canvas">Snap to corner</button></>}
+      <button className={"secondary"+(adjust?" on":"")} aria-pressed={adjust} disabled={cropping} onClick={()=>setAdjust(!adjust)}><Move size={14}/> {adjust?"Done adjusting":"Move and scale"}</button>
       <span className="fp-image-width">Width (ft)<SizeInput label="Plan image width" minFt={3.3} value={plan.image.width_m} onCommit={w=>change({...plan,image:{...plan.image!,width_m:w}})}/></span>
       <button className="secondary fp-icon" aria-label="Remove plan image" disabled={imgBusy} onClick={()=>void removeImage()}><Trash2 size={14}/></button></>}
      <small>PNG or JPEG, up to 5 MB. Set the width of the whole picture in feet (or drag its corner) so it matches your real rooms.</small></div>

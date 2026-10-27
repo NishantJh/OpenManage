@@ -28,15 +28,40 @@ const (
 // floorImage is where the image sits on the plan (metres): its top-left corner and its width;
 // the height follows from the picture's own aspect ratio. PxW/PxH/Version are filled on read.
 type floorImage struct {
-	X       float64 `json:"x"`
-	Y       float64 `json:"y"`
-	WidthM  float64 `json:"width_m"`
-	PxW     int     `json:"px_w,omitempty"`
-	PxH     int     `json:"px_h,omitempty"`
-	Version string  `json:"version,omitempty"`
+	X       float64    `json:"x"`
+	Y       float64    `json:"y"`
+	WidthM  float64    `json:"width_m"`
+	Crop    *floorCrop `json:"crop,omitempty"`
+	PxW     int        `json:"px_w,omitempty"`
+	PxH     int        `json:"px_h,omitempty"`
+	Version string     `json:"version,omitempty"`
+}
+
+// floorCrop is the part of the picture that is shown, as fractions (0 to 1) of the picture.
+// The picture itself is never altered; WidthM and X/Y describe the shown part.
+type floorCrop struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+}
+
+const floorCropMin = 0.05
+
+func (c *floorCrop) validate() error {
+	const eps = 1e-6
+	if c.X < 0 || c.Y < 0 || c.W < floorCropMin || c.H < floorCropMin || c.X+c.W > 1+eps || c.Y+c.H > 1+eps {
+		return errors.New("plan image crop is out of range")
+	}
+	return nil
 }
 
 func (i *floorImage) validate() error {
+	if i.Crop != nil {
+		if err := i.Crop.validate(); err != nil {
+			return err
+		}
+	}
 	if !inExtent(i.X) || !inExtent(i.Y) || i.WidthM < 1 || i.WidthM > floorPlanMaxExtent {
 		return errors.New("plan image position or size is out of range")
 	}
@@ -44,7 +69,9 @@ func (i *floorImage) validate() error {
 }
 
 // geometry is what is kept in the layout document; the picture's own facts come from its row.
-func (i floorImage) geometry() floorImage { return floorImage{X: i.X, Y: i.Y, WidthM: i.WidthM} }
+func (i floorImage) geometry() floorImage {
+	return floorImage{X: i.X, Y: i.Y, WidthM: i.WidthM, Crop: i.Crop}
+}
 
 // fillImage adds the stored picture's facts to a layout. A layout that names an image that is
 // no longer stored loses it.
@@ -75,7 +102,11 @@ func (i floorImage) heightM() float64 {
 	if i.PxW == 0 {
 		return 0
 	}
-	return i.WidthM * float64(i.PxH) / float64(i.PxW)
+	cw, ch := 1.0, 1.0
+	if i.Crop != nil {
+		cw, ch = i.Crop.W, i.Crop.H
+	}
+	return i.WidthM * (float64(i.PxH) * ch) / (float64(i.PxW) * cw)
 }
 
 // sniffImage checks the bytes really are a PNG or JPEG of a sane size and returns its type
@@ -156,6 +187,7 @@ func (a *app) putFloorPlanImage(w http.ResponseWriter, r *http.Request) {
 	if layout.Image == nil {
 		layout.Image = &floorImage{WidthM: floorImageDefaultM}
 	}
+	layout.Image.Crop = nil // a new picture starts uncropped
 	raw, _ := json.Marshal(layout)
 	var resp floorPlanResponse
 	resp.floorLayout = layout
