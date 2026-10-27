@@ -212,6 +212,7 @@ func main() {
 	mux.HandleFunc("PUT /api/floor-plan/image", a.putFloorPlanImage)
 	mux.HandleFunc("DELETE /api/floor-plan/image", a.deleteFloorPlanImage)
 	mux.HandleFunc("GET /api/wifi-clients", a.listWifiClients)
+	mux.HandleFunc("GET /api/wifi-clients/status", a.wifiPollStatus)
 	mux.HandleFunc("PATCH /api/wifi-clients/{id}", a.updateWifiClient)
 	mux.HandleFunc("DELETE /api/wifi-clients", a.clearWifiClients)
 	mux.HandleFunc("GET /api/wifi-client-events", a.listWifiClientEvents)

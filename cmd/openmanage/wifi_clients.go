@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,10 @@ const (
 	clientBodyLimit       = 4 * 1024
 	clientMaxInterfaces   = 16
 	clientMaxPerInterface = 256
+	// hostapd prints a long block per client (capabilities, counters), so a busy AP needs far more
+	// than a few KB; the limit still bounds what a device can make us hold.
+	clientOutputLimit = 1 << 20
+	pollErrorMax      = 120
 )
 
 // wifiClientsOperation reads the hostapd association tables, plus two small side tables
@@ -42,7 +47,7 @@ const (
 // prints those, then lists the hostapd ubus objects and asks each for its clients.
 var wifiClientsOperation = operation{
 	Name: "wifi_clients", Label: "Wi-Fi clients", Class: operationRead, Roles: readOnlyRoles,
-	Timeout: healthCheckTimeout, OutputLimit: 64 * 1024, Audit: auditBestEffort,
+	Timeout: healthCheckTimeout, OutputLimit: clientOutputLimit, Audit: auditBestEffort,
 	command: `echo "##leases"; awk 'length($4)>0 && length($4)<=60 && $4!="*" {print $2, $4}' /tmp/dhcp.leases 2>/dev/null | head -n 256; ` +
 		`echo "##neigh"; ip -4 neigh show 2>/dev/null | awk '$4=="lladdr" {print $5, $1}' | head -n 256; ` +
 		`for n in $(ubus list 'hostapd.*'); do echo "@@ $n"; ubus call "$n" get_clients; done`,
@@ -215,8 +220,43 @@ func leaseSection(output string) string {
 // pollTracker remembers when each AP was last polled. In memory: after a restart
 // every AP is simply polled once.
 type pollTracker struct {
-	mu   sync.Mutex
-	last map[string]time.Time
+	mu     sync.Mutex
+	last   map[string]time.Time
+	status map[string]pollStatus
+}
+
+// pollStatus is the outcome of an AP's latest poll, shown in the UI so an AP that cannot be
+// read is visible instead of silently having no devices. Error holds a fixed message, never
+// device output.
+type pollStatus struct {
+	DeviceID string    `json:"device_id"`
+	PolledAt time.Time `json:"polled_at"`
+	OK       bool      `json:"ok"`
+	Error    string    `json:"error,omitempty"`
+	Clients  int       `json:"clients"`
+}
+
+func (t *pollTracker) setStatus(id string, ok bool, errText string, clients int) {
+	if len(errText) > pollErrorMax {
+		errText = errText[:pollErrorMax]
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.status == nil {
+		t.status = map[string]pollStatus{}
+	}
+	t.status[id] = pollStatus{DeviceID: id, PolledAt: time.Now(), OK: ok, Error: errText, Clients: clients}
+}
+
+func (t *pollTracker) statuses() []pollStatus {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]pollStatus, 0, len(t.status))
+	for _, v := range t.status {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].DeviceID < out[j].DeviceID })
+	return out
 }
 
 func (t *pollTracker) due(id string, now time.Time, every time.Duration) bool {
@@ -261,17 +301,20 @@ func (a *app) pollWifiClients(parent context.Context, deviceID string) {
 	a.clientPolls.mark(deviceID, time.Now()) // failures wait a full interval too
 	target, err := a.loadDeviceTarget(ctx, deviceID)
 	if err != nil {
+		a.clientPolls.setStatus(deviceID, false, "could not load this device's SSH credentials", 0)
 		return
 	}
 	var dhcpHost bool
 	_ = a.db.QueryRow(ctx, `SELECT dhcp_host FROM devices WHERE id=$1`, deviceID).Scan(&dhcpHost)
 	session, err := openDeviceSession(ctx, target, healthCheckTimeout)
 	if err != nil {
+		a.clientPolls.setStatus(deviceID, false, "could not connect over SSH", 0)
 		return
 	}
 	result := session.run(wifiClientsOperation)
 	session.Close()
 	if result.Status != "ok" {
+		a.clientPolls.setStatus(deviceID, false, "poll failed: "+result.Error, 0)
 		return // unknown, not "disconnected": leave the recorded state alone
 	}
 	leases, neigh := parsePreamble(leaseSection(result.Output))
@@ -280,6 +323,11 @@ func (a *app) pollWifiClients(parent context.Context, deviceID string) {
 	}
 	a.leaseNames.set(deviceID, leases)
 	clients := parseWifiClients(result.Output)
+	if strings.Contains(result.Output, "@@ hostapd.") {
+		a.clientPolls.setStatus(deviceID, true, "", len(clients))
+	} else {
+		a.clientPolls.setStatus(deviceID, false, "no Wi-Fi (hostapd) interfaces reported by this device", 0)
+	}
 	pending := map[string]string{} // MAC -> IP for clients no DHCP host has named
 	for i := range clients {
 		if name := a.leaseNames.lookup(clients[i].MAC); name != "" {
@@ -461,6 +509,11 @@ type wifiClientView struct {
 
 // listWifiClients returns clients seen in the last 24 hours. A client counts as
 // connected only if its AP was polled recently enough to trust the record.
+// wifiPollStatus reports each AP's latest poll outcome (in memory; empty until the first poll).
+func (a *app) wifiPollStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.clientPolls.statuses())
+}
+
 func (a *app) listWifiClients(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.db.Query(r.Context(), `SELECT encode(c.client_key,'hex'), c.label, c.dhcp_name, c.mac_hint, c.hidden,
 			s.device_id::text, s.interface, s.signal_dbm,

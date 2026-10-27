@@ -73,3 +73,5 @@ Start with room-of-connected-AP; more precise location (fingerprinting) is a rea
 - Also store RSSI with each association change so later fingerprinting has data to learn from.
 - Privacy: still keyed-hash identity and masked MACs; "Clear client data" wipes both tables. Roam history retention is a documented, configurable setting (default 30 days, minimum 24 h).
 - Defaults: 5 min poll, adjustable from 60 s up to 10 min if 5 min is too noisy (Nishant, 2026-10-23), #25/#26 closed after the rebased floor plan lands. Note a 5 min poll can miss quick roams; roam tests may want a 60 s poll.
+
+- Poll status (built): the server remembers the outcome of each AP's latest Wi-Fi poll in memory (`GET /api/wifi-clients/status`: `ok`, a fixed `error` message, client count). The Devices panel names any AP that could not be read ("AP3 could not be read: ..."). The `wifi_clients` operation output limit is 1 MiB because hostapd prints a long block per client; a busy AP exceeded the old 64 KB and its poll was dropped silently.

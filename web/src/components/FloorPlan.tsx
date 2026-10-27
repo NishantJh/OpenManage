@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Crop, Eye, EyeOff, Image as ImageIcon, Move, Plus, Radio, Save, Trash2, Upload, Wifi } from "lucide-react";
 import { apiFetch, apiJSON, csrfToken } from "../api";
+import ApPollStatus from "./ApPollStatus";
 import type { Device, FloorPlan as Plan, FloorRoom, ImageCrop, MonitoringSettings, Role, WifiClient, WifiClientEvent } from "../types";
 
 // Plans are stored and drawn in metres; people see and type feet, snapped to quarter feet (hold Shift while dragging for no snapping).
@@ -200,6 +201,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
    </div>
    <aside className="fp-card fp-side">
     <div className="fp-side-head"><div><h3>Devices</h3><small>{clients.length===0?(tracking?"Waiting for the first poll":"Tracking is off"):connectedCount+" connected · "+clients.length+" seen in 24 h"}</small></div>{isAdmin&&clients.length>0&&<button className="secondary fp-icon" aria-label="Clear device data" title="Clear device data" onClick={()=>void clearClients()}><Trash2 size={15}/></button>}</div>
+    <ApPollStatus devices={devices} tracking={tracking}/>
     {clients.length===0&&<div className="fp-blank"><Wifi size={22}/><p>{tracking?"Connected devices will appear here after the next poll.":"Turn on tracking to see which devices are connected to which access point, and where they roamed."}</p></div>}
     <ul className="fp-devices">{clients.map(c=><li key={c.id} className={c.hidden?"hidden":""}>
      <i className={"fp-dot "+(c.connected?"on":"off")} title={c.connected?"Connected":"Not connected"}/>

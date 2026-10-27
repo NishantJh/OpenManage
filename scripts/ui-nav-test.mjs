@@ -203,6 +203,22 @@ try {
   }, null, { timeout: 5000 });
   await mocked.unrouteAll({ behavior: "ignoreErrors" });
   console.log("PASS: client dots follow their AP into its room, shared-wall AP spreads over both rooms");
+  // An AP whose Wi-Fi poll failed is named in the Devices panel instead of silently having no devices
+  // (API answers are mocked).
+  const mockJson = body => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  const apDev = (id, name) => ({ id, name, address: "192.0.2." + id, model: "", firmware: "", status: "online", last_seen_at: new Date().toISOString(), enrollable: false, config_drift: false, role: "access_point", dhcp_host: false, has_key: true });
+  await page.route("**/api/devices", r => r.fulfill(mockJson([apDev("1", "AP-One"), apDev("2", "AP-Two")])));
+  await page.route("**/api/monitoring/settings", r => r.fulfill(mockJson({ enabled: true, interval_seconds: 300, client_tracking_enabled: true, client_poll_interval_seconds: 300 })));
+  await page.route("**/api/wifi-clients/status", r => r.fulfill(mockJson([
+    { device_id: "1", polled_at: new Date().toISOString(), ok: true, clients: 4 },
+    { device_id: "2", polled_at: new Date().toISOString(), ok: false, error: "poll failed: device output exceeded the allowed limit", clients: 0 }])));
+  await page.goto(baseUrl + "/floor-plan");
+  const problems = page.locator('ul[aria-label="Access points that could not be read"]');
+  await problems.waitFor();
+  assert.match(await problems.innerText(), /AP-Two could not be read: poll failed: device output exceeded/);
+  assert.ok(!/AP-One/.test(await problems.innerText()), "a healthy AP is not listed");
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  console.log("PASS: an AP whose Wi-Fi poll failed is shown in the Devices panel");
   assert.deepEqual(errors, [], "uncaught page errors");
   console.log("PASS: back button, deep link, no page errors");
 } finally {

@@ -146,3 +146,4 @@ tr.selected td{background:#1a1e2a}
 .fp-range-ring{fill:none;stroke:#6f5ae8;stroke-opacity:.35;stroke-width:1px;stroke-dasharray:4 4;vector-effect:non-scaling-stroke}
 .fp-range-toggle{cursor:pointer}.fp-range-toggle input{margin:0 6px 0 0}
 .fp-scale path{fill:none;stroke:#4a5166;stroke-width:1.5px;vector-effect:non-scaling-stroke}.fp-scale text{fill:#4a5166;font-weight:600}
+.fp-poll-problems{margin:0;padding:10px 16px;list-style:none;display:grid;gap:6px;border-bottom:1px solid #232835;background:rgba(229,72,77,.1);color:#f3b4b7;font-size:12px}.fp-poll-problems b{color:#ffd9db}

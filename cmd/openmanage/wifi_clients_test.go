@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -137,5 +138,40 @@ func TestLeaseCacheNamesAcrossDevices(t *testing.T) {
 	c.set("router", nil)
 	if got := c.lookup("aa:bb:cc:11:22:33"); got != "" {
 		t.Fatalf("a device that reports no leases must drop its names, got %q", got)
+	}
+}
+
+// A busy AP's get_clients output is long (hostapd prints capabilities and counters per client);
+// it must fit the operation's output limit and still parse every client.
+func TestWifiClientsBusyAPFitsLimit(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("@@ hostapd.phy0-ap0\n{\n\t\"clients\": {\n")
+	var pad strings.Builder // about 2 KB of per-client detail
+	for k := 0; k < 80; k++ {
+		fmt.Fprintf(&pad, "\t\t\t\"k%d\": 1234567890,\n", k)
+	}
+	pad.WriteString("\t\t\t\"last\": 0\n")
+	for i := 0; i < 120; i++ {
+		fmt.Fprintf(&b, "\t\t\"aa:bb:cc:00:%02x:%02x\": {\n\t\t\t\"assoc\": true,\n\t\t\t\"signal\": -55,\n%s\t\t},\n", i/256, i%256, pad.String())
+	}
+	out := strings.TrimSuffix(b.String(), ",\n") + "\n\t}\n}\n"
+	if len(out) <= 64*1024 {
+		t.Fatalf("fixture should exceed the old 64 KB limit, got %d", len(out))
+	}
+	if len(out) > wifiClientsOperation.OutputLimit {
+		t.Fatalf("a 120-client AP (%d bytes) exceeds the output limit %d", len(out), wifiClientsOperation.OutputLimit)
+	}
+	if got := len(parseWifiClients(out)); got != 120 {
+		t.Fatalf("parsed %d clients, want 120", got)
+	}
+}
+
+func TestPollTrackerStatus(t *testing.T) {
+	var p pollTracker
+	p.setStatus("b", true, "", 3)
+	p.setStatus("a", false, strings.Repeat("x", 500), 0)
+	got := p.statuses()
+	if len(got) != 2 || got[0].DeviceID != "a" || got[0].OK || len(got[0].Error) != pollErrorMax || got[1].Clients != 3 {
+		t.Fatalf("unexpected statuses: %+v", got)
 	}
 }
