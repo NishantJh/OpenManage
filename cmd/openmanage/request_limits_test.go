@@ -100,6 +100,22 @@ func TestAPIDeadlineAppliesOnlyToAPIRoutes(t *testing.T) {
 	}
 }
 
+func TestBackupCreateGetsLongerDeadline(t *testing.T) {
+	var got time.Duration
+	h := apiDeadline(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d, _ := r.Context().Deadline()
+		got = time.Until(d)
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/devices/x/backups", nil))
+	if got <= apiRequestTimeout {
+		t.Fatalf("backup create deadline %v should exceed apiRequestTimeout", got)
+	}
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/devices/x/backups", nil))
+	if got > apiRequestTimeout {
+		t.Fatalf("listing backups deadline %v should not exceed apiRequestTimeout", got)
+	}
+}
+
 // Device operations and the API deadline must leave room for the server to write a response.
 func TestTimeoutsStayBelowServerWriteTimeout(t *testing.T) {
 	if apiRequestTimeout >= serverWriteTimeout {

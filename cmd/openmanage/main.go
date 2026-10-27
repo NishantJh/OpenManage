@@ -771,10 +771,22 @@ func apiDeadline(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), apiRequestTimeout)
+		timeout := apiRequestTimeout
+		if isBackupCreate(r) {
+			timeout = backupJobTimeout
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// isBackupCreate matches POST /api/devices/{id}/backups, the one request that may outlast
+// apiRequestTimeout because building an archive on a slow device takes long.
+func isBackupCreate(r *http.Request) bool {
+	p := r.URL.Path
+	return r.Method == http.MethodPost && strings.HasPrefix(p, "/api/devices/") && strings.HasSuffix(p, "/backups") &&
+		strings.Count(p, "/") == 4
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
