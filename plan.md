@@ -170,6 +170,16 @@ Trusted hosts such as Home Assistant still need to reach IoT devices. Policy: ma
 
 Safety defaults: the IoT VLAN is opt-in and off by default. Cast and print devices stay on the main network unless the user moves them. A scoped reflector (avahi or umdns, limited to the chosen service types and the IoT and main interfaces) is offered only to users who move such devices, with a pre-flight warning listing what may break, such as phone casting and printer discovery. A second HA interface on the IoT VLAN helps HA only; it does not let phones on the main network see IoT devices.
 
+### Later: per-device firmware build and upgrade (design only)
+
+Not scheduled; starts after the sections above are done and tested. Goal: build and flash a firmware image per device that keeps all installed packages (including third-party ones such as `luci-theme-fluent`) and reapplies configuration, like ASU. Design, feasibility verdict and open questions: [docs/firmware-upgrades.md](docs/firmware-upgrades.md). It refines Section 5 and inherits its safety rules.
+
+- [ ] Phase 0: device config backup. A typed `firmware_backup` operation (`sysupgrade -b` archive of `/etc/config` and the keep-list files), stored encrypted with the existing key bound to device and backup id, size-capped, never logged, never extracted on the server. Download and restore are admin-only and audited; restore takes only an OpenManage-captured archive to the same device and board, with lockout checks. Last 5 kept per device, pre-flash backup pinned. Usable as a standalone "back up this router" button and optional schedule, and required before any firmware flash. Agreed by Nishant 2026-10-26; security rules from the review agreed 2026-10-26 (see the firmware design doc).
+- [ ] Phase 1: package and feed inventory, plan-only package diff (read-only), and a package source registry (stored release file or upload, installed allow-untrusted after admin review of its control data) for installing external packages such as themes, with source-unknown packages flagged, and a versioned desired package set per device or group (no fixed list) that is diffed against the installed packages and applied on the next flash or on request.
+- [ ] Phase 2: single-device upgrade through the ASU API, third-party packages reinstalled afterward, encrypted config backup, post-reboot verification and drift review.
+- [ ] Phase 3: staged rollout (canary, concurrency limit, stop on failure).
+- [ ] Phase 4 (optional): self-hosted ASU mode. A build-server URL setting plus a single setup script for a separate Linux machine (outside the OpenManage stack), with optional extra feeds. Public ASU stays the default. Decided by Nishant 2026-10-23.
+
 ## Deferred and optional items
 
 - SSH key ciphertext is bound to a fixed domain label (`sshKeyAAD`), not to the device. Binding it to the device is deferred to the encryption-key rotation work in Section 4, because existing ciphertext must be re-encrypted in the same change.
