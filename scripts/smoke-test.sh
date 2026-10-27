@@ -160,7 +160,7 @@ def chunk(t, d): c = struct.pack(">I", len(d)) + t + d; return c + struct.pack("
 raw = b"".join(b"\x00" + b"\xff\xff\xff" * 4 for _ in range(2))
 open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 2, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 PY
-plan_img() { curl --silent --show-error -o "$device_body" -w '%{http_code}' -X "$1" -b "$cookie_jar" -H "X-CSRF-Token: $csrf" "${@:3}" "$base_url/api/floor-plan/image$2"; }
+plan_img() { curl --silent --show-error -o "$device_body" -w '%{http_code}' -X "$1" -b "$cookie_jar" -H "X-CSRF-Token: $csrf" "${@:3}" "$base_url/api/floor-plan/image${2:-}"; }
 [[ "$(plan_img GET)" == "404" ]] || { echo "ERROR: plan image existed before upload" >&2; exit 1; }
 printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' > "$device_body.svg"
 [[ "$(plan_img PUT "" --data-binary @"$device_body.svg" -H 'Content-Type: image/png')" == "400" ]] || { echo "ERROR: SVG plan image was accepted" >&2; exit 1; }
