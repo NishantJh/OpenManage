@@ -465,6 +465,11 @@ if [[ "${OPENMANAGE_LAB_BROWSER:-0}" == 1 ]]; then
   ! docker exec "$router" uci -q get wireless.default_radio0.auth_secret >/dev/null || fail "the page's undo commands left the RADIUS secret"
   docker exec "$router" rm -f /root/wireless.before-radius
   echo "PASS: the backup, AP setup and undo commands shown on the page run on OpenWrt"
+  api GET /api/radius
+  json 'assert d["server_address"]=="192.168.1.10", d' < "$body" || fail "the OpenManage address typed on the page was not saved"
+  api PUT /api/radius/settings '{"server_address":"8.8.8.8"}'
+  [[ "$status" == 400 ]] || fail "a public OpenManage address was accepted (HTTP $status)"
+  echo "PASS: the OpenManage address is saved once and a public address is refused"
   remove_ui_devices
   rm -rf "$ui_dir"
 fi

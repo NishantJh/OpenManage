@@ -202,6 +202,7 @@ func main() {
 	mux.HandleFunc("PATCH /api/network-users/{id}", a.updateNetworkUser)
 	mux.HandleFunc("POST /api/network-users/{id}/password", a.resetNetworkUserPassword)
 	mux.HandleFunc("GET /api/radius", a.getRADIUSStatus)
+	mux.HandleFunc("PUT /api/radius/settings", a.updateRADIUSSettings)
 	mux.HandleFunc("GET /api/radius/ca.pem", a.downloadRADIUSCA)
 	mux.HandleFunc("GET /api/radius/apple-profile", a.downloadAppleWiFiProfile)
 	mux.HandleFunc("POST /api/devices/{id}/radius-secret", a.rotateRADIUSSecret)
