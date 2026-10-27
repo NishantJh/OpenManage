@@ -48,7 +48,7 @@ Audit security-sensitive operations with initiator, device, operation type, life
 - Administrator bootstrap credentials come from environment configuration. Use a strong, unique password and do not commit a real .env.
 - Enrollment is admin-only. It accepts private IP literals only, uses TCP/22, verifies an independently sourced SHA-256 host-key fingerprint, and proves that the supplied SSH key authenticates before storing it.
 - Stored SSH private-key material is encrypted with AES-256-GCM using the 32-byte base64 key in OPENMANAGE_ENCRYPTION_KEY. The encryption key is separate from the database and must be backed up securely. A database backup without the matching key cannot recover credentials.
-- The enrollment endpoint does not install or rotate router-side authorized keys and does not run arbitrary commands.
+- The enrollment endpoint does not install or rotate device-side authorized keys and does not run arbitrary commands. The Add device wizard (`/api/device-bootstrap`) is the exception: it installs one generated key, using the root password once, and never stores that password.
 - The RADIUS listener is off unless configured. It accepts requests only from the inventory address of an enrolled AP that carries a valid Message-Authenticator, and it never logs passwords or secrets.
 - The operation engine must revalidate device targets and credentials, enforce host-key pinning and resource bounds, and authorize every operation server-side. A successful SSH connection alone does not authorize a requested action.
 - Audit events should be durable for security-sensitive state changes. Keep the state mutation and audit write in one transaction whenever feasible.
