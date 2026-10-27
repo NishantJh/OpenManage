@@ -93,6 +93,7 @@ try {
   await page.keyboard.type("Kitchen");
   await page.locator(".fp-room-name", { hasText: "KITCHEN" }).waitFor();
   console.log("PASS: floor plan rooms in feet, renamable, canvas fits rooms");
+  await page.locator(".fp-edit-row button[aria-label^='Remove']").first().click(); // rooms would hold the corner; start the image test without any
   // Plan image: upload a PNG (it lands on the top-left corner), scale it by typing a width in feet,
   // crop it to its top-left quarter, then remove it again.
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==", "base64");
@@ -105,6 +106,20 @@ try {
   await page.getByLabel("Plan image width").fill("30");
   await page.getByLabel("Plan image width").press("Enter");
   await page.waitForFunction(() => Math.abs(Number(document.querySelector("svg.fp-plan-image").getAttribute("width")) - 30 * 0.3048) < 0.01);
+  // Dragging the picture away from the corner and saving: the next load pulls it back (snap on load).
+  const ib = await planImg.boundingBox();
+  await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(ib.x + ib.width / 2 + 120, ib.y + ib.height / 2 + 80, { steps: 5 });
+  await page.mouse.up();
+  const [mx] = await geom();
+  assert.ok(mx > 1, `dragging should move the picture off the corner, got x=${mx}`);
+  await page.getByRole("button", { name: /^save/i }).first().click();
+  await page.getByText("Floor plan saved.").waitFor();
+  await page.reload();
+  await planImg.waitFor();
+  const [sx, sy] = await geom();
+  assert.ok(sx === 0 && sy === 0, `plan image should snap back to the corner on load, got ${sx},${sy}`);
   await page.getByRole("button", { name: "Crop" }).click();
   const [tl, br] = await page.locator("rect.fp-handle.img").all();
   const a = await tl.boundingBox(), z = await br.boundingBox();
