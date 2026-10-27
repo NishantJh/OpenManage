@@ -39,7 +39,7 @@ func (a *app) updateDeviceRole(w http.ResponseWriter, r *http.Request) {
 	var d device
 	err = tx.QueryRow(r.Context(), `UPDATE devices SET role=COALESCE($2,role), dhcp_host=COALESCE($3,dhcp_host) WHERE id=$1
 		RETURNING `+deviceColumns, id, in.Role, in.DHCPHost).
-		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost)
+		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost, &d.HasKey)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "device not found")
 		return

@@ -381,5 +381,6 @@ func (a *app) storeBootstrap(ctx context.Context, userID string, req bootstrapRe
 		err = tx.Commit(ctx)
 	}
 	d.Enrollable = true
+	d.HasKey = err == nil
 	return d, err
 }

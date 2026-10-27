@@ -77,11 +77,14 @@ type device struct {
 	// gateway) and DHCPHost marks the device whose lease file names Wi-Fi clients.
 	Role     string `json:"role"`
 	DHCPHost bool   `json:"dhcp_host"`
+	// HasKey is true once OpenManage holds an SSH credential for the device.
+	HasKey bool `json:"has_key"`
 }
 
 const deviceColumns = `id::text,name,address,model,firmware,status,last_seen_at,created_at,
 	EXISTS (SELECT 1 FROM config_snapshots cs WHERE cs.device_id=devices.id AND cs.drift AND cs.acknowledged_at IS NULL),
-	role,dhcp_host`
+	role,dhcp_host,
+	EXISTS (SELECT 1 FROM device_credentials dc WHERE dc.device_id=devices.id)`
 
 type auditEvent struct {
 	ID           int64           `json:"id"`
@@ -487,7 +490,7 @@ func (a *app) listDevices(w http.ResponseWriter, r *http.Request) {
 	out := make([]device, 0)
 	for rows.Next() {
 		var d device
-		if err := rows.Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost, &d.HasKey); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not read devices")
 			return
 		}
@@ -567,7 +570,7 @@ func (a *app) getDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	var d device
 	err := a.db.QueryRow(r.Context(), `SELECT `+deviceColumns+` FROM devices WHERE id=$1`, r.PathValue("id")).
-		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost)
+		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost, &d.HasKey)
 	if errors.Is(err, pgx.ErrNoRows) || err != nil {
 		writeError(w, http.StatusNotFound, "device not found")
 		return

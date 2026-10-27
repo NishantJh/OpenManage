@@ -146,7 +146,7 @@ func TestStoreBootstrapEnrollsExistingDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.ID != deviceID || d.Role != "router" || !d.Enrollable {
+	if d.ID != deviceID || d.Role != "router" || !d.Enrollable || !d.HasKey {
 		t.Fatalf("got %+v", d)
 	}
 	var count int

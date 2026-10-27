@@ -33,7 +33,7 @@ Never forward UDP 1812 from the internet.
 ## 2. Create a Wi-Fi user and the AP secret
 
 1. **Add Wi-Fi user**, for example `nishant-iphone`, with a 12+ character password.
-2. Get the AP's secret. If you ticked the RADIUS box when you added the AP, the secret was shown on the last wizard screen. Otherwise, in **Access points with a secret**, press **+** (Create secret) on the AP's row and copy the secret from the dialog. It is shown only once; if lost, rotate it.
+2. Get the AP's secret. If you ticked the RADIUS box when you added the AP, the secret was shown on the last wizard screen. Otherwise, in **Access points with a secret**, press **+** (Create secret) on the AP's row and copy the secret from the dialog. It is shown only once; if lost, rotate it. The screen that shows the secret also lists the commands from step 3, already filled in with the secret, port and the OpenManage address, plus the backup and undo commands.
 
 ## 3. Configure the AP
 

@@ -410,10 +410,30 @@ if [[ "${OPENMANAGE_LAB_BROWSER:-0}" == 1 ]]; then
   ui_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ui-add-ap-test.mjs"
   (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0 && npx playwright install --with-deps chromium >/dev/null)
   (cd "$ui_dir" && OPENMANAGE_TEST_ROOT_PASSWORD="$root_password" node "$ui_script" "$base_url" admin lab-admin-password-123 "$router_ip") || fail "add-AP wizard browser check"
+  remove_ui_devices() {
+    api GET /api/devices
+    ui_added="$(json 'print(*[x["id"] for x in d if x["address"]==sys.argv[1] and x["name"]!="lab-router"])' "$router_ip" < "$body")"
+    for id in $ui_added; do api DELETE "/api/devices/$id"; done
+  }
+  remove_ui_devices
+  existing_script="$(dirname "$ui_script")/ui-existing-device-test.mjs"
+  ui_cmds="$work/ui-radius-commands.json"
+  (cd "$ui_dir" && OPENMANAGE_UI_COMMANDS_OUT="$ui_cmds" OPENMANAGE_TEST_ROOT_PASSWORD="$root_password" node "$existing_script" "$base_url" admin lab-admin-password-123 "$router_ip") || fail "existing-device setup browser check"
+  # Run the backup, setup and undo commands exactly as the page showed them. The lab
+  # router has no radio, so wifi reload is left out and the section is only checked.
+  ui_cmd() { json 'print("\n".join(l for l in d[sys.argv[1]].splitlines() if l.strip()!="wifi reload"))' "$1" < "$ui_cmds"; }
+  ui_secret="$(json 'print(d["secret"])' < "$ui_cmds")"
+  docker exec "$router" sh -c "set -e; touch /etc/config/wireless; $(ui_cmd backup); $(ui_cmd setup)" || fail "the page's AP commands failed on OpenWrt"
+  [[ "$(docker exec "$router" uci get wireless.omradius.auth_secret)" == "$ui_secret" ]] || fail "the page's AP commands did not set the shown secret"
+  [[ "$(docker exec "$router" uci get wireless.omradius.auth_server)" == 192.168.1.10 ]] || fail "the page's AP commands did not set the OpenManage address"
+  [[ "$(docker exec "$router" uci get wireless.omradius.encryption)" == wpa2 ]] || fail "the page's AP commands did not configure WPA2-Enterprise"
+  docker exec "$router" test -f /root/wireless.before-radius || fail "the page's backup command left no backup"
+  docker exec "$router" sh -c "set -e; $(ui_cmd undo)" || fail "the page's undo commands failed on OpenWrt"
+  ! docker exec "$router" uci -q get wireless.omradius >/dev/null || fail "the page's undo commands left the section"
+  docker exec "$router" rm -f /root/wireless.before-radius
+  echo "PASS: the backup, AP setup and undo commands shown on the page run on OpenWrt"
+  remove_ui_devices
   rm -rf "$ui_dir"
-  api GET /api/devices
-  ui_added="$(json 'print(*[x["id"] for x in d if x["address"]==sys.argv[1] and x["name"]!="lab-router"])' "$router_ip" < "$body")"
-  for id in $ui_added; do api DELETE "/api/devices/$id"; done
 fi
 compose exec -T db psql -q -U openmanage -d openmanage -c "UPDATE devices SET address='$router_ip' WHERE id='$device_id'" >/dev/null
 
