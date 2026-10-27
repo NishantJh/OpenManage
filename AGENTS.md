@@ -44,7 +44,7 @@ PostgreSQL-backed tests run only when OPENMANAGE_TEST_DATABASE_URL is set (PR va
 Formatting: gofmt -w cmd/openmanage/*.go; gofmt -l cmd/openmanage/*.go
 Container: docker build -t openmanage:local .
 Browser navigation check: scripts/ui-nav-test.mjs (run by scripts/smoke-test.sh; needs Node and Chromium)
-Restore drill: scripts/restore-drill.sh. Lab-only UI checks, run by scripts/openwrt-lab-test.sh: scripts/ui-add-ap-test.mjs and scripts/ui-backups-test.mjs (they need a real device and credentials passed through the environment, never committed).
+Restore drill: scripts/restore-drill.sh. Lab UI checks: scripts/ui-add-ap-test.mjs and scripts/ui-backups-test.mjs, run by scripts/openwrt-lab-test.sh against a disposable OpenWrt container and stack with throwaway credentials. No real device or secrets are needed.
 
 CI prepares embedded frontend assets before running Go tests and building the Docker image. Do not interpret a standalone local Docker build failure as an application defect until the required generated assets are prepared.
 
