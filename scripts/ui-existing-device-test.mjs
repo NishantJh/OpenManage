@@ -71,6 +71,8 @@ try {
   const radius = page.getByLabel(/Also let this device check Wi-Fi sign-ins/i);
   await shot(page, "2-key-icon-wizard.png");
   assert.ok(await radius.isEnabled(), "RADIUS tick box disabled although the listener is on");
+  // The manual form already created a secret, so the wizard warns that ticking replaces it.
+  await page.getByText("already has a RADIUS secret", { exact: false }).waitFor();
   console.log("PASS: the key icon on an inventory-only device opens the wizard with the RADIUS tick box");
   await page.getByLabel(/I trust this network/i).check();
   await page.locator('input[type="password"]').fill(rootPassword);
@@ -87,6 +89,12 @@ try {
   await page.locator(".health-modal").getByRole("button", { name: "Close" }).click();
   assert.equal(await page.locator("table tr", { hasText: name }).count(), 1, "device row duplicated");
   console.log("PASS: the existing device is set up in place, with a RADIUS secret, and not duplicated");
+  // Add device afterwards starts a fresh wizard, not one for the device just set up.
+  await page.getByRole("button", { name: /add device/i }).first().click();
+  await page.getByRole("heading", { name: "Add an access point" }).waitFor();
+  assert.equal(await page.getByLabel(/device ip address/i).inputValue(), "", "fresh wizard kept the previous device");
+  await page.locator(".modal .close").click();
+  console.log("PASS: Add device after a device setup opens a fresh wizard");
 
   // Now that it has a key, the same icon offers the replace-key form, not the wizard.
   await page.getByRole("button", { name: "Enroll SSH credentials for " + name }).click();
