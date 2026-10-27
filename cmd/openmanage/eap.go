@@ -56,8 +56,6 @@ const (
 	msMPPERecvKey     = 17
 )
 
-var errEAPConversationDone = errors.New("eap: conversation finished")
-
 type eapPacket struct {
 	code byte
 	id   byte
@@ -270,10 +268,10 @@ func (e *eapSession) setResult(err error, inner, msk []byte) {
 	e.tlsErr, e.inner, e.msk = err, inner, msk
 }
 
-func (e *eapSession) result() (bool, error, []byte, []byte) {
+func (e *eapSession) result() (done bool, inner, msk []byte, err error) {
 	e.conn.mu.Lock()
 	defer e.conn.mu.Unlock()
-	return e.conn.done, e.tlsErr, e.inner, e.msk
+	return e.conn.done, e.inner, e.msk, e.tlsErr
 }
 
 func (e *eapSession) close() {
@@ -499,7 +497,7 @@ func (s *radiusServer) continueEAP(ctx context.Context, e *eapSession, packet *r
 		go e.run(s.ttlsConfig())
 	}
 	out := e.conn.feed(input)
-	done, tlsErr, inner, msk := e.result()
+	done, inner, msk, tlsErr := e.result()
 	if done {
 		if tlsErr != nil || inner == nil {
 			return fail(radiusReasonTLS)

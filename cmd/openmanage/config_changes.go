@@ -320,6 +320,13 @@ func (a *app) claimConfigChange(ctx context.Context, deviceID string, changeID i
 			WHERE device_id=$1 AND status='previewed' AND created_at < NOW() - ($2 * INTERVAL '1 second')`,
 			deviceID, int(changePreviewTTL.Seconds()))
 	}
+	var restoring bool
+	if err == nil {
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM device_restores WHERE device_id=$1 AND status='running')`, deviceID).Scan(&restoring)
+	}
+	if err == nil && restoring {
+		return c, http.StatusConflict, "a backup restore is running on this device"
+	}
 	if err == nil {
 		err = scanConfigChange(tx.QueryRow(ctx, `UPDATE config_changes SET status='applying', applied_by=$3
 			WHERE id=$1 AND device_id=$2 AND status='previewed' RETURNING `+configChangeColumns, changeID, deviceID, userID), &c)

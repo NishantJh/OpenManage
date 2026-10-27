@@ -176,7 +176,7 @@ func TestTTLSSessionHandshake(t *testing.T) {
 	if clientErr != nil {
 		t.Fatalf("client: %v", clientErr)
 	}
-	done, tlsErr, inner, msk := e.result()
+	done, inner, msk, tlsErr := e.result()
 	if !done || tlsErr != nil || string(inner) != "inner" {
 		t.Fatalf("session done=%v err=%v inner=%q", done, tlsErr, inner)
 	}

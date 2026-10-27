@@ -28,9 +28,10 @@ import (
 const (
 	backupOutputLimit = 4 << 20
 	backupTimeout     = 15 * time.Second
-	// backupsPerDevice is how many unpinned backups are kept per device.
-	backupsPerDevice = 5
-	backupBodyLimit  = 2 * 1024
+	// Bounds for the administrator's retention setting; the default (5) is in the migration.
+	minBackupRetention = 1
+	maxBackupRetention = 20
+	backupBodyLimit    = 2 * 1024
 	// backupJobTimeout covers connecting plus the three reads of one capture. Scheduled
 	// batches run inside the monitoring loop, so it stays short; manual requests are
 	// further bounded by the API deadline.
@@ -229,6 +230,12 @@ func (a *app) captureBackup(ctx context.Context, deviceID, userID string) (backu
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return out, storeFailed
 	}
+	retention := 5
+	if err == nil || errors.Is(err, pgx.ErrNoRows) {
+		if rerr := tx.QueryRow(ctx, `SELECT backup_retention FROM monitoring_settings WHERE id=TRUE`).Scan(&retention); rerr != nil {
+			return out, storeFailed
+		}
+	}
 	if err == nil && latestDigest == digest {
 		out.Unchanged = true
 		err = scanDeviceBackup(tx.QueryRow(ctx, `UPDATE device_backups SET last_verified_at=NOW() WHERE id=$1
@@ -250,7 +257,7 @@ func (a *app) captureBackup(ctx context.Context, deviceID, userID string) (backu
 		if err == nil {
 			_, err = tx.Exec(ctx, `DELETE FROM device_backups WHERE device_id=$1 AND NOT pinned AND id NOT IN (
 				SELECT id FROM device_backups WHERE device_id=$1 AND NOT pinned ORDER BY captured_at DESC, id DESC LIMIT $2)`,
-				deviceID, backupsPerDevice)
+				deviceID, retention)
 		}
 	}
 	if err == nil && (userID != "" || !out.Unchanged) {
