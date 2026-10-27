@@ -120,4 +120,7 @@ func TestRestoreEndpointRequiresAdminAndConfirmation(t *testing.T) {
 	if got := call("admin", `{"unknown":1}`); got != http.StatusBadRequest {
 		t.Fatalf("unknown field: %d", got)
 	}
+	if got := call("admin", `{"confirm_name":"x"}`); got != http.StatusBadRequest {
+		t.Fatalf("missing password: %d", got)
+	}
 }

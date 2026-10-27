@@ -205,6 +205,9 @@ func main() {
 	mux.HandleFunc("DELETE /api/devices/{id}/radius-secret", a.deleteRADIUSSecret)
 	mux.HandleFunc("GET /api/floor-plan", a.getFloorPlan)
 	mux.HandleFunc("PUT /api/floor-plan", a.putFloorPlan)
+	mux.HandleFunc("GET /api/floor-plan/image", a.getFloorPlanImage)
+	mux.HandleFunc("PUT /api/floor-plan/image", a.putFloorPlanImage)
+	mux.HandleFunc("DELETE /api/floor-plan/image", a.deleteFloorPlanImage)
 	mux.HandleFunc("GET /api/wifi-clients", a.listWifiClients)
 	mux.HandleFunc("PATCH /api/wifi-clients/{id}", a.updateWifiClient)
 	mux.HandleFunc("DELETE /api/wifi-clients", a.clearWifiClients)
@@ -771,10 +774,22 @@ func apiDeadline(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), apiRequestTimeout)
+		timeout := apiRequestTimeout
+		if isBackupCreate(r) {
+			timeout = backupJobTimeout
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// isBackupCreate matches POST /api/devices/{id}/backups, the one request that may outlast
+// apiRequestTimeout because building an archive on a slow device takes long.
+func isBackupCreate(r *http.Request) bool {
+	p := r.URL.Path
+	return r.Method == http.MethodPost && strings.HasPrefix(p, "/api/devices/") && strings.HasSuffix(p, "/backups") &&
+		strings.Count(p, "/") == 4
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

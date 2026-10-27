@@ -27,15 +27,17 @@ import (
 
 const (
 	backupOutputLimit = 4 << 20
-	backupTimeout     = 15 * time.Second
+	// A slow device (or a shared CI runner) can take well over 15 s to build the archive.
+	backupTimeout = 30 * time.Second
 	// Bounds for the administrator's retention setting; the default (5) is in the migration.
 	minBackupRetention = 1
 	maxBackupRetention = 20
 	backupBodyLimit    = 2 * 1024
-	// backupJobTimeout covers connecting plus the three reads of one capture. Scheduled
-	// batches run inside the monitoring loop, so it stays short; manual requests are
-	// further bounded by the API deadline.
-	backupJobTimeout = 30 * time.Second
+	// backupJobTimeout covers connecting plus the three reads of one capture. Manual
+	// requests get this long instead of apiRequestTimeout (see apiDeadline), with the
+	// write deadline extended to match; scheduled batches use it inside the monitoring loop.
+	backupJobTimeout = 45 * time.Second
+	backupWriteGrace = 5 * time.Second
 )
 
 // backupOperation streams the archive on stdout. umask keeps any file sysupgrade
@@ -162,6 +164,8 @@ func (a *app) createDeviceBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := r.Context().Value(userContextKey).(authUser)
+	// The server write timeout is shorter than a slow capture; extend it for this response only.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(backupJobTimeout + backupWriteGrace))
 	ctx, cancel := context.WithTimeout(r.Context(), backupJobTimeout)
 	defer cancel()
 	out, fail := a.captureBackup(ctx, deviceID, user.ID)

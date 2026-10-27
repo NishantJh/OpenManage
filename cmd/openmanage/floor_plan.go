@@ -38,6 +38,13 @@ type floorPlacement struct {
 type floorLayout struct {
 	Rooms      []floorRoom      `json:"rooms"`
 	Placements []floorPlacement `json:"placements"`
+	Image      *floorImage      `json:"image,omitempty"`
+}
+
+// overlaps reports whether two rooms share floor area; rooms that only touch are fine.
+func (r floorRoom) overlaps(o floorRoom) bool {
+	const eps = 0.01
+	return r.X < o.X+o.W-eps && r.X+r.W > o.X+eps && r.Y < o.Y+o.H-eps && r.Y+r.H > o.Y+eps
 }
 
 func inExtent(v float64) bool { return v >= 0 && v <= floorPlanMaxExtent }
@@ -48,6 +55,11 @@ func (l *floorLayout) validate() error {
 	}
 	if l.Placements == nil {
 		l.Placements = []floorPlacement{}
+	}
+	if l.Image != nil {
+		if err := l.Image.validate(); err != nil {
+			return err
+		}
 	}
 	if len(l.Rooms) > floorPlanMaxRooms {
 		return fmt.Errorf("at most %d rooms", floorPlanMaxRooms)
@@ -65,6 +77,13 @@ func (l *floorLayout) validate() error {
 		}
 		if !inExtent(r.X) || !inExtent(r.Y) || r.W < 0.5 || r.H < 0.5 || r.W > floorPlanMaxExtent || r.H > floorPlanMaxExtent {
 			return errors.New("room position or size is out of range")
+		}
+	}
+	for i := range l.Rooms {
+		for j := i + 1; j < len(l.Rooms); j++ {
+			if l.Rooms[i].overlaps(l.Rooms[j]) {
+				return errors.New("rooms must not overlap")
+			}
 		}
 	}
 	if len(l.Placements) > 200 {
@@ -100,6 +119,10 @@ func (a *app) getFloorPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = resp.floorLayout.validate()
+	if err := fillImage(r.Context(), a.db, &resp.floorLayout); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load floor plan")
+		return
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -116,7 +139,6 @@ func (a *app) putFloorPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	raw, _ := json.Marshal(in)
 	actor := r.Context().Value(userContextKey).(authUser)
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
@@ -124,6 +146,34 @@ func (a *app) putFloorPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	// The picture itself is uploaded separately; a layout can only position one that is stored,
+	// and a client that does not mention the image keeps the placement it already had.
+	stored, err := lockLayout(r.Context(), tx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not save floor plan")
+		return
+	}
+	if in.Image == nil {
+		in.Image = stored.Image
+	} else {
+		g := in.Image.geometry()
+		in.Image = &g
+	}
+	if in.Image != nil {
+		if err := fillImage(r.Context(), tx, &in); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not save floor plan")
+			return
+		}
+	}
+	if in.Image != nil && in.Image.heightM() > floorPlanMaxExtent {
+		writeError(w, http.StatusBadRequest, "the plan image is too tall for its width")
+		return
+	}
+	if in.Image != nil {
+		g := in.Image.geometry()
+		in.Image = &g
+	}
+	raw, _ := json.Marshal(in)
 	var resp floorPlanResponse
 	resp.floorLayout = in
 	// Placements must point at existing devices; the foreign-key-like check keeps stale IDs out.
@@ -139,6 +189,9 @@ func (a *app) putFloorPlan(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = insertAuditEvent(r.Context(), tx, actor.ID, "floor_plan.update", "floor_plan", "",
 			map[string]any{"rooms": len(in.Rooms), "placements": len(in.Placements)})
+	}
+	if err == nil {
+		err = fillImage(r.Context(), tx, &resp.floorLayout)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

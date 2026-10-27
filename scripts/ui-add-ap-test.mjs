@@ -63,10 +63,23 @@ try {
   await page.getByLabel(/I trust this network/i).check();
 
   await page.locator('input[type="password"]').fill(rootPassword);
+  // One step for monitoring and RADIUS: the lab runs the RADIUS listener, so the option is offered.
+  await page.getByLabel(/Also let this device check Wi-Fi sign-ins/i).check();
   await page.getByRole("button", { name: /add and connect/i }).click();
+  const secretField = page.getByLabel("RADIUS shared secret");
+  await secretField.waitFor({ timeout: 30000 });
+  assert.ok((await secretField.inputValue()).length >= 16, "RADIUS secret missing or too short");
+  await page.getByRole("button", { name: /I have saved it/i }).click();
   await page.getByText("Key installed and connection verified", { exact: false }).waitFor({ timeout: 30000 });
   await page.locator("table td", { hasText: deviceIp }).first().waitFor();
   console.log("PASS: device added through the wizard and shown in the inventory");
+  // The wizard hands over to the health-check dialog; close it before using the sidebar.
+  await page.locator(".health-modal").getByRole("button", { name: "Close" }).click();
+  await page.locator("aside nav a", { hasText: "Configuration" }).click();
+  await page.getByRole("heading", { name: /Access points with a secret|Wi-Fi sign-in/ }).first().waitFor();
+  await page.locator("table td", { hasText: deviceIp }).first().waitFor();
+  console.log("PASS: device added with RADIUS in one step appears with a secret on the Wi-Fi sign-in page");
+  await page.locator("aside nav a", { hasText: "Devices" }).click();
 
   // The password is posted once to the bootstrap endpoint and is not kept in the page.
   assert.ok(await page.locator('input[type="password"]').count() === 0, "wizard still open");
