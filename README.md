@@ -9,7 +9,7 @@ OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the sa
 
 ## Features
 
-- **Adding devices:** one wizard step takes a device's IP address, a host-key fingerprint you verified, and its root password (used once, never stored). OpenManage installs a generated key, checks it works, and stores the management key encrypted at rest. Monitoring and Wi-Fi sign-in (RADIUS) are switched on per device.
+- **Adding devices:** one wizard step takes a device's IP address, a host-key fingerprint you verified, and its root password (used once, never stored). OpenManage installs a generated key, checks it works, and stores the management key encrypted at rest. Wi-Fi sign-in (RADIUS) is set up per device. Persistent monitoring stays a separate, global setting.
 - **Health and monitoring:** read-only health checks, plus opt-in persistent monitoring with 30 days of history.
 - **Configuration snapshots and drift:** encrypted `uci export` snapshots, change review with secrets redacted, and optional scheduled captures.
 - **Controlled changes:** the system hostname can be changed with a preview, a timed rollback, and verification over a fresh SSH connection.

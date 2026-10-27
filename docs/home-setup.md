@@ -1,6 +1,6 @@
 # Home setup on Proxmox: install, add devices, get ready for Wi-Fi sign-in
 
-This walks through running OpenManage with Docker inside a Proxmox LXC container, adding an OpenWrt router and access points, and preparing for [Wi-Fi sign-in setup](radius-client-setup.md). Addresses below are examples: `192.168.1.10` is the container, `192.168.1.2` an AP. Every step is reversible; deleting the container removes everything.
+This walks through running OpenManage with Docker inside a Proxmox LXC container, adding an OpenWrt router and access points, and preparing for [Wi-Fi sign-in setup](radius-client-setup.md). Addresses below are examples: `192.168.1.10` is the container, `192.168.1.2` an AP. Deleting the container removes OpenManage, but not the key it installed on each device. Remove that too (see step 3).
 
 ## 1. Create the container
 
@@ -76,7 +76,7 @@ You need only the device's LAN IP address and its **root password** (the one you
 1. Enter the IP address and choose **Find device**. OpenManage reads the device's SSH host-key fingerprint and shows it. On a trusted home network you can accept it; if you want to be certain, compare it with the device's own value (`dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key`, then `ssh-keygen -lf`). Every later connection must present exactly this key.
 2. Tick the box confirming you trust the fingerprint. Optionally give the device a name and choose its role (**Access point** or **Router / gateway**). Enter the root password and choose **Add and connect**. OpenManage signs in once, installs a key it generates for this device, checks that key login works, then discards the password.
 
-**What happens to the root password:** it is used for that one login only. It is not saved in the database, written to logs, or recorded in the audit trail, and the server clears its copy straight after the login. It stays valid on the router (OpenManage never changes it), so once the key works you can turn off SSH password login in LuCI (**System → Administration → SSH Access**). Use HTTPS if you open OpenManage from another machine, because the password travels from your browser to OpenManage. To remove OpenManage's access later, delete the line ending in `openmanage` from `/etc/dropbear/authorized_keys` on the router.
+**What happens to the root password:** it is used for that one login only. It is not saved in the database, written to logs, or recorded in the audit trail, and the server clears its copy straight after the login. It stays valid on the router (OpenManage never changes it), so once the key works you can turn off SSH password login in LuCI (**System → Administration → SSH Access**). Use HTTPS if you open OpenManage from another machine, because the password travels from your browser to OpenManage. To remove OpenManage's access later, delete the line ending in `openmanage` from `/etc/dropbear/authorized_keys` on each device. Deleting the device in OpenManage does not remove that line.
 
 The wizard then runs a health check, which fills in the model and firmware.
 
@@ -92,7 +92,7 @@ Skip this unless you want Wi-Fi sign-in. The wizard's RADIUS tick box only appea
 2. In `compose.yaml`, under the `app` service `ports:`, add the container's address: `- "192.168.1.10:1812:1812/udp"`.
 3. `docker compose up -d`. The **Wi-Fi sign-in (RADIUS)** section now says RADIUS is listening and shows the server certificate.
 
-Then, for each access point, tick **Also let this device check Wi-Fi sign-ins (RADIUS)** in the Add device wizard. OpenManage creates the device's shared secret and shows it once on the last screen; enter that secret on the AP. For a device already in the inventory, press **+** (Create secret) on its row in **Access points with a secret**.
+Then, for each access point, tick **Also let this device check Wi-Fi sign-ins (RADIUS)** in the Add device wizard. OpenManage creates the device's shared secret and shows it once on the last screen; enter that secret on the AP. For a device already in the inventory, press **+** (Create secret) on its row under **Devices without a secret**. The **Access points with a secret** list is for rotating or removing an existing secret.
 
 Now continue with [Wi-Fi sign-in setup](radius-client-setup.md) from step 2 (Wi-Fi user and AP secret). The AP's `auth_server` is the container's address.
 
