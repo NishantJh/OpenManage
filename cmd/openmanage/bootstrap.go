@@ -48,6 +48,9 @@ type bootstrapProbeResponse struct {
 }
 
 type bootstrapRequest struct {
+	// DeviceID, when set, bootstraps an inventory device that has no credential yet
+	// instead of creating a new one. Its address comes from the inventory.
+	DeviceID            string `json:"device_id"`
 	Name                string `json:"name"`
 	Address             string `json:"address"`
 	Role                string `json:"role"`
@@ -184,6 +187,27 @@ func (a *app) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, enrollCodeInvalidRequest, "Address, password, and the confirmed host-key fingerprint are required")
 		return
 	}
+	req.DeviceID = strings.TrimSpace(req.DeviceID)
+	if req.DeviceID != "" {
+		if !validUUID(req.DeviceID) {
+			writeErrorCode(w, http.StatusBadRequest, enrollCodeInvalidRequest, "Invalid device ID")
+			return
+		}
+		var enrolled bool
+		err := a.db.QueryRow(r.Context(), `SELECT d.name, d.address, EXISTS(SELECT 1 FROM device_credentials c WHERE c.device_id=d.id) FROM devices d WHERE d.id=$1`, req.DeviceID).Scan(&req.Name, &req.Address, &enrolled)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErrorCode(w, http.StatusNotFound, "device_not_found", "Device not found")
+			return
+		}
+		if err != nil {
+			writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "Could not load the device")
+			return
+		}
+		if enrolled {
+			writeErrorCode(w, http.StatusConflict, "already_enrolled", "This device already has an OpenManage key")
+			return
+		}
+	}
 	if !isPrivateDeviceIP(req.Address) {
 		writeErrorCode(w, http.StatusUnprocessableEntity, enrollCodeAddressRejected, "Only private IP addresses are accepted; DNS names, link-local, and public addresses are rejected")
 		return
@@ -194,9 +218,11 @@ func (a *app) bootstrapDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var existing int
-	if err := a.db.QueryRow(r.Context(), "SELECT count(*) FROM devices WHERE address=$1", req.Address).Scan(&existing); err != nil {
-		writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "Could not check existing devices")
-		return
+	if req.DeviceID == "" {
+		if err := a.db.QueryRow(r.Context(), "SELECT count(*) FROM devices WHERE address=$1", req.Address).Scan(&existing); err != nil {
+			writeErrorCode(w, http.StatusInternalServerError, enrollCodeServerError, "Could not check existing devices")
+			return
+		}
 	}
 	if existing > 0 {
 		writeErrorCode(w, http.StatusConflict, "device_exists", "A device with this address already exists. Remove it first, or use Enroll on its row.")
@@ -332,9 +358,15 @@ func (a *app) storeBootstrap(ctx context.Context, userID string, req bootstrapRe
 	}
 	defer tx.Rollback(ctx)
 	var d device
-	err = tx.QueryRow(ctx, `INSERT INTO devices(name,address,model,firmware,status,role,last_seen_at) VALUES($1,$2,'','','online',$3,NOW()) RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE,role,dhcp_host`,
-		req.Name, req.Address, req.Role).
-		Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost)
+	if req.DeviceID != "" {
+		err = tx.QueryRow(ctx, `UPDATE devices SET status='online', role=$2, last_seen_at=NOW() WHERE id=$1 RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE,role,dhcp_host`,
+			req.DeviceID, req.Role).
+			Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost)
+	} else {
+		err = tx.QueryRow(ctx, `INSERT INTO devices(name,address,model,firmware,status,role,last_seen_at) VALUES($1,$2,'','','online',$3,NOW()) RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE,role,dhcp_host`,
+			req.Name, req.Address, req.Role).
+			Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost)
+	}
 	if err == nil {
 		_, err = tx.Exec(ctx,
 			"INSERT INTO device_credentials (device_id, username, private_key_ciphertext, host_key_fingerprint, updated_at) VALUES ($1,$2,$3,$4,NOW())",
