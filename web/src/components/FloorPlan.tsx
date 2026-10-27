@@ -157,8 +157,8 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
     <div className="fp-stage">
     <svg ref={svg} viewBox={`${-PAD} ${-PAD} ${extentX+PAD} ${extentY+PAD}`} className={"fp-svg"+(plan.image?" has-image":"")+((adjust||cropping)&&img?" adjusting":"")} onPointerMove={move} onPointerUp={()=>setDrag(null)} role="img" aria-label="Floor plan">
      <defs>
-      <pattern id="fp-grid" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="rgba(255,255,255,.035)" strokeWidth="0.02"/></pattern>
-      <radialGradient id="fp-coverage"><stop offset="0" stopColor="#6f5ae8" stopOpacity=".32"/><stop offset=".45" stopColor="#6f5ae8" stopOpacity=".14"/><stop offset="1" stopColor="#6f5ae8" stopOpacity="0"/></radialGradient>
+      <pattern id="fp-grid" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="rgba(15,18,26,.07)" strokeWidth="0.02"/></pattern>
+      <radialGradient id="fp-coverage"><stop offset="0" stopColor="#6f5ae8" stopOpacity=".16"/><stop offset=".45" stopColor="#6f5ae8" stopOpacity=".07"/><stop offset="1" stopColor="#6f5ae8" stopOpacity="0"/></radialGradient>
       <radialGradient id="fp-glow-on"><stop offset="0" stopColor="#12a15e" stopOpacity=".6"/><stop offset=".5" stopColor="#12a15e" stopOpacity=".18"/><stop offset="1" stopColor="#12a15e" stopOpacity="0"/></radialGradient>
       <radialGradient id="fp-glow-off"><stop offset="0" stopColor="#e5484d" stopOpacity=".35"/><stop offset="1" stopColor="#e5484d" stopOpacity="0"/></radialGradient>
      </defs>
