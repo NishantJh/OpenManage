@@ -404,16 +404,69 @@ pw_leaks="$(compose exec -T db pg_dump -U openmanage openmanage | grep -c -F -e 
 echo "PASS: the root password is not in the database or the app log"
 api DELETE "/api/devices/$boot_id"
 
+# seed_wifi gives the lab router two existing access-point networks and a client
+# interface, as on a real AP, so the RADIUS steps are run against existing networks.
+seed_wifi() {
+  docker exec -i "$router" sh -c 'cat > /etc/config/wireless' <<'WIFI'
+config wifi-device 'radio0'
+	option type 'mac80211'
+
+config wifi-iface 'default_radio0'
+	option device 'radio0'
+	option mode 'ap'
+	option network 'lan'
+	option ssid 'Home'
+	option encryption 'psk2'
+	option key 'lab-home-psk'
+
+config wifi-iface 'iot'
+	option device 'radio0'
+	option mode 'ap'
+	option network 'lan'
+	option ssid 'IoT'
+	option encryption 'psk2'
+	option key 'lab-iot-psk'
+
+config wifi-iface 'uplink'
+	option device 'radio0'
+	option mode 'sta'
+	option ssid 'Upstream'
+	option encryption 'psk2'
+WIFI
+}
 # Browser check of the add-AP wizard against this stack and the real OpenWrt router.
 if [[ "${OPENMANAGE_LAB_BROWSER:-0}" == 1 ]]; then
   ui_dir="$(mktemp -d)"
   ui_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ui-add-ap-test.mjs"
   (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0 && npx playwright install --with-deps chromium >/dev/null)
   (cd "$ui_dir" && OPENMANAGE_TEST_ROOT_PASSWORD="$root_password" node "$ui_script" "$base_url" admin lab-admin-password-123 "$router_ip") || fail "add-AP wizard browser check"
+  remove_ui_devices() {
+    api GET /api/devices
+    ui_added="$(json 'print(*[x["id"] for x in d if x["address"]==sys.argv[1] and x["name"]!="lab-router"])' "$router_ip" < "$body")"
+    for id in $ui_added; do api DELETE "/api/devices/$id"; done
+  }
+  remove_ui_devices
+  existing_script="$(dirname "$ui_script")/ui-existing-device-test.mjs"
+  ui_cmds="$work/ui-radius-commands.json"
+  (cd "$ui_dir" && OPENMANAGE_UI_COMMANDS_OUT="$ui_cmds" OPENMANAGE_TEST_ROOT_PASSWORD="$root_password" node "$existing_script" "$base_url" admin lab-admin-password-123 "$router_ip") || fail "existing-device setup browser check"
+  # Run the backup, setup and undo commands exactly as the page showed them. The lab
+  # router has no radio, so wifi reload is left out and the section is only checked.
+  ui_cmd() { json 'print("\n".join(l for l in d[sys.argv[1]].splitlines() if l.strip()!="wifi reload"))' "$1" < "$ui_cmds"; }
+  ui_secret="$(json 'print(d["secret"])' < "$ui_cmds")"
+  seed_wifi
+  docker exec "$router" sh -c "set -e; $(ui_cmd backup); $(ui_cmd setup)" || fail "the page's AP commands failed on OpenWrt"
+  [[ "$(docker exec "$router" uci get wireless.default_radio0.auth_secret)" == "$ui_secret" ]] || fail "the page's AP commands did not set the shown secret on the existing network"
+  [[ "$(docker exec "$router" uci get wireless.default_radio0.auth_server)" == 192.168.1.10 ]] || fail "the page's AP commands did not set the OpenManage address"
+  [[ "$(docker exec "$router" uci get wireless.default_radio0.encryption)" == wpa2 ]] || fail "the page's AP commands did not switch the existing network to WPA2-Enterprise"
+  [[ "$(docker exec "$router" uci get wireless.iot.encryption)" == psk2 ]] || fail "the page's AP commands changed a network that was not named"
+  [[ "$(docker exec "$router" uci show wireless | grep -c =wifi-iface)" == 3 ]] || fail "the page's AP commands created a new network"
+  docker exec "$router" sh -c "set -e; $(ui_cmd undo)" || fail "the page's undo commands failed on OpenWrt"
+  [[ "$(docker exec "$router" uci get wireless.default_radio0.encryption)" == psk2 ]] || fail "the page's undo commands did not restore the network"
+  ! docker exec "$router" uci -q get wireless.default_radio0.auth_secret >/dev/null || fail "the page's undo commands left the RADIUS secret"
+  docker exec "$router" rm -f /root/wireless.before-radius
+  echo "PASS: the backup, AP setup and undo commands shown on the page run on OpenWrt"
+  remove_ui_devices
   rm -rf "$ui_dir"
-  api GET /api/devices
-  ui_added="$(json 'print(*[x["id"] for x in d if x["address"]==sys.argv[1] and x["name"]!="lab-router"])' "$router_ip" < "$body")"
-  for id in $ui_added; do api DELETE "/api/devices/$id"; done
 fi
 compose exec -T db psql -q -U openmanage -d openmanage -c "UPDATE devices SET address='$router_ip' WHERE id='$device_id'" >/dev/null
 
@@ -780,9 +833,15 @@ PY
 )"
 [[ "$guide_ap_cmds" == *"uci commit wireless"* ]] || fail "could not read the AP commands from the setup guide"
 guide_ap_cmds="${guide_ap_cmds//<secret from step 2>/$new_secret}"
-docker exec "$router" sh -c "set -e; touch /etc/config/wireless; $guide_ap_cmds" || fail "the setup guide's AP commands failed on OpenWrt"
-[[ "$(docker exec "$router" uci get wireless.omtest.encryption)" == wpa2 ]] || fail "the setup guide's AP commands did not configure WPA2-Enterprise"
-docker exec "$router" sh -c "uci delete wireless.omtest && uci commit wireless" || fail "the setup guide's undo command failed"
+seed_wifi
+docker exec "$router" sh -c "set -e; cp /etc/config/wireless /root/wireless.before-radius; $guide_ap_cmds" || fail "the setup guide's AP commands failed on OpenWrt"
+for sec in default_radio0 iot; do
+  [[ "$(docker exec "$router" uci get wireless.$sec.encryption)" == wpa2 ]] || fail "the setup guide's AP commands did not switch $sec to WPA2-Enterprise"
+  [[ "$(docker exec "$router" uci get wireless.$sec.auth_secret)" == "$new_secret" ]] || fail "the setup guide's AP commands did not set the secret on $sec"
+done
+[[ "$(docker exec "$router" uci get wireless.uplink.encryption)" == psk2 ]] || fail "the setup guide's AP commands changed a client interface"
+docker exec "$router" sh -c "cp /root/wireless.before-radius /etc/config/wireless && rm /root/wireless.before-radius" || fail "the setup guide's undo command failed"
+[[ "$(docker exec "$router" uci get wireless.default_radio0.encryption)" == psk2 ]] || fail "the setup guide's undo did not restore the network"
 echo "PASS: the setup guide's AP commands run on OpenWrt"
 radius_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action='radius.auth_accept'")"
 [[ "$radius_audit" == 6 ]] || fail "RADIUS accept audit events: $radius_audit (expected 6)"

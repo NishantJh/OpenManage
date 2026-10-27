@@ -1,6 +1,6 @@
 # Wi-Fi sign-in with built-in RADIUS: setup and iPhone test
 
-This guide turns on OpenManage's RADIUS server, points one OpenWrt access point at it, and joins an iPhone to a WPA2-Enterprise network with a per-person username and password. It is also the checklist for the first real-device test (plan.md Section 7). Everything here is reversible: removing the AP settings and unsetting `OPENMANAGE_RADIUS_LISTEN` returns to the previous state.
+This guide turns on OpenManage's RADIUS server, switches an OpenWrt access point's existing Wi-Fi networks to it, and joins an iPhone to WPA2-Enterprise with a per-person username and password. It is also the checklist for the first real-device test (plan.md Section 7). Everything here is reversible: removing the AP settings and unsetting `OPENMANAGE_RADIUS_LISTEN` returns to the previous state.
 
 ## What you need
 
@@ -8,7 +8,7 @@ Starting from scratch? [Home setup](home-setup.md) covers installing OpenManage 
 
 - OpenManage running with `OPENMANAGE_ENCRYPTION_KEY` set, and the AP already added as a device, with its LAN IP address (the same address the AP will send RADIUS requests from).
 - An OpenWrt AP with a full `wpad` package. The `wpad-basic-*` builds may lack WPA-Enterprise; check with `opkg list-installed | grep wpad` and install `wpad-mbedtls` (or `wpad-openssl`) if needed.
-- A test SSID you can change freely. Do not convert your everyday network until the test passes.
+- Know what changes: the AP's existing networks keep their names and radios but switch to per-person sign-in. Devices that only know the old Wi-Fi password, such as printers or smart plugs, drop off those networks. To try it on one network first, name only that network when you get the secret (step 2).
 - An iPhone on iOS 16 or later.
 
 ## 1. Turn on RADIUS in OpenManage
@@ -33,33 +33,38 @@ Never forward UDP 1812 from the internet.
 ## 2. Create a Wi-Fi user and the AP secret
 
 1. **Add Wi-Fi user**, for example `nishant-iphone`, with a 12+ character password.
-2. Get the AP's secret. If you ticked the RADIUS box when you added the AP, the secret was shown on the last wizard screen. Otherwise, in **Access points with a secret**, press **+** (Create secret) on the AP's row and copy the secret from the dialog. It is shown only once; if lost, rotate it.
+2. Get the AP's secret. Tick **Also let this device check Wi-Fi sign-ins (RADIUS)** when you add the AP (Add device wizard, **Advanced / manual** form, or the key icon on a device without a key). For an AP that is already set up, press **+** (Create secret) on its row on the Configuration page. The secret is shown only once; if lost, rotate it.
+
+The screen that shows the secret also shows every command in step 3, with the secret, port and OpenManage address filled in. Leave **Wi-Fi networks to change** empty to change every network on the AP, or list network names (comma separated) to change only those.
 
 ## 3. Configure the AP
 
-On the AP (SSH), add a separate wireless interface for the test so your everyday network is untouched. `omtest` is a new section name; `radio0` is the radio to use (`uci show wireless | grep =wifi-device` lists them, and `radio1` is usually 5 GHz):
+On the AP (SSH):
+
+1. Check WPA2-Enterprise support: `(opkg list-installed 2>/dev/null; apk list --installed 2>/dev/null) | grep wpad`. If it shows `wpad-basic-…`, install `wpad-mbedtls` first.
+2. Save the current Wi-Fi settings: `cp /etc/config/wireless /root/wireless.before-radius`.
+3. Turn on RADIUS on the existing access-point networks. Paste all lines at once; it prints each network it changed:
 
 ```sh
-uci set wireless.omtest=wifi-iface
-uci set wireless.omtest.device='radio0'
-uci set wireless.omtest.mode='ap'
-uci set wireless.omtest.network='lan'
-uci set wireless.omtest.ssid='Home-Secure'
-uci set wireless.omtest.encryption='wpa2'
-uci set wireless.omtest.auth_server='192.168.1.10'   # OpenManage host
-uci set wireless.omtest.auth_port='1812'
-uci set wireless.omtest.auth_secret='<secret from step 2>'
+for s in $(uci show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+  [ "$(uci -q get wireless.$s.mode)" = ap ] || continue
+  uci set wireless.$s.encryption='wpa2'
+  uci set wireless.$s.auth_server='192.168.1.10'
+  uci set wireless.$s.auth_port='1812'
+  uci set wireless.$s.auth_secret='<secret from step 2>'
+  echo "RADIUS on: $(uci -q get wireless.$s.ssid)"
+done
 uci commit wireless
 wifi reload
 ```
 
-To use an existing interface instead, find its section name with `uci show wireless | grep =wifi-iface` (for example `default_radio0`) and use it in place of `omtest`, skipping the first four lines. Save the current settings first with `cp /etc/config/wireless /root/wireless.before-radius`.
+`192.168.1.10` is the OpenManage host. To change only some networks, use the commands from the secret screen with **Wi-Fi networks to change** filled in; they add a line that skips the other network names.
 
-To undo: `uci delete wireless.omtest; uci commit wireless; wifi reload`. If you changed an existing interface, restore it with `cp /root/wireless.before-radius /etc/config/wireless; wifi reload`.
+To undo: `cp /root/wireless.before-radius /etc/config/wireless; wifi reload`.
 
 ## 4. Install the profile on the iPhone
 
-1. In the Server certificate card, type the SSID (`Home-Secure`), pick the Wi-Fi user from step 2 (for example `nishant-iphone`) and press **Download setup profile**. With a user picked, the iPhone asks only for that user's password. With **Ask on the device**, it asks for a username too: that is the Wi-Fi user, not the network name. Open the file on the iPhone (AirDrop it, or email it to yourself).
+1. In the Server certificate card, type the name of the Wi-Fi network you switched (for example `Home`), pick the Wi-Fi user from step 2 (for example `nishant-iphone`) and press **Download setup profile**. With a user picked, the iPhone asks only for that user's password. With **Ask on the device**, it asks for a username too: that is the Wi-Fi user, not the network name. Open the file on the iPhone (AirDrop it, or email it to yourself).
 2. Settings → **Profile Downloaded** → Install. iOS says the profile is not signed; that is expected. The profile contains the OpenManage CA, the network settings and the Wi-Fi username if you picked one, and no password.
 3. Check the profile details show the CA named "OpenManage RADIUS CA ..." before installing.
 
@@ -69,12 +74,12 @@ Record pass or fail for each step. The dashboard's **Recent activity** shows `ra
 
 | # | Step | Expected |
 |---|------|----------|
-| 1 | Join `Home-Secure`; enter the Wi-Fi user's password (and username, if asked) | Connects without a certificate warning; Safari loads a page. Audit: `radius.auth_accept`, method `eap-ttls` |
-| 2 | Reset the Wi-Fi user's password in the dashboard (the phone still has the old one); turn Wi-Fi off and on | Fails. Audit: `radius.auth_reject`, reason `bad_credentials`. Then tap `Home-Secure` and enter the new password; it connects. (A network installed by a profile has no Forget button; remove the profile to forget it.) |
+| 1 | Join `Home`; enter the Wi-Fi user's password (and username, if asked) | Connects without a certificate warning; Safari loads a page. Audit: `radius.auth_accept`, method `eap-ttls` |
+| 2 | Reset the Wi-Fi user's password in the dashboard (the phone still has the old one); turn Wi-Fi off and on | Fails. Audit: `radius.auth_reject`, reason `bad_credentials`. Then tap `Home` and enter the new password; it connects. (A network installed by a profile has no Forget button; remove the profile to forget it.) |
 | 3 | Disable the Wi-Fi user in the dashboard; turn Wi-Fi off and on | Cannot join. Audit: reason `disabled`. Re-enable the user; the phone joins again within a minute |
 | 4 | Turn Wi-Fi off and on, then restart the phone | Rejoins on its own without asking |
 | 5 | Leave it connected for 15 minutes and browse | Stays connected (the keys the AP received are correct) |
-| 6 | Optional: remove the profile and join `Home-Secure` manually from the Wi-Fi list | iOS shows a certificate prompt for `radius.openmanage.home.arpa`. Do not trust it unless the fingerprint matches the dashboard. Manual join may pick an inner method other than PAP; if it fails with reason `inner_method_not_pap`, that is a known limitation and the profile is the supported path |
+| 6 | Optional: remove the profile and join `Home` manually from the Wi-Fi list | iOS shows a certificate prompt for `radius.openmanage.home.arpa`. Do not trust it unless the fingerprint matches the dashboard. Manual join may pick an inner method other than PAP; if it fails with reason `inner_method_not_pap`, that is a known limitation and the profile is the supported path |
 
 If step 1 fails, check in this order:
 
@@ -86,4 +91,4 @@ If step 1 fails, check in this order:
 
 ## 6. Clean up
 
-Remove the test interface from the AP (`uci delete wireless.omtest; uci commit wireless; wifi reload`, or restore `/root/wireless.before-radius` if you changed an existing interface), and in the dashboard remove the AP's RADIUS secret. To turn RADIUS off, unset `OPENMANAGE_RADIUS_LISTEN`, remove the port mapping and restart. The CA is kept, so reinstalled profiles keep working when RADIUS is turned on again.
+Put the AP's Wi-Fi settings back (`cp /root/wireless.before-radius /etc/config/wireless; wifi reload`), and in the dashboard remove the AP's RADIUS secret. To turn RADIUS off, unset `OPENMANAGE_RADIUS_LISTEN`, remove the port mapping and restart. The CA is kept, so reinstalled profiles keep working when RADIUS is turned on again.

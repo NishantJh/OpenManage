@@ -137,3 +137,30 @@ func TestBootstrapRequiresAdminAndValidInput(t *testing.T) {
 		t.Fatalf("public address got %d", c)
 	}
 }
+
+func TestStoreBootstrapEnrollsExistingDevice(t *testing.T) {
+	db := newEnrollmentTestDB(t)
+	deviceID, userID := seedDeviceAndUser(t, db)
+	a := &app{db: db}
+	d, err := a.storeBootstrap(context.Background(), userID, bootstrapRequest{DeviceID: deviceID, Name: "test-router", Address: "192.168.1.1", Role: "router", Username: "root", ExpectedFingerprint: "SHA256:x"}, []byte("sealed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ID != deviceID || d.Role != "router" || !d.Enrollable || !d.HasKey {
+		t.Fatalf("got %+v", d)
+	}
+	var count int
+	if err := db.QueryRow(context.Background(), "SELECT count(*) FROM devices").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("device rows = %d, %v; want the existing row updated, not a second one", count, err)
+	}
+	if user, _, fp, found := credentialRow(t, db, deviceID); !found || user != "root" || fp != "SHA256:x" {
+		t.Fatalf("credential = %q %q %v", user, fp, found)
+	}
+	// A second bootstrap must not replace an existing credential.
+	if _, err := a.storeBootstrap(context.Background(), userID, bootstrapRequest{DeviceID: deviceID, Address: "192.168.1.1", Role: "router", Username: "root", ExpectedFingerprint: "SHA256:y"}, []byte("other")); err == nil {
+		t.Fatal("second bootstrap replaced the credential")
+	}
+	if _, _, fp, _ := credentialRow(t, db, deviceID); fp != "SHA256:x" {
+		t.Fatalf("fingerprint changed to %q", fp)
+	}
+}

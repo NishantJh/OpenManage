@@ -80,21 +80,25 @@ You need only the device's LAN IP address and its **root password** (the one you
 
 The wizard then runs a health check, which fills in the model and firmware.
 
-### Advanced: bring your own key
+### Advanced: add to the inventory first
 
-The wizard's **Advanced / manual** link keeps the older path: add the device as inventory, then **Enroll** with a key you made. In the container create the key with `ssh-keygen -t ed25519 -N "" -C openmanage -f ~/.ssh/openmanage_ap1`, add the `.pub` contents under LuCI **System → Administration → SSH-Keys**, get the fingerprint from the router console as above, and paste the username, fingerprint and private key into **Enroll**. `host_key_mismatch` means the fingerprint is wrong or from another key type; `ssh_auth_failed` means the public key is not on the device.
+The wizard's **Advanced / manual** link opens a form that only records the device (name, address, role). It has the same RADIUS tick box. To manage that device later, press the key icon on its row: a device without an OpenManage key opens the same wizard for it (root password once, RADIUS tick box included). A device that already has a key gets the **Replace SSH key** form instead.
+
+To use a key you made instead of the root password, choose **Advanced / manual** inside that wizard. In the container create the key with `ssh-keygen -t ed25519 -N "" -C openmanage -f ~/.ssh/openmanage_ap1`, add the `.pub` contents under LuCI **System → Administration → SSH-Keys**, get the fingerprint from the router console as above, and paste the username, fingerprint and private key. `host_key_mismatch` means the fingerprint is wrong or from another key type; `ssh_auth_failed` means the public key is not on the device.
 
 ## 4. Turn on RADIUS (optional)
 
-Skip this unless you want Wi-Fi sign-in. The wizard's RADIUS tick box only appears once the listener is on, so turn it on first:
+Skip this unless you want Wi-Fi sign-in. The RADIUS tick box is always shown, but stays greyed out until the listener is on, so turn it on first:
 
 1. Add `OPENMANAGE_RADIUS_LISTEN=:1812` to `.env`.
 2. In `compose.yaml`, under the `app` service `ports:`, add the container's address: `- "192.168.1.10:1812:1812/udp"`.
 3. `docker compose up -d`. The **Wi-Fi sign-in (RADIUS)** section now says RADIUS is listening and shows the server certificate.
 
-Then, for each access point, tick **Also let this device check Wi-Fi sign-ins (RADIUS)** in the Add device wizard. OpenManage creates the device's shared secret and shows it once on the last screen; enter that secret on the AP. For a device already in the inventory, press **+** (Create secret) on its row under **Devices without a secret**. The **Access points with a secret** list is for rotating or removing an existing secret.
+Then tick **Also let this device check Wi-Fi sign-ins (RADIUS)** when you add each access point. The tick box is in the Add device wizard, in the **Advanced / manual** form, and in the wizard the key icon opens for a device without a key. For a device that is already set up, press **+** (Create secret) on its row on the Configuration page.
 
-Now continue with [Wi-Fi sign-in setup](radius-client-setup.md) from step 2 (Wi-Fi user and AP secret). The AP's `auth_server` is the container's address.
+OpenManage creates the shared secret and shows it once, together with every step to finish on the AP: the SSH command, a check that the AP can do WPA2-Enterprise, a backup of its Wi-Fi settings, the commands that turn on RADIUS on its **existing** Wi-Fi networks (all of them, or only the ones you name), and the undo command. The secret, port and OpenManage address are already filled in. No new Wi-Fi network is created.
+
+Then follow [Wi-Fi sign-in setup](radius-client-setup.md) from step 2 to add a Wi-Fi user and install the iPhone profile.
 
 If the AP's requests do not arrive (no audit event when the phone tries to join), run `tcpdump -ni eth0 udp port 1812` in the container while the phone joins. Nothing at all means the AP points elsewhere or a firewall drops it; packets arriving while the dashboard's "Ignored packets" count rises means the source address or secret does not match the device's inventory entry.
 
