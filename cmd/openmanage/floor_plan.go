@@ -41,6 +41,12 @@ type floorLayout struct {
 	Image      *floorImage      `json:"image,omitempty"`
 }
 
+// overlaps reports whether two rooms share floor area; rooms that only touch are fine.
+func (r floorRoom) overlaps(o floorRoom) bool {
+	const eps = 0.01
+	return r.X < o.X+o.W-eps && r.X+r.W > o.X+eps && r.Y < o.Y+o.H-eps && r.Y+r.H > o.Y+eps
+}
+
 func inExtent(v float64) bool { return v >= 0 && v <= floorPlanMaxExtent }
 
 func (l *floorLayout) validate() error {
@@ -71,6 +77,13 @@ func (l *floorLayout) validate() error {
 		}
 		if !inExtent(r.X) || !inExtent(r.Y) || r.W < 0.5 || r.H < 0.5 || r.W > floorPlanMaxExtent || r.H > floorPlanMaxExtent {
 			return errors.New("room position or size is out of range")
+		}
+	}
+	for i := range l.Rooms {
+		for j := i + 1; j < len(l.Rooms); j++ {
+			if l.Rooms[i].overlaps(l.Rooms[j]) {
+				return errors.New("rooms must not overlap")
+			}
 		}
 	}
 	if len(l.Placements) > 200 {

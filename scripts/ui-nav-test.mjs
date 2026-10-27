@@ -81,6 +81,13 @@ try {
   await page.getByLabel(/width/i).first().fill("12");
   const back = await box();
   assert.ok(back[2] < wide[2], "canvas shrinks with the room");
+  // A second room is placed beside the first, never on top of it.
+  await page.getByRole("button", { name: /add room/i }).click();
+  await page.waitForFunction(() => document.querySelectorAll("rect.fp-room").length === 2);
+  const rects = await page.locator("rect.fp-room").evaluateAll(els => els.map(e => ["x", "y", "width", "height"].map(k => Number(e.getAttribute(k)))));
+  const [[ax, ay, aw, ah], [bx, by, bw, bh]] = rects;
+  assert.ok(!(ax < bx + bw - 0.01 && ax + aw > bx + 0.01 && ay < by + bh - 0.01 && ay + ah > by + 0.01), "new room overlaps the first");
+  await page.locator(".fp-edit-row button[aria-label^='Remove']").last().click();
   await page.locator(".fp-room-name").first().click();
   await page.waitForFunction(() => document.activeElement?.getAttribute("data-room"), null, { timeout: 5000 });
   await page.keyboard.type("Kitchen");

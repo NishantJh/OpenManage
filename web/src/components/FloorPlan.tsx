@@ -11,6 +11,10 @@ const pollChoices:[number,string][]=[[60,"1 min"],[300,"5 min"],[600,"10 min"]];
 const ago=(iso:string)=>{const m=Math.max(0,Math.round((Date.now()-new Date(iso).getTime())/60000));return m<1?"just now":m<60?m+" min ago":Math.round(m/60)+" h ago"};
 const snap=(v:number)=>Math.round(v/FT)*FT;
 const clamp=(v:number,hi:number)=>Math.min(Math.max(v,0),hi);
+// Rooms may touch but never overlap; moves and resizes that would overlap are not applied.
+const EPS=0.01;
+const overlaps=(a:FloorRoom,b:FloorRoom)=>a.x<b.x+b.w-EPS&&a.x+a.w>b.x+EPS&&a.y<b.y+b.h-EPS&&a.y+a.h>b.y+EPS;
+const isFree=(r:FloorRoom,rooms:FloorRoom[])=>!rooms.some(o=>o.id!==r.id&&overlaps(r,o));
 const inRoom=(r:FloorRoom,x:number,y:number)=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h;
 const bars=(dbm:number|null)=>dbm===null?0:dbm>-55?4:dbm>-65?3:dbm>-75?2:1;
 
@@ -94,12 +98,16 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  function move(e:React.PointerEvent){if(!drag)return;const p=toPlan(e);
   if(drag.kind==="image"&&plan.image)change({...plan,image:{...plan.image,x:clamp(p.x-drag.dx,MAX),y:clamp(p.y-drag.dy,MAX)}});
   else if(drag.kind==="imgsize"&&plan.image)change({...plan,image:{...plan.image,width_m:Math.min(MAX_SIZE,Math.max(1,p.x-plan.image.x))}});
-  else   if(drag.kind==="size")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,w:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.x-r.x))),h:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.y-r.y)))}:r)});
-  else if(drag.kind==="room")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,x:clamp(snap(p.x-drag.dx),MAX-r.w),y:clamp(snap(p.y-drag.dy),MAX-r.h)}:r)});
+  else if(drag.kind==="size"||drag.kind==="room"){
+   const cur=plan.rooms.find(r=>r.id===drag.key);if(!cur)return;
+   // The full move is tried first, then each axis alone so a room slides along a neighbour's wall.
+   const tries:Partial<FloorRoom>[]=drag.kind==="size"?(()=>{const w=Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.x-cur.x))),h=Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.y-cur.y)));return [{w,h},{w},{h}]})():(()=>{const x=clamp(snap(p.x-drag.dx),MAX-cur.w),y=clamp(snap(p.y-drag.dy),MAX-cur.h);return [{x,y},{x},{y}]})();
+   const ok=tries.find(t=>isFree({...cur,...t},plan.rooms));
+   if(ok)change({...plan,rooms:plan.rooms.map(r=>r.id===cur.id?{...r,...ok}:r)})}
   else{const pos=snapToWall(plan.rooms,clamp(snap(p.x-drag.dx),MAX),clamp(snap(p.y-drag.dy),MAX));change({...plan,placements:plan.placements.map(a=>a.device_id===drag.key?{...a,...pos}:a)})}}
  function renameRoom(id:string){if(editor.current)editor.current.open=true;setFocusRoom(id)}
- function addRoom(){const n=plan.rooms.length+1;change({...plan,rooms:[...plan.rooms,{id:"r"+Date.now().toString(36),name:"Room "+n,x:0,y:0,w:12*FT,h:10*FT}]})}
- function patchRoom(id:string,p:Partial<FloorRoom>){change({...plan,rooms:plan.rooms.map(r=>r.id===id?{...r,...p}:r)})}
+ function addRoom(){const n=plan.rooms.length+1,x=Math.min(MAX-12*FT,Math.max(0,...plan.rooms.map(r=>r.x+r.w)));change({...plan,rooms:[...plan.rooms,{id:"r"+Date.now().toString(36),name:"Room "+n,x,y:0,w:12*FT,h:10*FT}]})}
+ function patchRoom(id:string,p:Partial<FloorRoom>){const next=plan.rooms.map(r=>r.id===id?{...r,...p}:r);if(!next.every(r=>isFree(r,next))){setMessage({tone:"error",text:"Rooms cannot overlap. Move the other room first or pick a smaller size."});return}change({...plan,rooms:next})}
  function place(){if(!pick)return;const r=plan.rooms[0],pos=r?{x:r.x+r.w/2,y:r.y}:{x:1,y:1};change({...plan,placements:[...plan.placements,{device_id:pick,...pos}]});setPick("")}
  // Uploading stores the picture on the server at once; only its facts are merged here so
  // room edits that are not saved yet are kept.

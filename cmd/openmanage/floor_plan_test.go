@@ -10,17 +10,22 @@ func TestFloorLayoutValidate(t *testing.T) {
 	if err := good.validate(); err != nil || good.Rooms[0].Name != "Bedroom" {
 		t.Fatalf("good layout rejected or name not trimmed: %v", err)
 	}
+	touching := floorLayout{Rooms: []floorRoom{{ID: "a", Name: "A", W: 4, H: 3}, {ID: "b", Name: "B", X: 4, W: 4, H: 3}, {ID: "c", Name: "C", Y: 3, W: 8, H: 2}}}
+	if err := touching.validate(); err != nil {
+		t.Fatalf("rooms that only touch were rejected: %v", err)
+	}
 	empty := floorLayout{}
 	if err := empty.validate(); err != nil || empty.Rooms == nil || empty.Placements == nil {
 		t.Fatalf("empty layout should normalise to empty lists: %v", err)
 	}
 	bad := map[string]floorLayout{
-		"duplicate room": {Rooms: []floorRoom{{ID: "a", Name: "A", W: 1, H: 1}, {ID: "a", Name: "B", W: 1, H: 1}}},
-		"bad room id":    {Rooms: []floorRoom{{ID: "a b", Name: "A", W: 1, H: 1}}},
-		"blank name":     {Rooms: []floorRoom{{ID: "a", Name: "  ", W: 1, H: 1}}},
-		"tiny room":      {Rooms: []floorRoom{{ID: "a", Name: "A", W: 0.1, H: 1}}},
-		"far room":       {Rooms: []floorRoom{{ID: "a", Name: "A", X: 9999, W: 1, H: 1}}},
-		"bad device":     {Placements: []floorPlacement{{DeviceID: "nope"}}},
+		"duplicate room":    {Rooms: []floorRoom{{ID: "a", Name: "A", W: 1, H: 1}, {ID: "a", Name: "B", W: 1, H: 1}}},
+		"bad room id":       {Rooms: []floorRoom{{ID: "a b", Name: "A", W: 1, H: 1}}},
+		"blank name":        {Rooms: []floorRoom{{ID: "a", Name: "  ", W: 1, H: 1}}},
+		"tiny room":         {Rooms: []floorRoom{{ID: "a", Name: "A", W: 0.1, H: 1}}},
+		"overlapping rooms": {Rooms: []floorRoom{{ID: "a", Name: "A", W: 4, H: 3}, {ID: "b", Name: "B", X: 3, Y: 1, W: 4, H: 3}}},
+		"far room":          {Rooms: []floorRoom{{ID: "a", Name: "A", X: 9999, W: 1, H: 1}}},
+		"bad device":        {Placements: []floorPlacement{{DeviceID: "nope"}}},
 		"dup placement": {Placements: []floorPlacement{
 			{DeviceID: "11111111-1111-4111-8111-111111111111"}, {DeviceID: "11111111-1111-4111-8111-111111111111"}}},
 		"negative placement": {Placements: []floorPlacement{{DeviceID: "11111111-1111-4111-8111-111111111111", X: -1}}},
