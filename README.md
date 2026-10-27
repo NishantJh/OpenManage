@@ -9,7 +9,7 @@ OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the sa
 
 ## Features
 
-- **Inventory and SSH enrollment:** add devices, pin the SSH host-key fingerprint you verified, and store the management key encrypted at rest.
+- **Adding devices:** one wizard step takes a device's IP address, a host-key fingerprint you verified, and its root password (used once, never stored). OpenManage installs a generated key, checks it works, and stores the management key encrypted at rest. Wi-Fi sign-in (RADIUS) is set up per device. Persistent monitoring stays a separate, global setting.
 - **Health and monitoring:** read-only health checks, plus opt-in persistent monitoring with 30 days of history.
 - **Configuration snapshots and drift:** encrypted `uci export` snapshots, change review with secrets redacted, and optional scheduled captures.
 - **Controlled changes:** the system hostname can be changed with a preview, a timed rollback, and verification over a fresh SSH connection.
@@ -17,7 +17,7 @@ OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the sa
 - **Built-in RADIUS (lab stage):** EAP-TTLS and PAP for Wi-Fi users, per-AP shared secrets, and an Apple setup profile. Off by default.
 - **Wi-Fi floor plan:** rooms and AP placement, with opt-in client tracking and roaming history. Client dots on the map are in progress.
 
-> **Early development:** broader configuration changes, router-side SSH key installation/rotation, production RADIUS, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet. See the status summary below.
+> **Early development:** broader configuration changes, router-side SSH key rotation, production RADIUS, and firmware upgrades are not yet available. Do not expose OpenManage to the public internet. See the status summary below.
 
 ## OpenManage and OpenWISP
 
@@ -93,6 +93,7 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 - `POST /api/devices` — adds a record with JSON fields `name`, `address`, `model`, `firmware`.
 - `GET /api/devices/{id}` — fetches one record.
 - `DELETE /api/devices/{id}` — deletes one record.
+- `POST /api/device-bootstrap/probe` reads a device's SSH host-key fingerprint for the Add device wizard. `POST /api/device-bootstrap` takes `name`, `address`, `role`, `username`, `password` and `expected_fingerprint`, signs in once with the password, installs a generated key, verifies key login and stores the device. The password is never stored, logged or audited. When the RADIUS box is ticked, the wizard then creates the device's secret with `POST /api/devices/{id}/radius-secret`.
 - `POST /api/devices/{id}/enroll` — verifies a pinned SSH host key and public-key login, then stores the management private key encrypted at rest. Request JSON: `username`, `private_key`, and `expected_fingerprint` (the `SHA256:...` fingerprint must be verified independently). Errors include a stable `code` (`encryption_key_missing`, `encryption_key_invalid`, `invalid_request`, `device_not_found`, `address_not_private`, `invalid_private_key`, `device_unreachable`, `host_key_mismatch`, `ssh_auth_failed`, `key_not_verified`, `server_error`).
 - `POST /api/devices/{id}/health-check` — runs a fixed set of read-only diagnostics for an enrolled device.
 - `POST /api/devices/{id}/config-snapshots` — administrator-only; reads the device's `uci export` and stores it encrypted at rest. Returns `first`, `changed` (drift since the previous snapshot) and `change_count`. An unchanged configuration only refreshes `last_verified_at`. The last 100 snapshots per device are kept.
@@ -116,7 +117,7 @@ The app runs its SQL migration at startup. PostgreSQL data is persisted in the `
 - `PUT /api/monitoring/settings` — administrator-only; enables/disables monitoring and sets an interval from 60 to 3600 seconds. Optional `snapshots_enabled` and `snapshot_interval_seconds` (900 to 86400) turn on scheduled configuration snapshots, independently of health monitoring; omitted fields keep their current values.
 - `GET /api/monitoring/history?limit=50` — returns recent persisted monitoring outcomes (limit 1–100).
 
-All API routes except `/api/healthz` and `/api/auth/login` require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. `GET /api/audit` returns the latest 100 events and is intended for administrators. The address field is inventory metadata until enrollment is explicitly completed. SSH enrollment verifies a host key fingerprint supplied from a trusted source and authenticates with a private key before storing it encrypted at rest. Enrollment accepts private IP literals only (no DNS names, public addresses, or link-local addresses) and uses TCP/22. Configure `OPENMANAGE_ENCRYPTION_KEY` using a securely backed-up base64-encoded 32-byte random key before enrollment; losing it makes stored SSH credentials unrecoverable. The private key is never returned by the API. Re-enrollment replaces the stored credential only after the new key successfully authenticates; it does not install or rotate `authorized_keys` on the router itself.
+All API routes except `/api/healthz` and `/api/auth/login` require an authenticated session. Login uses an HttpOnly session cookie, CSRF protection, and a 12-hour expiry. Device create/delete actions are recorded in the audit trail. `GET /api/audit` returns the latest 100 events and is intended for administrators. The address field is inventory metadata until enrollment is explicitly completed. SSH enrollment verifies a host key fingerprint supplied from a trusted source and authenticates with a private key before storing it encrypted at rest. Enrollment accepts private IP literals only (no DNS names, public addresses, or link-local addresses) and uses TCP/22. Configure `OPENMANAGE_ENCRYPTION_KEY` using a securely backed-up base64-encoded 32-byte random key before enrollment; losing it makes stored SSH credentials unrecoverable. The private key is never returned by the API. The Add device wizard is the one path that installs a key on the device: it signs in once with the root password, adds the generated public key to the device's authorized keys, and discards the password. Re-enrollment replaces the stored credential only after the new key successfully authenticates; it does not install or rotate `authorized_keys` on the router itself.
 
 ## Built-in RADIUS (lab stage)
 

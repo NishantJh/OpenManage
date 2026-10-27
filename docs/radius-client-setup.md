@@ -4,9 +4,9 @@ This guide turns on OpenManage's RADIUS server, points one OpenWrt access point 
 
 ## What you need
 
-Starting from scratch? [Home setup](home-setup.md) covers installing OpenManage in a Proxmox LXC, enrolling the AP, and turning on RADIUS.
+Starting from scratch? [Home setup](home-setup.md) covers installing OpenManage in a Proxmox LXC, adding the AP, and turning on RADIUS.
 
-- OpenManage running with `OPENMANAGE_ENCRYPTION_KEY` set, and the AP already added to the inventory with its LAN IP address (the same address the AP will send RADIUS requests from).
+- OpenManage running with `OPENMANAGE_ENCRYPTION_KEY` set, and the AP already added as a device, with its LAN IP address (the same address the AP will send RADIUS requests from).
 - An OpenWrt AP with a full `wpad` package. The `wpad-basic-*` builds may lack WPA-Enterprise; check with `opkg list-installed | grep wpad` and install `wpad-mbedtls` (or `wpad-openssl`) if needed.
 - A test SSID you can change freely. Do not convert your everyday network until the test passes.
 - An iPhone on iOS 16 or later.
@@ -33,7 +33,7 @@ Never forward UDP 1812 from the internet.
 ## 2. Create a Wi-Fi user and the AP secret
 
 1. **Add Wi-Fi user**, for example `nishant-iphone`, with a 12+ character password.
-2. In **Access points with a secret**, press **+** on the AP's row and copy the secret from the dialog. It is shown only once; if lost, rotate it.
+2. Get the AP's secret. If you ticked the RADIUS box when you added the AP, the secret was shown on the last wizard screen. Otherwise, in **Access points with a secret**, press **+** (Create secret) on the AP's row and copy the secret from the dialog. It is shown only once; if lost, rotate it.
 
 ## 3. Configure the AP
 
