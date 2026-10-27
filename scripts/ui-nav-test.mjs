@@ -81,6 +81,24 @@ try {
   await page.getByLabel(/width/i).first().fill("12");
   const back = await box();
   assert.ok(back[2] < wide[2], "canvas shrinks with the room");
+  // Resize steps are a quarter foot, not a whole foot; a plain drag lands on a quarter, Shift drags freely.
+  const handle = page.locator("rect.fp-handle").first();
+  const dragHandle = async (dx, dy, shift) => {
+    const hb = await handle.boundingBox();
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    if (shift) await page.keyboard.down("Shift");
+    await page.mouse.down();
+    await page.mouse.move(hb.x + hb.width / 2 + dx, hb.y + hb.height / 2 + dy, { steps: 6 });
+    await page.mouse.up();
+    if (shift) await page.keyboard.up("Shift");
+    return page.locator("rect.fp-room").first().evaluate(e => Number(e.getAttribute("width")) / 0.3048);
+  };
+  const quarter = await dragHandle(37, 0, false);
+  assert.ok(Math.abs(quarter * 4 - Math.round(quarter * 4)) < 1e-6 && Math.abs(quarter - Math.round(quarter)) > 0.1, `plain drag should land on a quarter foot, got ${quarter} ft`);
+  const free = await dragHandle(3, 0, true);
+  assert.ok(Math.abs(free * 4 - Math.round(free * 4)) > 0.01, `Shift drag should not snap, got ${free} ft`);
+  await page.getByLabel(/width/i).first().fill("12");
+  await page.locator(".fp-room-size", { hasText: "12 × 10 ft" }).waitFor();
   // A second room is placed beside the first, never on top of it.
   await page.getByRole("button", { name: /add room/i }).click();
   await page.waitForFunction(() => document.querySelectorAll("rect.fp-room").length === 2);
@@ -136,6 +154,30 @@ try {
   await page.getByRole("button", { name: "Remove plan image" }).click();
   await planImg.waitFor({ state: "detached" });
   console.log("PASS: floor plan image upload on the corner, scale, crop and removal");
+  // Client dots follow the room of their AP. An AP on the wall shared by two rooms serves both, so its
+  // clients are spread over both rooms rather than all landing in the first (API answers are mocked).
+  const mocked = page;
+  const json = body => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  const dev = (id, name) => ({ id, name, address: "192.0.2." + id, model: "", firmware: "", status: "online", last_seen_at: new Date().toISOString(), enrollable: false, config_drift: false, role: "access_point", dhcp_host: false, has_key: true });
+  const clients = [];
+  for (let i = 0; i < 8; i++) clients.push({ id: "c" + i, label: "", name: "Phone " + i, mac_hint: "aa:0" + i, hidden: false, device_id: i < 4 ? "1" : "2", interface: "wlan0", signal_dbm: -50, connected: true, last_seen: new Date().toISOString() });
+  await mocked.route("**/api/devices", r => r.fulfill(json([dev("1", "AP-One"), dev("2", "AP-Two")])));
+  await mocked.route("**/api/floor-plan", r => r.fulfill(json({
+    rooms: [{ id: "a", name: "Living", x: 0, y: 0, w: 6, h: 5 }, { id: "b", name: "Office", x: 6, y: 0, w: 4, h: 5 }],
+    placements: [{ device_id: "1", x: 3, y: 0 }, { device_id: "2", x: 6, y: 2.5 }] })));
+  await mocked.route("**/api/wifi-clients", r => r.fulfill(json(clients)));
+  await mocked.route("**/api/wifi-client-events**", r => r.fulfill(json([])));
+  await mocked.goto(baseUrl + "/floor-plan");
+  await mocked.locator("circle.fp-client").first().waitFor();
+  const perRoom = await mocked.evaluate(() => {
+    const rooms = [...document.querySelectorAll("rect.fp-room")].map(r => ["x", "y", "width", "height"].map(k => Number(r.getAttribute(k))));
+    const n = [0, 0];
+    document.querySelectorAll("circle.fp-client").forEach(c => { const x = Number(c.getAttribute("cx")), y = Number(c.getAttribute("cy")); rooms.forEach(([rx, ry, rw, rh], i) => { if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) n[i]++; }); });
+    return n;
+  });
+  assert.ok(perRoom[0] >= 4 && perRoom[1] >= 1, `clients of AP-One stay in Living and the shared-wall AP-Two reaches Office, got ${perRoom}`);
+  await mocked.unrouteAll({ behavior: "ignoreErrors" });
+  console.log("PASS: client dots follow their AP's room, shared-wall AP spreads over both rooms");
   assert.deepEqual(errors, [], "uncaught page errors");
   console.log("PASS: back button, deep link, no page errors");
 } finally {
