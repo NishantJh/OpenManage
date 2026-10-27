@@ -29,4 +29,6 @@ jobs:
       - name: Run OpenWrt lab test
         env:
           OPENMANAGE_LAB_BROWSER: "1"
+          # Needs sudo, which the self-hosted runner lacks; its browser libraries are installed once by hand.
+          OPENMANAGE_LAB_SKIP_PLAYWRIGHT_DEPS: "1"
         run: bash scripts/openwrt-lab-test.sh

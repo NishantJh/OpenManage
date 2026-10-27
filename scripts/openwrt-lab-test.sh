@@ -408,7 +408,7 @@ api DELETE "/api/devices/$boot_id"
 if [[ "${OPENMANAGE_LAB_BROWSER:-0}" == 1 ]]; then
   ui_dir="$(mktemp -d)"
   ui_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ui-add-ap-test.mjs"
-  (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0 && npx playwright install --with-deps chromium >/dev/null)
+  (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0 && npx playwright install $([[ -n ${OPENMANAGE_LAB_SKIP_PLAYWRIGHT_DEPS:-} ]] || echo --with-deps) chromium >/dev/null)
   (cd "$ui_dir" && OPENMANAGE_TEST_ROOT_PASSWORD="$root_password" node "$ui_script" "$base_url" admin lab-admin-password-123 "$router_ip") || fail "add-AP wizard browser check"
   rm -rf "$ui_dir"
   api GET /api/devices
@@ -662,7 +662,7 @@ echo "PASS: a stored backup is restored onto the same device, the device reboots
 if [[ "${OPENMANAGE_LAB_BROWSER:-0}" == 1 ]]; then
   ui_dir="$(mktemp -d)"
   ui_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ui-backups-test.mjs"
-  (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0 && npx playwright install --with-deps chromium >/dev/null)
+  (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0 && npx playwright install $([[ -n ${OPENMANAGE_LAB_SKIP_PLAYWRIGHT_DEPS:-} ]] || echo --with-deps) chromium >/dev/null)
   docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-ui-A && uci commit system"
   api POST "/api/devices/$device_id/backups"
   ui_backup="$(json 'print(d["backup"]["id"])' < "$body")"
