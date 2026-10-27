@@ -19,7 +19,8 @@ import (
 // Restore of a stored device backup (docs/firmware-upgrades.md, "Restore"). The archive
 // can rewrite rc.local, hotplug scripts, authorized_keys and /etc/shadow, so:
 //   - only archives OpenManage captured, by backup id, onto the same device;
-//   - admin only, with the device name typed as confirmation;
+//   - admin only, with the administrator's password re-entered and the device name
+//     typed as confirmation;
 //   - the board must match and a release difference needs a second confirmation;
 //   - lockout preflight: the archive must still authorize OpenManage's key and carry
 //     the host key OpenManage pinned, or the device would become unmanageable;
@@ -193,13 +194,21 @@ func (a *app) restoreDeviceBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		ConfirmName   string `json:"confirm_name"`
+		Password      string `json:"password"`
 		AcceptRelease bool   `json:"accept_release_mismatch"`
 	}
 	if err := decodeJSONBody(w, r, restoreBodyLimit, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid restore request")
 		return
 	}
+	if in.Password == "" {
+		writeError(w, http.StatusBadRequest, "password is required to restore a backup")
+		return
+	}
 	user := r.Context().Value(userContextKey).(authUser)
+	if !a.verifyUserPassword(w, r, user.ID, in.Password, "password is incorrect") {
+		return
+	}
 	key, err := encryptionKey()
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "server encryption key is not configured")
