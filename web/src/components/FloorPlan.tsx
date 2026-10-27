@@ -73,7 +73,7 @@ export function placeDots(rooms:FloorRoom[],items:{id:string;ap:{x:number;y:numb
 export default function FloorPlan({devices,role,onChanged}:{devices:Device[];role:Role;onChanged:()=>void}){
  const canEdit=role!=="readonly",isAdmin=role==="admin";
  const [plan,setPlan]=useState<Plan>({rooms:[],placements:[]}),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState<{text:string;tone:"notice"|"error"}|null>(null);
- const [adjust,setAdjust]=useState(false),[imgBusy,setImgBusy]=useState(false),[draft,setDraft]=useState<ImageCrop|null>(null),[showRange,setShowRange]=useState(true);
+ const [lastWidth,setLastWidth]=useState(0),[adjust,setAdjust]=useState(false),[imgBusy,setImgBusy]=useState(false),[draft,setDraft]=useState<ImageCrop|null>(null),[showRange,setShowRange]=useState(true);
  const [drag,setDrag]=useState<{kind:"room"|"ap"|"size"|"image"|"imgsize"|"cropa"|"cropb";key:string;dx:number;dy:number;extent:{x:number;y:number}}|null>(null),[pick,setPick]=useState("");
  const [settings,setSettings]=useState<MonitoringSettings|null>(null),[clients,setClients]=useState<WifiClient[]>([]),[events,setEvents]=useState<WifiClientEvent[]>([]),[trackBusy,setTrackBusy]=useState(false);
  const svg=useRef<SVGSVGElement>(null),editor=useRef<HTMLDetailsElement>(null),[focusRoom,setFocusRoom]=useState(""),[hover,setHover]=useState(""),[hoverRoom,setHoverRoom]=useState(""),[width,setWidth]=useState(900);
@@ -99,6 +99,8 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  // The canvas is held still while dragging so the pointer-to-plan mapping does not shift under the cursor.
  const {x:extentX,y:extentY}=drag?.extent??fit;
  const px=(extentX+PAD)/Math.max(width,200),P=(n:number)=>n*px; // P(n): n screen pixels in plan units
+ // Scale bar: the longest round length (in feet) that is at most about 150 screen pixels wide.
+ const scaleFt=[100,50,20,10,5,2,1].find(f=>f*FT/px<=150)??1;
  const change=(next:Plan)=>{setPlan(next);setDirty(true)};
  function toPlan(e:{clientX:number;clientY:number}){const r=svg.current!.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*(extentX+PAD)-PAD,y:(e.clientY-r.top)/r.height*(extentY+PAD)-PAD}}
  function start(e:React.PointerEvent,kind:"room"|"ap"|"size"|"image"|"imgsize"|"cropa"|"cropb",key:string,ox:number,oy:number){if(!canEdit)return;const p=toPlan(e);(e.currentTarget as Element).setPointerCapture(e.pointerId);setDrag({kind,key,dx:p.x-ox,dy:p.y-oy,extent:fit})}
@@ -129,8 +131,8 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  function place(){if(!pick)return;const load=(r:FloorRoom)=>plan.placements.filter(a=>inRoom(r,a.x,a.y,EPS)).length,r=[...plan.rooms].sort((a,b)=>load(a)-load(b))[0],pos=r?{x:r.x+r.w/2,y:r.y}:{x:1,y:1};change({...plan,placements:[...plan.placements,{device_id:pick,...pos}]});setPick("")}
  // Uploading stores the picture on the server at once; only its facts are merged here so
  // room edits that are not saved yet are kept.
- async function uploadImage(file:File){setImgBusy(true);setMessage(null);try{const r=await fetch("/api/floor-plan/image",{method:"PUT",headers:{"X-CSRF-Token":csrfToken()},body:file});const data=await r.json();if(!r.ok)throw Error(data.error||"Could not upload the image");setPlan(p=>latch({...p,image:p.image&&data.image?{...data.image,...(p.rooms.length||p.placements.length?{x:p.image.x,y:p.image.y}:{x:0,y:0}),width_m:p.image.width_m}:data.image}));setDirty(true);setDraft(null);setAdjust(true);setMessage({tone:"notice",text:"Plan image uploaded. Set its width in feet or drag its corner so it lines up, then draw the rooms over it."})}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not upload the image"})}finally{setImgBusy(false)}}
- async function removeImage(){if(!window.confirm("Remove the plan image? Rooms and access points stay."))return;setImgBusy(true);try{const r=await apiFetch("/api/floor-plan/image","DELETE");if(!r.ok)throw Error();setPlan(p=>({...p,image:undefined}));setAdjust(false);setDraft(null)}catch{setMessage({tone:"error",text:"Could not remove the plan image."})}finally{setImgBusy(false)}}
+ async function uploadImage(file:File){setImgBusy(true);setMessage(null);try{const r=await fetch("/api/floor-plan/image",{method:"PUT",headers:{"X-CSRF-Token":csrfToken()},body:file});const data=await r.json();if(!r.ok)throw Error(data.error||"Could not upload the image");setPlan(p=>latch({...p,image:p.image&&data.image?{...data.image,...(p.rooms.length||p.placements.length?{x:p.image.x,y:p.image.y}:{x:0,y:0}),width_m:p.image.width_m}:data.image&&lastWidth?{...data.image,width_m:lastWidth}:data.image}));setDirty(true);setDraft(null);setAdjust(true);setMessage({tone:"notice",text:"Plan image uploaded. Set its width in feet or drag its corner so it lines up, then draw the rooms over it."})}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not upload the image"})}finally{setImgBusy(false)}}
+ async function removeImage(){if(!window.confirm("Remove the plan image? Rooms and access points stay."))return;setImgBusy(true);try{const r=await apiFetch("/api/floor-plan/image","DELETE");if(!r.ok)throw Error();if(plan.image)setLastWidth(plan.image.width_m);setPlan(p=>({...p,image:undefined}));setAdjust(false);setDraft(null)}catch{setMessage({tone:"error",text:"Could not remove the plan image."})}finally{setImgBusy(false)}}
  async function save(){setSaving(true);setMessage(null);try{const saved=await apiJSON<Plan>("/api/floor-plan","PUT",{rooms:plan.rooms,placements:plan.placements,image:plan.image?{x:plan.image.x,y:plan.image.y,width_m:plan.image.width_m,crop:plan.image.crop}:undefined},"Could not save the floor plan");setPlan(saved);setDirty(false);setMessage({tone:"notice",text:"Floor plan saved."});onChanged()}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not save the floor plan"})}finally{setSaving(false)}}
 
  const apOf=(id:string)=>plan.placements.find(a=>a.device_id===id);
@@ -186,6 +188,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
       <circle cx={x} cy={y} r={P(c.connected?9:6)} fill={c.connected?"url(#fp-glow-on)":"url(#fp-glow-off)"} pointerEvents="none"/>
       <circle cx={x} cy={y} r={P(c.connected?2.6:2.2)} className={c.connected?"fp-client on":"fp-client off"} pointerEvents="none"/>
       <circle cx={x} cy={y} r={P(9)} fill="transparent" className="fp-hit"/></g>)}
+     <g className="fp-scale" pointerEvents="none" aria-label={"Scale: "+scaleFt+" ft"}><path d={`M${-PAD+P(12)} ${extentY-P(16)}v${P(6)}h${scaleFt*FT}v${-P(6)}`}/><text x={-PAD+P(12)} y={extentY-P(20)} style={{fontSize:P(10)}}>{scaleFt} ft</text></g>
     </svg>
     {(()=>{const d=dots.find(v=>v.c.id===hover);if(!d)return null;const c=d.c,fx=(d.x+PAD)/(extentX+PAD),fy=(d.y+PAD)/(extentY+PAD);return <div className="fp-tip" role="status" style={{left:fx*100+"%",top:fy*100+"%",transform:`translate(${fx>0.6?"calc(-100% - 14px)":"14px"},${fy<0.2?"-15%":fy>0.8?"-85%":"-50%"})`}}><b>{c.label||c.name||"Unknown device"}</b><span>{nameOf(c.device_id)}{d.room?" · "+d.room:""}{c.connected&&c.signal_dbm!==null?" · "+c.signal_dbm+" dBm":""}</span><small>{c.mac_hint} · {c.connected?"connected":"last seen "+ago(c.last_seen)}</small></div>})()}
     </div>

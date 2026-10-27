@@ -153,6 +153,15 @@ try {
   page.once("dialog", d => d.accept());
   await page.getByRole("button", { name: "Remove plan image" }).click();
   await planImg.waitFor({ state: "detached" });
+  // The scale bar stays after the picture is gone, and a new upload reuses the width that was set.
+  assert.match(await page.locator("svg.fp-svg g.fp-scale text").textContent(), /^\d+ ft$/, "scale bar should show after the image is removed");
+  await page.locator('input[aria-label="Upload plan image"]').setInputFiles({ name: "plan.png", mimeType: "image/png", buffer: png });
+  await planImg.waitFor();
+  const [, , rw] = await geom();
+  assert.ok(Math.abs(rw - cw) < 0.01, `re-upload should reuse the removed width ${cw}, got ${rw}`);
+  page.once("dialog", d => d.accept());
+  await page.getByRole("button", { name: "Remove plan image" }).click();
+  await planImg.waitFor({ state: "detached" });
   console.log("PASS: floor plan image upload on the corner, scale, crop and removal");
   // Client dots follow the room of their AP. An AP on the wall shared by two rooms serves both, so its
   // clients are spread over both rooms rather than all landing in the first (API answers are mocked).
