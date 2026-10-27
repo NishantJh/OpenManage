@@ -602,20 +602,24 @@ api POST "/api/devices/$device_id/backups"
 restore_backup="$(json 'assert not d["unchanged"], d; print(d["backup"]["id"])' < "$body")"
 docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-restore-B && uci commit system"
 restore_url="/api/devices/$device_id/backups/$restore_backup/restore"
-api POST "$restore_url" '{"confirm_name":"wrong-name"}'
+api POST "$restore_url" '{"confirm_name":"lab-router"}'
+[[ "$status" == 400 ]] || fail "restore without a password returned HTTP $status"
+api POST "$restore_url" '{"confirm_name":"lab-router","password":"not-the-password"}'
+[[ "$status" == 403 ]] || fail "restore with a wrong password returned HTTP $status"
+api POST "$restore_url" '{"confirm_name":"wrong-name","password":"lab-admin-password-123"}'
 [[ "$status" == 400 ]] || fail "restore without the device name returned HTTP $status"
 api POST "$restore_url" '{"unknown":true}'
 [[ "$status" == 400 ]] || fail "restore with an unknown field returned HTTP $status"
-api_as "$bk_op_jar" "$bk_op_csrf" POST "$restore_url" '{"confirm_name":"lab-router"}'
+api_as "$bk_op_jar" "$bk_op_csrf" POST "$restore_url" '{"confirm_name":"lab-router","password":"lab-operator-pass-1"}'
 [[ "$status" == 403 ]] || fail "operator started a restore (HTTP $status)"
-api_as "$bk_ro_jar" "$bk_ro_csrf" POST "$restore_url" '{"confirm_name":"lab-router"}'
+api_as "$bk_ro_jar" "$bk_ro_csrf" POST "$restore_url" '{"confirm_name":"lab-router","password":"lab-viewer-pass-1"}'
 [[ "$status" == 403 ]] || fail "read-only user started a restore (HTTP $status)"
 psql_om "UPDATE device_backups SET board_name='some,other-board' WHERE id='$restore_backup'" >/dev/null
-api POST "$restore_url" '{"confirm_name":"lab-router"}'
+api POST "$restore_url" '{"confirm_name":"lab-router","password":"lab-admin-password-123"}'
 expect_code 409 board_mismatch "restore refuses a backup from a different board"
 psql_om "UPDATE device_backups SET board_name='' WHERE id='$restore_backup'" >/dev/null
 psql_om "UPDATE device_backups SET release='23.05.5' WHERE id='$restore_backup'" >/dev/null
-api POST "$restore_url" '{"confirm_name":"lab-router"}'
+api POST "$restore_url" '{"confirm_name":"lab-router","password":"lab-admin-password-123"}'
 expect_code 409 release_mismatch "restore asks for a second confirmation when the OpenWrt release differs"
 psql_om "UPDATE device_backups SET release='24.10.4' WHERE id='$restore_backup'" >/dev/null
 [[ "$(docker exec "$router" uci get system.@system[0].hostname)" == lab-restore-B ]] || fail "a refused restore changed the device"
@@ -624,10 +628,10 @@ echo "PASS: restore needs the device name and an administrator, and refuses othe
 
 # A stale or squatted upload directory must not block or hijack the restore.
 docker exec "$router" sh -c 'mkdir -m 777 /tmp/.om-restore && echo stale > /tmp/.om-restore/backup.tar.gz'
-api POST "$restore_url" '{"confirm_name":"lab-router"}'
+api POST "$restore_url" '{"confirm_name":"lab-router","password":"lab-admin-password-123"}'
 [[ "$status" == 202 ]] || { cat "$body" >&2; fail "restore returned HTTP $status"; }
 json 'assert d["status"]=="running" and d["backup_id"]==sys.argv[1], d' "$restore_backup" < "$body"
-api POST "$restore_url" '{"confirm_name":"lab-router"}'
+api POST "$restore_url" '{"confirm_name":"lab-router","password":"lab-admin-password-123"}'
 [[ "$status" == 409 ]] || fail "a second restore was accepted while one was running (HTTP $status)"
 [[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_restore' AND details->>'backup_id'='$restore_backup'")" == 1 ]] || fail "restore start was not audited"
 for attempt in $(seq 1 60); do
@@ -652,6 +656,31 @@ docker exec "$router" test ! -e /tmp/.om-restore || fail "the uploaded archive w
 [[ "$(psql_om "SELECT count(*) FROM audit_events WHERE action='device.backup_restore.done' AND details->>'backup_id'='$restore_backup'")" == 1 ]] || fail "restore outcome was not audited"
 ! psql_om "SELECT details::text FROM audit_events WHERE action LIKE 'device.backup_restore%'" | grep -q 'etc/\|shadow' || fail "a restore audit event names archive files"
 echo "PASS: a stored backup is restored onto the same device, the device reboots, comes back under the pinned host key, and the restore is audited without content"
+
+# Browser check of the Backups page: back up, download with the password, retention, and a restore
+# (with the release-mismatch confirmation) that the page follows while the lab reboots the device.
+if [[ "${OPENMANAGE_LAB_BROWSER:-0}" == 1 ]]; then
+  ui_dir="$(mktemp -d)"
+  ui_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ui-backups-test.mjs"
+  (cd "$ui_dir" && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.63.0 && npx playwright install --with-deps chromium >/dev/null)
+  docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-ui-A && uci commit system"
+  api POST "/api/devices/$device_id/backups"
+  ui_backup="$(json 'print(d["backup"]["id"])' < "$body")"
+  psql_om "UPDATE device_backups SET release='23.05.5' WHERE id='$ui_backup'" >/dev/null
+  docker exec "$router" sh -c "uci set system.@system[0].hostname=lab-ui-B && uci commit system"
+  (cd "$ui_dir" && OPENMANAGE_TEST_MISMATCH_RELEASE=23.05.5 node "$ui_script" "$base_url" admin lab-admin-password-123 lab-router) &
+  ui_pid=$!
+  for attempt in $(seq 1 300); do
+    [[ "$(docker inspect -f '{{.State.Running}}' "$router")" == false ]] && break
+    kill -0 "$ui_pid" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "$ui_pid" 2>/dev/null; then sleep 30; docker start "$router" >/dev/null; fi
+  wait "$ui_pid" || fail "backups page browser check"
+  [[ "$(docker exec "$router" uci get system.@system[0].hostname)" == lab-ui-A ]] || fail "the browser restore did not bring back the backed-up configuration"
+  rm -rf "$ui_dir"
+  echo "PASS: the Backups page restored the device through the browser"
+fi
 
 # Built-in RADIUS (PAP lab listener). The probe runs inside the router container so
 # requests come from the enrolled device's address.

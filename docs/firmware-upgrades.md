@@ -1,0 +1,242 @@
+# Firmware build and upgrade: design
+
+Status: proposal, not started. Design only; no code. Comes after the current plan (Sections 3 to 8) is finished and tested. It refines plan.md Section 5.
+
+## Goal
+
+For each managed OpenWrt device, build a firmware image that already contains every package installed on that device (including third-party ones such as `luci-theme-fluent`), flash it, and end up with the same configuration, like ASU's "attended sysupgrade" but covering packages ASU cannot know about.
+
+## Feasibility verdict
+
+Feasible, with one hard limit: the part that matches ASU (official packages, official releases) is a modest amount of work. The part that goes beyond ASU (third-party packages, config carried across releases, recovery from a bad flash) is where the effort and risk are. I would not promise "everything survives every upgrade" for the first release.
+
+Hardest parts, in order:
+
+1. **Failed flashes cannot be fixed over SSH.** A bad image or power loss can leave a device unreachable. Single-partition devices have no automatic rollback. The design limits the blast radius (canary, pre-checks, one device at a time) but cannot remove this risk. Matches plan.md Section 5.
+2. **Third-party packages.** ASU builds only from official feeds. A package from a custom feed or a hand-installed `.ipk`/`.apk` has to be added another way (see below), and it must be rebuilt or compatible with the target release and architecture.
+3. **Configuration across releases.** `sysupgrade -k` restores the old config, but release changes (for example DSA networking, `opkg` to `apk`) can need migration. The backup is secret-bearing, so it must be stored encrypted.
+4. **Trust in the build.** Images come from an external build service or a locally run Image Builder, so integrity checks matter more than for a plain file download.
+5. **Fitting the "no extra services" rule.** A local Image Builder is big (GB of disk, many build tools) and is a poor fit for the main container.
+
+Overall size estimate: a large feature, best done in the phases below. Each phase is useful alone.
+
+## How a device is described
+
+A **package manifest** is captured per device by typed read operations and stored as a versioned snapshot beside config snapshots:
+
+- OpenWrt version, target/subtarget, `board_name` (from `ubus call system board`), architecture, and package manager (`opkg` up to 24.10, `apk` from 25.x).
+- **User-installed packages**, not dependencies: with `opkg`, packages whose status line says `user installed`; with `apk`, the explicit list in `/etc/apk/world`. This avoids pinning every dependency, so the new release can pick compatible dependency versions.
+- **Feed origin per package.** Compare the list against the official package index for that release and architecture. Anything not found there is "third-party". Also record configured custom feeds (`customfeeds.conf`, `/etc/apk/repositories.d/`) and, for third-party packages, the version and where it came from if known (feed, or an administrator-recorded URL plus SHA-256).
+- Free flash and RAM, so an image that will not fit is rejected early.
+
+These are new typed read operations (names `firmware_inventory`, similar), using fixed command templates. No generic shell.
+
+## Building the image
+
+| Option | Extra service | Third-party packages | Notes |
+| --- | --- | --- | --- |
+| **A. Public ASU API** (`sysupgrade.openwrt.org`, `POST /api/v1/build`) | None; the Go process calls it | No (official feeds only), but a `defaults` script (uci-defaults) can be included | Easiest. Sends the device model and package list to a third party; needs internet. |
+| **B. Local Image Builder** | A builder container or job | Yes: local packages dir or a custom feed | Offline and private, but large and slow. Needs a container runtime or a dedicated builder container. |
+| **C. Self-hosted ASU** | Yes (server plus queue) | Limited | Breaks the "no extra services" rule. Not recommended. |
+| **D. On-device `owut` / `auc`** | None | No | Quick path for official packages only; the device itself asks ASU. Weak control over verification. |
+
+### Online build services (checked 2026-10-23)
+
+| Service | Third-party packages (e.g. `luci-theme-fluent`) | Trust and cost |
+| --- | --- | --- |
+| **Official ASU**, `sysupgrade.openwrt.org` (API docs at `/docs/`) | No. It uses the official ImageBuilder and official feeds. | Run by the OpenWrt project. Free. Sees the device model and package list. I could not confirm from the README whether it signs images, so rely on its returned SHA-256 and `sysupgrade -T`. |
+| **Self-hosted ASU** ([openwrt/asu](https://github.com/openwrt/asu)) | Possibly. Forum reports describe an extra-feed allow list (`repository_allow_list`) and a signed index, but the feed must follow the official layout, and apk-format extra feeds were reported as not fully supported yet ([forum](https://forum.openwrt.org/t/how-to-add-self-compiled-packages-to-my-own-asu/247855)). Unverified; test before relying on it. | You control it, nothing leaves your network. Needs Podman and Redis (an extra service, against our rule), about 2 GB RAM and 50 GB disk. |
+| **Image Builder in GitHub Actions** (a workflow you own) | Yes: add `.ipk`/`.apk` files to the builder's local packages directory or a custom feed. | You control the workflow; GitHub sees the build. Free tier minutes apply. Community templates mostly build from source, which is slower than Image Builder. OpenManage would fetch the finished artifact and verify its hash. |
+| **Unofficial ASU servers** | Unknown | The ASU README says unofficial servers may run a modified ImageBuilder. I found no third-party service I would trust here; don't use one for firmware that runs on your router. |
+
+So no online service builds third-party packages for you without you running something yourself. For fluent, the realistic options are reinstall after flash (Phase 1) or your own Image Builder run (local container or GitHub Actions).
+
+Decision (Nishant, 2026-10-23): **public ASU is the default** (official packages, third-party ones reinstalled after the flash). **Self-hosted ASU is an optional mode** for users who want to run their own server, kept entirely outside the OpenManage stack so the core still has no extra services. A local Image Builder (B) is not planned unless the self-hosted mode proves insufficient. OpenManage never gets access to the Docker or Podman socket.
+
+### Optional self-hosted ASU mode
+
+- **Setting:** an administrator-set "build server URL" (default `https://sysupgrade.openwrt.org`). OpenManage only speaks the ASU HTTP API to it, so the same code serves both modes. The URL must be `https` or an explicitly allowed private address, and is validated like other inventory addresses (bounded timeouts, no redirects to other hosts).
+- **One-command setup:** a script in the repo (for example `scripts/asu-server-setup.sh`) the user runs on a Linux machine, such as a separate VM or LXC, never inside the OpenManage container. Spec:
+  - Checks: Linux, root or sudo, enough RAM and disk (ASU documents about 2 GB RAM and 50 GB disk as the minimum), and a container runtime. Installs Podman and podman-compose if missing, on Debian (and Ubuntu) only; it refuses other distributions.
+  - Fetches a **pinned** ASU release (tag and checksum recorded in the script), writes the compose and config files, creates the Podman socket link and isolated build network that ASU requires, and starts the stack (server, Redis, worker).
+  - Optionally takes extra feeds: `--feed URL --feed-key KEY_FILE` adds the feed to the server's allow list, so third-party packages can be built in. This is the part to test first: forum reports say extra-feed support exists but apk-format feeds are incomplete.
+  - Idempotent (safe to re-run), prints the final URL, and offers `--uninstall`. Binds to a private interface by default and prints a warning before exposing it, because ASU has no authentication of its own (to check); a reverse proxy with TLS is recommended.
+  - Never prints or stores secrets; any signing key it generates for a custom feed stays on that machine.
+- **Trust:** the self-hosted server builds the images, so OpenManage's trust in an image equals trust in that machine. The same hash and `sysupgrade -T` checks apply. Nothing about the devices leaves the user's network.
+- **Out of scope here:** the script itself (spec only for now), and managing the ASU server from OpenManage.
+
+Profile mapping: ASU needs release, target, profile and package list. The profile comes from `board_name` (commas replaced with underscores). To be confirmed in the lab for each supported model.
+
+## Third-party packages
+
+Goal: adding an external package (for example the `luci-theme-fluent` theme) works the way OpenWrt users already do it, and is then remembered so every future upgrade restores it.
+
+### Package sources
+
+Decision (Nishant, 2026-10-23): custom packages come from a **release file** (a direct `.ipk`/`.apk` URL, typically a GitHub release asset, which is how many LuCI themes ship) or an **upload**, and are installed **allow-untrusted**, meaning the package manager's signature check is skipped for that file. Custom feeds are not part of the first version.
+
+OpenManage keeps a **package source** registry (admin-managed, audited). A package is only ever installed from a registered source, never from a free-form URL typed into an operation.
+
+**Registering a source:**
+- Upload a file, or give a URL. For a URL, OpenManage downloads it once (https only, size capped, bounded timeout) and stores its own copy in PostgreSQL with the SHA-256 it computed. Later installs use the stored copy, so an upgrade does not depend on the upstream link still being alive or unchanged.
+- OpenManage reads the file's control data and shows the admin: name, version, architecture, dependencies, and whether it carries install scripts (`postinst`/`prerm`, which run as root on the router). The admin confirms before the source is saved. A new version is a new, separately confirmed source.
+
+**Installing** ("Install package" on a device or group): a typed `package_install` operation takes only a source id and the device. Preflight checks: architecture is `all` or matches the device; package format matches the manager (`.ipk` for opkg, `.apk` for apk); free flash; dependencies are satisfiable from the official feeds already configured on the device. OpenManage uploads the stored file to a fixed path under `/tmp`, checks its hash on the device, installs it, then removes it.
+
+**What allow-untrusted means here:** with `apk` it is the `--allow-untrusted` flag; installing a local `.ipk` with `opkg` is believed not to be signature-checked (to confirm in the lab). Integrity then rests only on the stored hash and on the admin having reviewed the file, and the package runs as root. To limit this: the flag is used for that single stored file only and never set as a global option; the audit trail records source, hash, device and who confirmed it; and the UI says plainly that the package is unsigned and trusted by the admin's choice.
+
+**Packages already on the device** (installed by hand before OpenManage): the inventory marks them "third-party, source unknown". The admin resolves each one by attaching a source (release file or upload). This is a one-time step and cannot be automated, because the package manager does not keep the original file. On `opkg`, a package from a custom feed the user configured by hand also shows as source unknown; the admin attaches the same kind of file source.
+
+### The package set changes over time
+
+There is no fixed list of third-party packages anywhere in the code. What should be on a device is data:
+
+- **Desired package set** per device, optionally inherited from a **group set** (for example "all access points") with per-device additions and removals on top. A set holds: official packages to add, default packages to remove, and package sources (release files or uploads) to install.
+- **Versioned and audited.** Each change (add, remove, swap a source for a newer version) is a new revision with who and when. Rolling back means selecting an earlier revision.
+- **Applied on the next flash by default.** The upgrade plan always compares the desired set with what the device reports installed and shows the diff (to add, to remove, to update). Nothing is changed on a device just because a set was edited.
+- **Optional "apply now"** outside a flash, through the same typed operations (`package_install`, and a matching `package_remove`, both write class, source id or package name from the registered set only). This is for adding a theme to a running device without a firmware upgrade.
+- **Drift:** the existing drift view also reports where a device's installed packages differ from its desired set, for example a package someone added by hand. The admin can adopt it into the set (after attaching a source) or leave it as a warning.
+- **Source updates are explicit.** Registering a newer file for a package creates a new source version; sets can pin a version or follow "latest registered". Either way the upgrade plan shows the version change before anything is installed.
+- **Unused sources** can be removed once no set refers to them; stored files are deleted with them.
+
+### What an upgrade keeps and adds
+
+One upgrade does three things, in this order:
+1. **Keeps what is installed.** The build request carries every package the device has, plus removed defaults (see "Common cases").
+2. **Keeps configuration and other changes.** Config and extra files are restored from the sysupgrade backup (see "Preserving and reapplying configuration").
+3. **Adds the custom packages** from the device's desired set.
+
+**Auto-reinstall option** (per device or group, on by default once a set has custom packages): after each firmware update, OpenManage reinstalls the custom packages from their stored files without asking. If switched off, the custom packages are listed as "pending" after the flash and an admin installs them with one action. In both cases the set stays as it was, so the next upgrade does the same. Between upgrades the admin can add more custom packages or remove some by editing the set (applied on the next flash, or "apply now").
+
+### Using sources during an upgrade
+
+1. **Reinstall after the flash** (Phase 2, default). Once the device is back, `package_install` reinstalls each third-party package from its source. Risk: the device briefly runs without the package (for a LuCI theme it falls back to the default theme), and the package must still suit the new release; a LuCI theme built for another LuCI version can fail to load.
+2. **Baked into the image: not supported for file sources.** ASU can only add packages through a feed allow list, not single files, so file and upload sources are always reinstalled after the flash. Feed support (and baking) is a possible later addition.
+3. **uci-defaults first-boot script.** For small settings only (for example selecting the theme with `uci set luci.main.mediaurlbase`). Not a way to install packages, because the device may have no internet on first boot. Normally unnecessary because the config backup already restores settings.
+
+Compatibility warnings before an upgrade: list third-party packages that are architecture-independent (typical for LuCI themes) versus compiled, and warn when a source offers nothing for the target release (feed index has no match, or the file's declared dependencies do not fit).
+
+Out of scope: building packages from source, and a package store or search across the internet.
+
+## Common cases
+
+Checked with Nishant 2026-10-23. Sources for the claims below are forum posts, not official docs, so confirm each in the lab.
+
+1. **Swapping default packages** (for example `wpad-basic-*` to `wpad-openssl`, `dnsmasq` to `dnsmasq-full`). Replicate what the ASU clients do: read the installed package list from the device, add back any default packages the user removed, and send that to the server, which uses it nearly verbatim (per an OpenWrt developer on the forum). So the manifest records user-installed packages **and removed defaults**, and the build request carries both. The ASU API's diff-style package list and its `defaults` (uci-defaults) field are to be confirmed against the API docs.
+2. **Third-party LuCI apps and themes:** the package source registry above.
+3. **Proxy and VPN suites** (passwall, openclash and similar). Image Builder only assembles prebuilt packages, it does not compile anything, and ASU builds only from official feeds. So such a suite is supported only if the admin has a release file **built for the target release and architecture**, and its dependencies are in the official feeds (preflight checks both). Otherwise the upgrade plan shows it as "no build for the target release" and the admin decides. These suites are commonly rebuilt per release, so expect this to need attention at every release upgrade.
+4. **Out-of-tree kernel modules and drivers.** Not supported. A kernel module must match the exact kernel build it loads into, the official Image Builder keeps the official kernel, and a module built for another build will not load; forced installs have reportedly caused kernel panics. Preflight blocks any package that depends on an exact kernel version and is not from the official feeds, with a plain message.
+5. **Held package versions, custom files and scripts** (`rc.local`, hotplug scripts, certificates, `authorized_keys`): kept through the sysupgrade keep list (`/etc/sysupgrade.conf`). The upgrade plan shows that list so the admin can check it before flashing.
+6. **Packages on a USB drive (extroot):** out of scope for now. Devices using extroot are detected and the upgrade is refused with an explanation.
+
+## Preserving and reapplying configuration
+
+- Default path: `sysupgrade` with config kept (`-k`, the default), which restores `/etc/config` and files listed in `/etc/sysupgrade.conf` and package keep lists.
+- Before flashing, take an OpenManage config snapshot (already exists) **and** a `sysupgrade -b` backup archive, handled as described in "Device config backup (Phase 0)" below. The pre-flash archive is pinned until the upgrade is done and acknowledged.
+- Why both: existing snapshots redact secrets and are read-only, so they cannot restore a device. They are used after the upgrade to show drift (what changed versus before), not to rewrite config. Restoring from the archive is the recovery path.
+- After the flash and package reinstall, run the existing drift diff and show the result. Differences caused by release migrations are expected and are reviewed by the administrator, not silently overwritten.
+- Large release jumps (for example 23.05 to 24.10) are blocked in Phase 1; only the same release family or the next one is allowed, with a warning.
+
+## Device config backup (Phase 0)
+
+A `sysupgrade -b` archive is root-equivalent for the router. As data it holds Wi-Fi PSKs, RADIUS shared secrets, the dropbear host private key, TLS and VPN private keys, and `/etc/shadow` (an offline-crackable root hash). As code, restoring it writes `rc.local`, hotplug and `uci-defaults` scripts, `authorized_keys` and `/etc/shadow`, then reboots. The rules below follow from that. Security review: [#72 comment](https://github.com/NishantJh/OpenManage/pull/72#issuecomment-6416376878).
+
+**Who can do what**
+
+| Action | Roles | Audit event (details) |
+| --- | --- | --- |
+| Create (manual) | admin, operator | `device.backup_create` |
+| Scheduled run | system | `device.backup_create` with `scheduled: true` |
+| List (metadata only) | any role that can see the device | none |
+| Download | admin, after password re-entry | `device.backup_download` |
+| Restore | admin, after re-entering their password and typing the device name | `device.backup_restore`, written in the same transaction that starts the job |
+| Delete | admin | `device.backup_delete` |
+
+Audit details carry only backup id, device id, size, keyed digest, actor and scheduled flag. Never file names from the archive and never content. Readonly users never see backup content.
+
+**Capture**
+
+- Fixed command, no parameters from the request. Prefer `sysupgrade -b -` to stdout (verify on 23.05 and 24.10 in the lab). Otherwise write to a fixed `/tmp` path under `umask 077` and remove it in the same command on exit. Check free RAM first, because `/tmp` is RAM.
+- Output cap 4 MiB (typical archives are tens of KiB) and a fixed timeout. Stderr is dropped and replaced by a fixed message, since it can echo file names.
+- Recorded with each backup: device id, board name, target, OpenWrt release, a MAC or board serial, size, a keyed digest of the plaintext (the `configDigest` pattern, not a plain hash), and the dropbear host-key fingerprint the archive contains.
+- One backup or restore job per device at a time.
+
+**Encryption**
+
+- AES-256-GCM with the existing key and AAD `openmanage:firmware-backup:v1:<device_id>:<backup_id>`. The backup id is generated before sealing. A row moved to another device or id fails to decrypt.
+- A key-version column, so the encryption-key rotation work (plan.md Section 4) can find and re-encrypt these rows.
+- Plaintext lives only in memory. It is never written to a server file, logged, or put in an error message.
+
+**The server never extracts the archive.** It is opaque bytes. Where OpenManage reads it (file list, restore preflight), it parses in memory with `archive/tar` behind `gzip`, with a decompressed-size cap, an entry-count cap and a per-entry size cap. It rejects absolute paths, `..`, symlinks, hardlinks and device nodes, and writes nothing to disk. Device output is untrusted: a compromised router can send anything. The keep list (`/etc/sysupgrade.conf`) is set by the device. OpenManage shows it read-only and never edits it in Phase 0.
+
+**Download**
+
+- Headers `Content-Disposition: attachment`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`. Streamed from memory.
+- A warning when the session is on plain HTTP: the archive would cross the network unencrypted.
+- The archive can also be downloaded encrypted with a passphrase the admin types (age, scrypt), so the downloaded file is not plaintext root material. Plain download is still available for use with LuCI.
+
+**Restore** (`firmware_restore`, a write and disruptive operation)
+
+- Only archives OpenManage captured. No uploaded archives in Phase 0; that needs its own review.
+- The only parameter is a backup id. Commands are fixed strings: upload to a fixed `/tmp` path with mode 600, check `sha256sum` against the stored value, `sysupgrade -r`, remove the file, reboot.
+- Same device id only. Refused if the live board name differs from the recorded one. A release mismatch needs a second confirmation, because `sysupgrade -r` does not migrate config across releases.
+- Before upload: decrypt (GCM verifies integrity) and check the keyed digest.
+- Lockout preflight: refuse with a plain message if the archive's `authorized_keys` lacks the current OpenManage public key, or its dropbear host key does not match the pinned fingerprint. The confirmation notes that the archive restores the root password as it was then.
+- After reboot: the normal verify step (pinned host key, health check, drift diff).
+
+**Retention and deletion**
+
+- Keep the last 5 per device. An archive whose keyed digest equals the latest one is not stored again; the latest one's last-verified time is refreshed instead.
+- The pre-flash backup is pinned (excluded from pruning) until the upgrade job is `done` and the admin acknowledges.
+- Schedule: off by default, at most daily, run from the existing monitoring loop with its concurrency limit.
+- Removing a device from inventory deletes its backups; the UI says so first.
+- Honesty notes in the UI and docs: old backups keep old secrets, so after rotating a leaked Wi-Fi or root password, older backups still hold the old one and restoring brings it back (delete them after a rotation). Deleting a row does not remove it from earlier database dumps or Proxmox backups.
+
+**Database and host backups.** With router archives in PostgreSQL, a `pg_dump` plus the key, or a Proxmox backup of the container (which includes `.env`), is root-equivalent for every managed router. [Backup and recovery](backup-recovery.md) and [home setup](home-setup.md) must say these files are stored encrypted and off-host.
+
+## Safety
+
+- **Preflight (read-only):** model/target match, upgrade path allowed, free RAM for staging the image in `/tmp`, enough flash, fresh config snapshot and backup archive exist, management path known (device reachable, pinned host key matches, a second path such as the LAN IP noted).
+- **Download verification:** check the image's SHA-256 against the build service's response, and for official images against the release's `sha256sums` (and its signature, using OpenWrt's `usign` public keys, pinned in the app). Reject on any mismatch or unknown format. Then `sysupgrade -T` on the device validates the image for that board before flashing.
+- **Confirmation:** explicit per-device confirmation showing the version change and the package list diff.
+- **Staged rollout:** one canary device first, then batches with a small concurrency limit; stop the rollout automatically if a device fails verification. Never start fleet-wide upgrades until single-device upgrade and recovery are tested on real hardware (plan.md Section 5).
+- **Verify after reboot:** wait for the device with a bounded timeout, require the pinned host key to match (the dropbear key is normally kept), check the new version, run the normal health check, check that expected packages are present, run the drift diff.
+- **Recovery honesty:** if the device does not return, the job ends as `needs_attention` with plain guidance: wait for the timeout, power-cycle, failsafe mode, then serial/TFTP recovery. No claim of automatic rollback unless the hardware has a dual-partition setup that is actually verified.
+- **Privacy:** option A sends model and package names to the build service. Show this once and make it an explicit opt-in setting.
+
+## Fit with the operations engine
+
+Everything runs as named typed operations with validated parameters, like `system.hostname` in config_changes.go. No generic shell and no free-form command fields.
+
+New operations (names indicative):
+
+| Operation | Class | Purpose |
+| --- | --- | --- |
+| `firmware_inventory` | read | Version, board, target, package manager, user-installed packages, free space |
+| `firmware_backup` | read (secret-bearing output) | `sysupgrade -b` archive streamed, encrypted at once, never logged |
+| `firmware_restore` | write, disruptive, admin-only | Restore an OpenManage-captured archive to the same device; parameter is the backup id only |
+| `firmware_stage` | write | Upload the verified image to a fixed path under `/tmp` |
+| `firmware_check` | read | `sysupgrade -T` on the staged image |
+| `firmware_flash` | write, disruptive | Start `sysupgrade` detached; the connection will drop |
+| `package_install` | write | Install a package from a registered source (stored release file or upload, allow-untrusted); parameters are source id only |
+| `package_remove` | write | Remove a named package that the desired set marks for removal; package name validated against the device manifest |
+
+Write operations audit transactionally (a Section 2 rule). A job state machine in PostgreSQL (`planned`, `built`, `staged`, `flashing`, `verifying`, `done`, `needs_attention`) survives restarts, with no worker service: the existing server process drives it, like the monitoring loop. Migrations are additive.
+
+## Phases
+
+0. **Device config backup** (also a standalone feature): `firmware_backup`, encrypted storage, download, `firmware_restore`, retention, per "Device config backup (Phase 0)". Needed before any flash.
+1. **Inventory and plan-only.** Capture manifests, show the package diff and what an upgrade would do. No writes.
+2. **Single-device upgrade via ASU**, reinstalling third-party packages afterward, with backup, verification, and drift review. Test on real hardware and in the OpenWrt lab where possible (the lab is a container; flashing itself cannot be tested there).
+3. **Staged rollout** with canary and concurrency limits.
+4. **Optional self-hosted ASU mode:** the build-server URL setting and the setup script, with optional extra feeds (not needed for release-file or upload packages, which are reinstalled after the flash).
+
+## Open questions for Nishant
+
+1. (Decided) Public ASU by default, self-hosted ASU optional. Is the privacy note shown at first use enough?
+2. Which third-party packages do you use today besides `luci-theme-fluent`? Any with install scripts or compiled code?
+3. Which devices matter first, and do they have physical access if a flash fails? Any dual-partition devices?
+4. Is `opkg` (24.10) enough, or do you want `apk` (25.x) support from the start?
+5. Are large release jumps in scope, or only same-release and next-release upgrades?
+6. (Decided) The setup script targets Debian (and Ubuntu) only at first.
+7. (Decided) Release file or upload, installed allow-untrusted; feeds later if ever.
