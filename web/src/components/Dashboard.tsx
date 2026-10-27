@@ -16,6 +16,8 @@ import AddApWizard from "./AddApWizard";
 import AddDeviceModal from "./AddDeviceModal";
 import ConfigModal from "./ConfigModal";
 import SnapshotScheduleCard from "./SnapshotScheduleCard";
+import BackupSettingsCard from "./BackupSettingsCard";
+import DeviceBackups from "./DeviceBackups";
 import UsersSection from "./UsersSection";
 import WifiSection from "./WifiSection";
 import Attention from "./Attention";
@@ -29,7 +31,7 @@ const headings:Record<PageKey,[string,string]>={
  configuration:["Configuration","Network-wide settings applied to your devices."],
  monitoring:["Monitoring","Scheduled health checks and their history."],
  access:["Access & security","Users, roles and the audit trail."],
- backups:["Backups","Configuration snapshots and drift detection."],
+ backups:["Backups","Device backups, restore, and configuration drift detection."],
 };
 
 export default function Dashboard({username,role,onLogout}:{username:string;role:string;onLogout:()=>void}){
@@ -53,7 +55,7 @@ export default function Dashboard({username,role,onLogout}:{username:string;role
  function closeEnrollment(){setEnrollingDevice(null);setEnrollError(null);setEnrollForm({username:"root",private_key:"",expected_fingerprint:""})}
  async function enroll(e:FormEvent){e.preventDefault();if(!enrollingDevice)return;setEnrollSaving(true);setNotice("");setEnrollError(null);try{const r=await apiFetch("/api/devices/"+enrollingDevice.id+"/enroll","POST",enrollForm);const data=await r.json().catch(()=>({}));if(!r.ok){setEnrollError({message:data.error||"SSH enrollment failed",code:data.code});return}setDevices(prev=>prev.map(d=>d.id===enrollingDevice.id?{...d,status:"online",last_seen_at:data.updated_at}:d));setNotice("SSH authentication verified and credential stored for "+enrollingDevice.name+".");closeEnrollment();void loadAudit()}catch{setEnrollError({message:"Could not reach the OpenManage API. Check that the server is running."})}finally{setEnrollSaving(false);setEnrollForm(prev=>({...prev,private_key:""}))}}
  async function runHealthCheck(d:Device){setHealthDevice(d);setHealthResult(null);setHealthBusy(true);setNotice("");try{const data=await apiJSON<HealthResponse>("/api/devices/"+d.id+"/health-check","POST",undefined,"Health check failed");setHealthResult(data);setDevices(prev=>prev.map(item=>item.id===d.id?{...item,status:data.status as Device["status"],last_seen_at:data.checked_at}:item));void load(true);void loadAudit()}catch(e){setNotice(e instanceof Error?e.message:"Health check failed");setHealthDevice(null)}finally{setHealthBusy(false)}}
- async function remove(d:Device){if(!window.confirm("Remove "+d.name+" from inventory?"))return;const r=await apiFetch("/api/devices/"+d.id,"DELETE");if(r.ok){setDevices(prev=>prev.filter(x=>x.id!==d.id));setNotice("Device removed.");void loadAudit()}else setNotice("Could not remove device.")}
+ async function remove(d:Device){if(!window.confirm("Remove "+d.name+" from inventory? Its stored configuration backups and snapshots are deleted with it."))return;const r=await apiFetch("/api/devices/"+d.id,"DELETE");if(r.ok){setDevices(prev=>prev.filter(x=>x.id!==d.id));setNotice("Device removed.");void loadAudit()}else setNotice("Could not remove device.")}
  const online=devices.filter(d=>d.status==="online").length,offline=devices.filter(d=>d.status==="offline").length,drifted=devices.filter(d=>d.config_drift).length;
  return <div className="shell"><Sidebar deviceCount={devices.length} username={username} role={role}/>
  <main className="main"><header className="topbar"><div className="breadcrumb">Workspace <span>/</span> <b>{pageInfo.label}</b></div><div className="top-right"><span className="env"><i/> Development</span><CircleHelp size={18}/><span className="signed-in">{username}</span><button className="logout" onClick={()=>setChangingPassword(true)} title="Change your password"><KeyRound size={15}/> Password</button><button className="logout" onClick={()=>void onLogout()} title="Sign out"><LogOut size={15}/> Sign out</button></div></header><nav className="mobile-nav" aria-label="Pages">{pages.map(x=><a key={x.key} href={x.path} className={x.key===page?"active":""} aria-current={x.key===page?"page":undefined} onClick={e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button!==0)return;e.preventDefault();navigate(x.path)}}>{x.label}</a>)}</nav><section className="content"><div className="heading"><div><div className="eyebrow">NETWORK OPERATIONS / {pageInfo.label.toUpperCase()}</div><h1>{headings[page][0]}</h1><p>{headings[page][1]}</p></div>{(page==="overview"||page==="devices")&&<button className="primary" onClick={()=>setShowWizard(true)}><Plus size={16}/> Add device</button>}</div>
@@ -70,7 +72,8 @@ export default function Dashboard({username,role,onLogout}:{username:string;role
  {page==="access"&&<AuditLog audit={audit} auditLoading={auditLoading} auditError={auditError} onRefresh={()=>void loadAudit()}/>}
  {page==="overview"&&<Attention devices={devices} monitoring={monitoring} history={monitorHistory} audit={audit} loading={loading}/>}
  {page==="overview"&&<div className="bottom-cards"><div className="info-card"><ShieldCheck size={20}/><div><b>Security first</b><p>SSH enrollment pins the router host key and encrypts stored credentials. Configuration changes are previewed, applied with automatic rollback, and audited.</p><span>SECURITY ROADMAP</span></div></div><div className="info-card blue"><Activity size={20}/><div><b>Persistent monitoring</b><p>{monitoring?"Server-side checks are enabled and continue independently of this browser.":"Monitoring is disabled. Enable it to begin scheduled, read-only SSH health checks."} Each cycle is bounded to five enrolled devices; check history is stored in PostgreSQL.</p><span>{monitoring?"SERVER MONITORING ON":"OPT-IN · READ-ONLY"}</span></div></div></div>}
- {page==="backups"&&<div className="bottom-cards"><SnapshotScheduleCard settings={savedSettings} isAdmin={role==="admin"} onSaved={s=>{setSavedSettings(s);void loadAudit()}}/></div>}
+ {page==="backups"&&<DeviceBackups devices={devices} role={role as Role} settings={savedSettings} onChanged={()=>void loadAudit()}/>}
+ {page==="backups"&&<div className="bottom-cards"><BackupSettingsCard settings={savedSettings} isAdmin={role==="admin"} onSaved={s=>{setSavedSettings(s);void loadAudit()}}/><SnapshotScheduleCard settings={savedSettings} isAdmin={role==="admin"} onSaved={s=>{setSavedSettings(s);void loadAudit()}}/></div>}
  {page==="configuration"&&role!=="admin"&&<div className="notice">Only administrators can change network configuration.</div>}
 <footer>OpenManage · Early development <span>Lightweight by design · <a href="https://github.com/NishantJh/OpenManage">GitHub repository ↗</a></span></footer></section></main>
  {healthDevice&&<HealthModal healthDevice={healthDevice} healthResult={healthResult} healthBusy={healthBusy} onClose={()=>{setHealthDevice(null);setHealthResult(null)}} onRunAgain={()=>void runHealthCheck(healthDevice)}/>}
