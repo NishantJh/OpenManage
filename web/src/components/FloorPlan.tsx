@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, Plus, Radio, Save, Trash2, Wifi } from "lucide-react";
-import { apiFetch, apiJSON } from "../api";
+import { Eye, EyeOff, Image as ImageIcon, Move, Plus, Radio, Save, Trash2, Upload, Wifi } from "lucide-react";
+import { apiFetch, apiJSON, csrfToken } from "../api";
 import type { Device, FloorPlan as Plan, FloorRoom, MonitoringSettings, Role, WifiClient, WifiClientEvent } from "../types";
 
 // Plans are stored and drawn in metres; people see and type feet, snapped to whole feet.
@@ -11,15 +11,19 @@ const pollChoices:[number,string][]=[[60,"1 min"],[300,"5 min"],[600,"10 min"]];
 const ago=(iso:string)=>{const m=Math.max(0,Math.round((Date.now()-new Date(iso).getTime())/60000));return m<1?"just now":m<60?m+" min ago":Math.round(m/60)+" h ago"};
 const snap=(v:number)=>Math.round(v/FT)*FT;
 const clamp=(v:number,hi:number)=>Math.min(Math.max(v,0),hi);
+// Rooms may touch but never overlap; moves and resizes that would overlap are not applied.
+const EPS=0.01;
+const overlaps=(a:FloorRoom,b:FloorRoom)=>a.x<b.x+b.w-EPS&&a.x+a.w>b.x+EPS&&a.y<b.y+b.h-EPS&&a.y+a.h>b.y+EPS;
+const isFree=(r:FloorRoom,rooms:FloorRoom[])=>!rooms.some(o=>o.id!==r.id&&overlaps(r,o));
 const inRoom=(r:FloorRoom,x:number,y:number)=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h;
 const bars=(dbm:number|null)=>dbm===null?0:dbm>-55?4:dbm>-65?3:dbm>-75?2:1;
 
 // A feet field (the plan itself is in metres) that can be typed into freely (empty or
 // half-typed values are kept as text) and only changes the plan once the text is a valid size.
-function SizeInput({label,value,onCommit}:{label:string;value:number;onCommit:(v:number)=>void}){
+function SizeInput({label,value,onCommit,minFt=MIN_FT}:{label:string;value:number;onCommit:(v:number)=>void;minFt?:number}){
  const [text,setText]=useState(String(toFt(value))),[focused,setFocused]=useState(false);
  useEffect(()=>{if(!focused)setText(String(toFt(value)))},[value,focused]);
- return <input aria-label={label} type="number" inputMode="decimal" min={MIN_FT} max={MAX_FT} step={1} value={text} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e=>{setText(e.target.value);const v=Number(e.target.value);if(e.target.value!==""&&v>=MIN_FT&&v<=MAX_FT)onCommit(v*FT)}}/>;
+ return <input aria-label={label} type="number" inputMode="decimal" min={minFt} max={MAX_FT} step={1} value={text} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e=>{setText(e.target.value);const v=Number(e.target.value);if(e.target.value!==""&&v>=minFt&&v<=MAX_FT)onCommit(v*FT)}}/>;
 }
 
 const WALL_SNAP=0.8,PAD=1.4; // PAD leaves room around the plan for APs on outer walls and their labels
@@ -65,7 +69,8 @@ export function placeDots(rooms:FloorRoom[],items:{id:string;ap:{x:number;y:numb
 export default function FloorPlan({devices,role,onChanged}:{devices:Device[];role:Role;onChanged:()=>void}){
  const canEdit=role!=="readonly",isAdmin=role==="admin";
  const [plan,setPlan]=useState<Plan>({rooms:[],placements:[]}),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState<{text:string;tone:"notice"|"error"}|null>(null);
- const [drag,setDrag]=useState<{kind:"room"|"ap"|"size";key:string;dx:number;dy:number;extent:{x:number;y:number}}|null>(null),[pick,setPick]=useState("");
+ const [adjust,setAdjust]=useState(false),[imgBusy,setImgBusy]=useState(false);
+ const [drag,setDrag]=useState<{kind:"room"|"ap"|"size"|"image"|"imgsize";key:string;dx:number;dy:number;extent:{x:number;y:number}}|null>(null),[pick,setPick]=useState("");
  const [settings,setSettings]=useState<MonitoringSettings|null>(null),[clients,setClients]=useState<WifiClient[]>([]),[events,setEvents]=useState<WifiClientEvent[]>([]),[trackBusy,setTrackBusy]=useState(false);
  const svg=useRef<SVGSVGElement>(null),editor=useRef<HTMLDetailsElement>(null),[focusRoom,setFocusRoom]=useState(""),[hover,setHover]=useState(""),[hoverRoom,setHoverRoom]=useState(""),[width,setWidth]=useState(900);
  const tracking=Boolean(settings?.client_tracking_enabled);
@@ -82,22 +87,33 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
  useEffect(()=>{const el=svg.current;if(!el)return;const ro=new ResizeObserver(()=>setWidth(el.getBoundingClientRect().width||900));ro.observe(el);setWidth(el.getBoundingClientRect().width||900);return()=>ro.disconnect()},[]);
  useEffect(()=>{if(!focusRoom)return;const el=editor.current?.querySelector<HTMLInputElement>(`input[data-room="${focusRoom}"]`);el?.focus();el?.select();setFocusRoom("")},[focusRoom]);
  const nameOf=(id:string)=>devices.find(d=>d.id===id)?.name??"Unknown access point";
- const fit={x:Math.max(6,...plan.rooms.map(r=>r.x+r.w+1),...plan.placements.map(a=>a.x+1)),y:Math.max(4,...plan.rooms.map(r=>r.y+r.h+1),...plan.placements.map(a=>a.y+1))};
+ const img=plan.image&&plan.image.px_w&&plan.image.px_h?{...plan.image,h:plan.image.width_m*plan.image.px_h/plan.image.px_w}:null;
+ const fit={x:Math.max(6,...plan.rooms.map(r=>r.x+r.w+1),...plan.placements.map(a=>a.x+1),img?img.x+img.width_m+1:0),y:Math.max(4,...plan.rooms.map(r=>r.y+r.h+1),...plan.placements.map(a=>a.y+1),img?img.y+img.h+1:0)};
  // The canvas is held still while dragging so the pointer-to-plan mapping does not shift under the cursor.
  const {x:extentX,y:extentY}=drag?.extent??fit;
  const px=(extentX+PAD)/Math.max(width,200),P=(n:number)=>n*px; // P(n): n screen pixels in plan units
  const change=(next:Plan)=>{setPlan(next);setDirty(true)};
  function toPlan(e:{clientX:number;clientY:number}){const r=svg.current!.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*(extentX+PAD)-PAD,y:(e.clientY-r.top)/r.height*(extentY+PAD)-PAD}}
- function start(e:React.PointerEvent,kind:"room"|"ap"|"size",key:string,ox:number,oy:number){if(!canEdit)return;const p=toPlan(e);(e.currentTarget as Element).setPointerCapture(e.pointerId);setDrag({kind,key,dx:p.x-ox,dy:p.y-oy,extent:fit})}
+ function start(e:React.PointerEvent,kind:"room"|"ap"|"size"|"image"|"imgsize",key:string,ox:number,oy:number){if(!canEdit)return;const p=toPlan(e);(e.currentTarget as Element).setPointerCapture(e.pointerId);setDrag({kind,key,dx:p.x-ox,dy:p.y-oy,extent:fit})}
  function move(e:React.PointerEvent){if(!drag)return;const p=toPlan(e);
-  if(drag.kind==="size")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,w:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.x-r.x))),h:Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.y-r.y)))}:r)});
-  else if(drag.kind==="room")change({...plan,rooms:plan.rooms.map(r=>r.id===drag.key?{...r,x:clamp(snap(p.x-drag.dx),MAX-r.w),y:clamp(snap(p.y-drag.dy),MAX-r.h)}:r)});
+  if(drag.kind==="image"&&plan.image)change({...plan,image:{...plan.image,x:clamp(p.x-drag.dx,MAX),y:clamp(p.y-drag.dy,MAX)}});
+  else if(drag.kind==="imgsize"&&plan.image)change({...plan,image:{...plan.image,width_m:Math.min(MAX_SIZE,Math.max(1,p.x-plan.image.x))}});
+  else if(drag.kind==="size"||drag.kind==="room"){
+   const cur=plan.rooms.find(r=>r.id===drag.key);if(!cur)return;
+   // The full move is tried first, then each axis alone so a room slides along a neighbour's wall.
+   const tries:Partial<FloorRoom>[]=drag.kind==="size"?(()=>{const w=Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.x-cur.x))),h=Math.min(MAX_SIZE,Math.max(MIN_SIZE,snap(p.y-cur.y)));return [{w,h},{w},{h}]})():(()=>{const x=clamp(snap(p.x-drag.dx),MAX-cur.w),y=clamp(snap(p.y-drag.dy),MAX-cur.h);return [{x,y},{x},{y}]})();
+   const ok=tries.find(t=>isFree({...cur,...t},plan.rooms));
+   if(ok)change({...plan,rooms:plan.rooms.map(r=>r.id===cur.id?{...r,...ok}:r)})}
   else{const pos=snapToWall(plan.rooms,clamp(snap(p.x-drag.dx),MAX),clamp(snap(p.y-drag.dy),MAX));change({...plan,placements:plan.placements.map(a=>a.device_id===drag.key?{...a,...pos}:a)})}}
  function renameRoom(id:string){if(editor.current)editor.current.open=true;setFocusRoom(id)}
- function addRoom(){const n=plan.rooms.length+1;change({...plan,rooms:[...plan.rooms,{id:"r"+Date.now().toString(36),name:"Room "+n,x:0,y:0,w:12*FT,h:10*FT}]})}
- function patchRoom(id:string,p:Partial<FloorRoom>){change({...plan,rooms:plan.rooms.map(r=>r.id===id?{...r,...p}:r)})}
+ function addRoom(){const n=plan.rooms.length+1,x=Math.min(MAX-12*FT,Math.max(0,...plan.rooms.map(r=>r.x+r.w)));change({...plan,rooms:[...plan.rooms,{id:"r"+Date.now().toString(36),name:"Room "+n,x,y:0,w:12*FT,h:10*FT}]})}
+ function patchRoom(id:string,p:Partial<FloorRoom>){const next=plan.rooms.map(r=>r.id===id?{...r,...p}:r);if(!next.every(r=>isFree(r,next))){setMessage({tone:"error",text:"Rooms cannot overlap. Move the other room first or pick a smaller size."});return}change({...plan,rooms:next})}
  function place(){if(!pick)return;const r=plan.rooms[0],pos=r?{x:r.x+r.w/2,y:r.y}:{x:1,y:1};change({...plan,placements:[...plan.placements,{device_id:pick,...pos}]});setPick("")}
- async function save(){setSaving(true);setMessage(null);try{const saved=await apiJSON<Plan>("/api/floor-plan","PUT",{rooms:plan.rooms,placements:plan.placements},"Could not save the floor plan");setPlan(saved);setDirty(false);setMessage({tone:"notice",text:"Floor plan saved."});onChanged()}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not save the floor plan"})}finally{setSaving(false)}}
+ // Uploading stores the picture on the server at once; only its facts are merged here so
+ // room edits that are not saved yet are kept.
+ async function uploadImage(file:File){setImgBusy(true);setMessage(null);try{const r=await fetch("/api/floor-plan/image",{method:"PUT",headers:{"X-CSRF-Token":csrfToken()},body:file});const data=await r.json();if(!r.ok)throw Error(data.error||"Could not upload the image");setPlan(p=>({...p,image:p.image&&data.image?{...data.image,x:p.image.x,y:p.image.y,width_m:p.image.width_m}:data.image}));setAdjust(true);setMessage({tone:"notice",text:"Plan image uploaded. Set its width in feet or drag its corner so it lines up, then draw the rooms over it."})}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not upload the image"})}finally{setImgBusy(false)}}
+ async function removeImage(){if(!window.confirm("Remove the plan image? Rooms and access points stay."))return;setImgBusy(true);try{const r=await apiFetch("/api/floor-plan/image","DELETE");if(!r.ok)throw Error();setPlan(p=>({...p,image:undefined}));setAdjust(false)}catch{setMessage({tone:"error",text:"Could not remove the plan image."})}finally{setImgBusy(false)}}
+ async function save(){setSaving(true);setMessage(null);try{const saved=await apiJSON<Plan>("/api/floor-plan","PUT",{rooms:plan.rooms,placements:plan.placements,image:plan.image?{x:plan.image.x,y:plan.image.y,width_m:plan.image.width_m}:undefined},"Could not save the floor plan");setPlan(saved);setDirty(false);setMessage({tone:"notice",text:"Floor plan saved."});onChanged()}catch(err){setMessage({tone:"error",text:err instanceof Error?err.message:"Could not save the floor plan"})}finally{setSaving(false)}}
 
  const apOf=(id:string)=>plan.placements.find(a=>a.device_id===id);
  const onMap=clients.filter(c=>!c.hidden&&apOf(c.device_id));
@@ -121,7 +137,7 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
      </div>
     </div>
     <div className="fp-stage">
-    <svg ref={svg} viewBox={`${-PAD} ${-PAD} ${extentX+PAD} ${extentY+PAD}`} className="fp-svg" onPointerMove={move} onPointerUp={()=>setDrag(null)} role="img" aria-label="Floor plan">
+    <svg ref={svg} viewBox={`${-PAD} ${-PAD} ${extentX+PAD} ${extentY+PAD}`} className={"fp-svg"+(plan.image?" has-image":"")+(adjust&&img?" adjusting":"")} onPointerMove={move} onPointerUp={()=>setDrag(null)} role="img" aria-label="Floor plan">
      <defs>
       <pattern id="fp-grid" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="rgba(255,255,255,.035)" strokeWidth="0.02"/></pattern>
       <radialGradient id="fp-coverage"><stop offset="0" stopColor="#8d78f5" stopOpacity=".12"/><stop offset="1" stopColor="#8d78f5" stopOpacity="0"/></radialGradient>
@@ -129,12 +145,15 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
       <radialGradient id="fp-glow-off"><stop offset="0" stopColor="#e5484d" stopOpacity=".35"/><stop offset="1" stopColor="#e5484d" stopOpacity="0"/></radialGradient>
      </defs>
      <rect x={-PAD} y={-PAD} width={extentX+PAD} height={extentY+PAD} fill="url(#fp-grid)"/>
+     {img&&<g>
+      <image href={"/api/floor-plan/image?v="+(img.version??"")} x={img.x} y={img.y} width={img.width_m} height={img.h} preserveAspectRatio="none" className="fp-plan-image" onPointerDown={e=>adjust&&start(e,"image","img",img.x,img.y)}/>
+      {canEdit&&adjust&&<><rect x={img.x} y={img.y} width={img.width_m} height={img.h} className="fp-image-frame" pointerEvents="none"/><rect x={img.x+img.width_m-P(5)} y={img.y+img.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className="fp-handle show img" onPointerDown={e=>start(e,"imgsize","img",0,0)}><title>Drag to scale the image</title></rect></>}</g>}
      {plan.rooms.map(r=><g key={r.id} onPointerEnter={()=>setHoverRoom(r.id)} onPointerLeave={()=>setHoverRoom("")}>
       <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={P(3)} className="fp-room" onPointerDown={e=>start(e,"room",r.id,r.x,r.y)} style={{cursor:canEdit?"move":"default"}}/>
       <text x={r.x+P(14)} y={r.y+P(24)} className={canEdit?"fp-room-name edit":"fp-room-name"} style={{fontSize:P(11)}} onClick={()=>canEdit&&renameRoom(r.id)}>{canEdit&&<title>Click to rename</title>}{r.name.toUpperCase()}</text>
       <text x={r.x+P(14)} y={r.y+r.h-P(12)} className="fp-room-size" style={{fontSize:P(10)}}>{toFt(r.w)} × {toFt(r.h)} ft</text>
       {canEdit&&<rect x={r.x+r.w-P(5)} y={r.y+r.h-P(5)} width={P(10)} height={P(10)} rx={P(2)} className={hoverRoom===r.id||drag?.key===r.id?"fp-handle show":"fp-handle"} onPointerDown={e=>start(e,"size",r.id,0,0)}><title>Drag to resize</title></rect>}</g>)}
-     {plan.placements.map(a=><g key={a.device_id} onPointerDown={e=>start(e,"ap",a.device_id,a.x,a.y)} style={{cursor:canEdit?"grab":"default"}}>
+     {plan.placements.map(a=><g key={a.device_id} className="fp-ap-g" onPointerDown={e=>start(e,"ap",a.device_id,a.x,a.y)} style={{cursor:canEdit?"grab":"default"}}>
       <circle cx={a.x} cy={a.y} r={3} fill="url(#fp-coverage)" pointerEvents="none"/>
       <circle cx={a.x} cy={a.y} r={P(8)} className="fp-ap"/><circle cx={a.x} cy={a.y} r={P(3)} fill="#8d78f5" pointerEvents="none"/>
       <text x={a.x+P(14)} y={a.y+P(4)} className="fp-ap-name" style={{fontSize:P(12),strokeWidth:P(3)}} pointerEvents="none">{nameOf(a.device_id)}</text></g>)}
@@ -163,6 +182,13 @@ export default function FloorPlan({devices,role,onChanged}:{devices:Device[];rol
   </div>
   {canEdit&&<details ref={editor} className="fp-card fp-edit" open><summary><Radio size={15}/> Edit rooms and access points</summary>
    <div className="fp-edit-grid">
+    <div className="fp-image-row">
+     <span className="fp-image-title"><ImageIcon size={14}/> Plan image</span>
+     <label className={"secondary fp-file"+(imgBusy?" disabled":"")}><Upload size={14}/> {plan.image?"Replace":"Upload"}<input type="file" accept="image/png,image/jpeg" disabled={imgBusy} aria-label="Upload plan image" onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f)void uploadImage(f)}}/></label>
+     {plan.image&&<><button className={"secondary"+(adjust?" on":"")} aria-pressed={adjust} onClick={()=>setAdjust(!adjust)}><Move size={14}/> {adjust?"Done adjusting":"Move and scale"}</button>
+      <span className="fp-image-width">Width (ft)<SizeInput label="Plan image width" minFt={3.3} value={plan.image.width_m} onCommit={w=>change({...plan,image:{...plan.image!,width_m:w}})}/></span>
+      <button className="secondary fp-icon" aria-label="Remove plan image" disabled={imgBusy} onClick={()=>void removeImage()}><Trash2 size={14}/></button></>}
+     <small>PNG or JPEG, up to 5 MB. Set the width of the whole picture in feet (or drag its corner) so it matches your real rooms.</small></div>
     {plan.rooms.length>0&&<div className="fp-edit-head"><span>Room</span><span>Width (ft)</span><span>Height (ft)</span><span/></div>}
     {plan.rooms.map(r=><div className="fp-edit-row" key={r.id}><input aria-label="Room name" data-room={r.id} maxLength={60} value={r.name} onChange={e=>patchRoom(r.id,{name:e.target.value})}/><SizeInput label={r.name+" width"} value={r.w} onCommit={w=>patchRoom(r.id,{w})}/><SizeInput label={r.name+" height"} value={r.h} onCommit={h=>patchRoom(r.id,{h})}/><button className="secondary fp-icon" aria-label={"Remove "+r.name} onClick={()=>change({...plan,rooms:plan.rooms.filter(x=>x.id!==r.id)})}><Trash2 size={14}/></button></div>)}
     {plan.placements.map(a=><div className="fp-edit-row fp-edit-ap" key={a.device_id}><span><i className="fp-dot ap"/> Access point <b>{nameOf(a.device_id)}</b></span><span/><span/><button className="secondary fp-icon" aria-label={"Unplace "+nameOf(a.device_id)} onClick={()=>change({...plan,placements:plan.placements.filter(x=>x.device_id!==a.device_id)})}><Trash2 size={14}/></button></div>)}

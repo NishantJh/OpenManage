@@ -126,5 +126,18 @@ tr.selected td{background:#1a1e2a}
 @media(hover:none){.fp-handle{opacity:.75}}
 .fp-handle:hover{opacity:1}
 
+.fp-plan-image{pointer-events:none}.fp-svg.adjusting .fp-plan-image{pointer-events:auto;cursor:move}
+.fp-image-frame{fill:none;stroke:#8d78f5;stroke-width:1.5px;stroke-dasharray:6 4;vector-effect:non-scaling-stroke}
+.fp-svg.adjusting .fp-room,.fp-svg.adjusting .fp-room-name,.fp-svg.adjusting .fp-ap-g,.fp-svg.adjusting .fp-handle:not(.img){pointer-events:none}
+.fp-svg.has-image .fp-room{fill:rgba(141,120,245,.1);stroke:#6f5ce0}
+.fp-image-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #232835}
+.fp-image-title{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#eceef5}
+.fp-image-row small{flex:1 1 100%;font-size:10px;color:#7d8495}
+.fp-image-row .on{background:#2b2f40;color:#f0f1f6}
+.fp-image-width{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:#9aa1b2}
+.fp-image-width input{width:76px;height:34px;padding:0 10px;border:1px solid #2d3240;border-radius:8px;background:#0d1017;color:#eceef5;outline:0}
+.fp-file{position:relative;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.fp-file input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.fp-file.disabled{opacity:.55;pointer-events:none}
 .device-backups{margin-bottom:24px}.device-backups .section-head select{max-width:220px}.device-backups td small{white-space:nowrap}.backup-warning{margin-bottom:14px}.backup-warning ul{margin:0;padding-left:18px}.backup-warning li{margin:3px 0}.backup-warning .check{display:flex;align-items:center;gap:8px;margin:10px 0 0;color:#e8d2a6}.backup-warning .check input{width:auto;height:auto;margin:0}.backup-field{margin-top:14px}.restore-modal{width:min(560px,100%)}.primary.danger{background:#b5483f;border-color:#d0645a}.primary.danger:hover{background:#c5564c}.inline-field{display:inline-flex;align-items:center;gap:8px;margin:0;font-size:11px;color:#b9bdca}.inline-field input{width:64px;height:33px;background:#171b25;border:1px solid #303543;border-radius:8px;padding:0 8px;color:#eceef5}.restore-history{margin-top:14px}
 .backup-warning{flex-direction:column}.backup-warning ul{margin:0}

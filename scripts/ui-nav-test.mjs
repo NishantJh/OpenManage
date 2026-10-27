@@ -81,11 +81,28 @@ try {
   await page.getByLabel(/width/i).first().fill("12");
   const back = await box();
   assert.ok(back[2] < wide[2], "canvas shrinks with the room");
+  // A second room is placed beside the first, never on top of it.
+  await page.getByRole("button", { name: /add room/i }).click();
+  await page.waitForFunction(() => document.querySelectorAll("rect.fp-room").length === 2);
+  const rects = await page.locator("rect.fp-room").evaluateAll(els => els.map(e => ["x", "y", "width", "height"].map(k => Number(e.getAttribute(k)))));
+  const [[ax, ay, aw, ah], [bx, by, bw, bh]] = rects;
+  assert.ok(!(ax < bx + bw - 0.01 && ax + aw > bx + 0.01 && ay < by + bh - 0.01 && ay + ah > by + 0.01), "new room overlaps the first");
+  await page.locator(".fp-edit-row button[aria-label^='Remove']").last().click();
   await page.locator(".fp-room-name").first().click();
   await page.waitForFunction(() => document.activeElement?.getAttribute("data-room"), null, { timeout: 5000 });
   await page.keyboard.type("Kitchen");
   await page.locator(".fp-room-name", { hasText: "KITCHEN" }).waitFor();
   console.log("PASS: floor plan rooms in feet, renamable, canvas fits rooms");
+  // Plan image: upload a PNG, scale it by typing a width in feet, then remove it again.
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==", "base64");
+  await page.locator('input[aria-label="Upload plan image"]').setInputFiles({ name: "plan.png", mimeType: "image/png", buffer: png });
+  await page.locator("image.fp-plan-image").waitFor();
+  await page.getByLabel("Plan image width").fill("30");
+  await page.waitForFunction(() => Math.abs(Number(document.querySelector("image.fp-plan-image").getAttribute("width")) - 30 * 0.3048) < 0.01);
+  page.once("dialog", d => d.accept());
+  await page.getByRole("button", { name: "Remove plan image" }).click();
+  await page.locator("image.fp-plan-image").waitFor({ state: "detached" });
+  console.log("PASS: floor plan image upload, scale and removal");
   assert.deepEqual(errors, [], "uncaught page errors");
   console.log("PASS: back button, deep link, no page errors");
 } finally {
