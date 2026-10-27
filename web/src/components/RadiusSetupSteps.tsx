@@ -7,6 +7,7 @@ const quote=(s:string)=>"'"+s.replace(/'/g,"'\\''")+"'";
 // wideModal fits the commands on screen; long dialogs scroll inside the overlay.
 export const wideModal={width:"min(680px,100%)",maxHeight:"calc(100vh - 36px)",overflowY:"auto"} as const;
 const ipv4=/^\d{1,3}(\.\d{1,3}){3}$/;
+const privateIPv4=/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)\d{1,3}\.\d{1,3}(\.\d{1,3})?$/;
 
 // apCommands switch the AP's existing access-point networks (all of them, or only the
 // named SSIDs) to WPA2-Enterprise checked by OpenManage. Nothing new is created.
@@ -40,13 +41,14 @@ export default function RadiusSetupSteps({deviceName,deviceAddress,secret}:{devi
  const host=typeof location!=="undefined"?location.hostname:"";
  const [server,setServer]=useState(ipv4.test(host)?host:""),[saved,setSaved]=useState(""),[saveNote,setSaveNote]=useState(""),[port,setPort]=useState("1812"),[networks,setNetworks]=useState("");
  // The address is saved once on the server and filled in for every device after that.
- useEffect(()=>{apiFetch("/api/radius").then(r=>r.ok?r.json():null).then((d:RadiusStatus|null)=>{const p=String(d?.listen_addr??"").split(":").pop();if(p&&/^\d+$/.test(p))setPort(p);if(d?.server_address){setServer(d.server_address);setSaved(d.server_address)}}).catch(()=>{})},[]);
- async function save(){if(!server||server===saved)return;if(!ipv4.test(server)){setSaveNote("Enter the IP address, such as 192.168.1.10.");return}try{const r=await apiFetch("/api/radius/settings","PUT",{server_address:server});const d=await r.json().catch(()=>({}));if(r.ok){setSaved(server);setSaveNote("Saved. Every device's steps use this address from now on.")}else setSaveNote(d.error||"Could not save the address.")}catch{setSaveNote("Could not save the address.")}}
+ useEffect(()=>{apiFetch("/api/radius").then(r=>r.ok?r.json():null).then((d:RadiusStatus|null)=>{const p=String(d?.listen_addr??"").split(":").pop();if(p&&/^\d+$/.test(p))setPort(p);if(d?.server_address){setServer(d.server_address);setSaved(d.server_address)}else if(privateIPv4.test(host))void save(host)}).catch(()=>{})},[]);
+ // save stores the address once for all devices; a private IP the page was opened by is saved without asking.
+ async function save(value=server){if(!value||value===saved)return;if(!ipv4.test(value)){setSaveNote("Enter the IP address, such as 192.168.1.10.");return}try{const r=await apiFetch("/api/radius/settings","PUT",{server_address:value});const d=await r.json().catch(()=>({}));if(r.ok){setSaved(value);setSaveNote("Saved. Every device's steps use this address from now on.")}else setSaveNote(d.error||"Could not save the address.")}catch{setSaveNote("Could not save the address.")}}
  const ssids=networks.split(",").map(s=>s.trim()).filter(Boolean);
  const small={fontSize:10,lineHeight:1.6,color:"#888e9e",fontWeight:400} as const;
  return <div>
   <label>RADIUS shared secret<input readOnly value={secret} onFocus={e=>e.currentTarget.select()} aria-label="RADIUS shared secret"/><small className="field-help">Shown only now. The commands below already contain it. If it is lost, rotate it on the Configuration page.</small></label>
-  <div className="form-row"><label>OpenManage LAN address<input value={server} onChange={e=>{setServer(e.target.value.trim());setSaveNote("")}} onBlur={()=>void save()} placeholder="e.g. 192.168.1.10" aria-label="OpenManage LAN address"/><small className="field-help">{saveNote||(saved&&saved===server?"Saved once for all devices.":"The LAN IP of the machine running OpenManage. Entered once, then saved for all devices.")}</small></label><label>RADIUS port<input value={port} onChange={e=>setPort(e.target.value.trim())} aria-label="RADIUS port"/></label></div>
+  <div className="form-row"><label>OpenManage LAN address<input value={server} onChange={e=>{setServer(e.target.value.trim());setSaveNote("")}} onBlur={()=>void save(server)} placeholder="e.g. 192.168.1.10" aria-label="OpenManage LAN address"/><small className="field-help">{saveNote||(saved&&saved===server?"Saved once for all devices.":"The LAN IP of the machine running OpenManage. Entered once, then saved for all devices.")}</small></label><label>RADIUS port<input value={port} onChange={e=>setPort(e.target.value.trim())} aria-label="RADIUS port"/></label></div>
   <label>Wi-Fi networks to change<input value={networks} onChange={e=>setNetworks(e.target.value)} placeholder="All Wi-Fi networks on this device" aria-label="Wi-Fi networks to change"/><small className="field-help">Leave empty for every Wi-Fi network the device broadcasts, or list network names separated by commas.</small></label>
   <div className="warning" style={{marginBottom:15}}><AlertTriangle size={15}/><span>Your existing networks keep their names and radios but switch to per-person sign-in. Phones and laptops then join with a Wi-Fi user. Devices that only know the old Wi-Fi password, such as printers or smart plugs, will drop off those networks.</span></div>
   <ol style={{paddingLeft:18,margin:"0 0 6px",color:"#bfc3cf",fontSize:11,lineHeight:1.6}}>
