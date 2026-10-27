@@ -28,10 +28,11 @@ async function readSteps(page) {
   const secret = await page.getByLabel("RADIUS shared secret").inputValue();
   assert.ok(secret.length >= 16, "RADIUS secret missing or too short");
   await page.getByLabel("OpenManage LAN address").fill(lanAddress);
+  await page.getByLabel("Wi-Fi networks to change").fill("Home");
   const text = label => page.getByLabel(label, { exact: true }).innerText();
-  const out = { secret, ssh: await text("SSH command"), backup: await text("Backup command"), setup: await text("AP setup commands"), undo: await text("Undo commands") };
+  const out = { secret, check: await text("Check command"), ssh: await text("SSH command"), backup: await text("Backup command"), setup: await text("AP setup commands"), undo: await text("Undo commands") };
   assert.equal(out.ssh, "ssh root@" + deviceIp);
-  for (const want of ["auth_secret='" + secret + "'", "auth_server='" + lanAddress + "'", "auth_port='1812'", "encryption='wpa2'", "uci commit wireless"]) {
+  for (const want of ["auth_secret='" + secret + "'", "auth_server='" + lanAddress + "'", "auth_port='1812'", "encryption='wpa2'", "in 'Home')", "uci commit wireless"]) {
     assert.ok(out.setup.includes(want), "setup commands lack " + want + ":\n" + out.setup);
   }
   return out;
