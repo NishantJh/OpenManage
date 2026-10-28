@@ -284,8 +284,10 @@ func (a *app) runMonitoringBatch(ctx context.Context, lockConn *pgxpool.Conn, se
 	runBounded(ctx, ids, a.runPersistentCheck)
 }
 
-// queryDeviceIDs runs a query that returns one device ID per row.
-func queryDeviceIDs(ctx context.Context, conn *pgxpool.Conn, sql string, args ...any) ([]string, error) {
+// queryDeviceIDs runs a query that returns one device ID per row, on a pool or a held connection.
+func queryDeviceIDs(ctx context.Context, conn interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, sql string, args ...any) ([]string, error) {
 	rows, err := conn.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
