@@ -18,7 +18,7 @@ The Go app serves the React/TypeScript build and JSON API. PostgreSQL stores dev
 - cmd/openmanage/migrations/: embedded SQL migrations 001 to 010, covering inventory, authentication and audit, device credentials, monitoring, configuration snapshots and their schedule, user management, configuration changes, and RADIUS.
 - web/: React/TypeScript UI and frontend package manifest.
 - compose.yaml and Dockerfile: runtime/deployment.
-- .github/workflows/ci.yml: trusted branch-push validation on the self-hosted WSL2 runner.
+- .github/workflows/ci.yml: trusted branch-push validation on a self-hosted runner (WSL2 or the Ubuntu VM, see ci-runners.md).
 
 ## Device-operation model
 

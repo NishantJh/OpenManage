@@ -22,7 +22,7 @@ Hardening (Sections 0 and 1) and the operations engine, read-only configuration,
 - SSH enrollment API verifies an independently verified SHA-256 host-key fingerprint and SSH public-key authentication before storing the private key encrypted with AES-256-GCM.
 - Enrollment is admin-only, limited to private IP literals on TCP/22, and requires OPENMANAGE_ENCRYPTION_KEY.
 - Enrollment does not install or rotate router-side authorized keys, run remote commands, or push configuration.
-- CI on trusted branch pushes runs frontend build, Go tests, and Docker image build on the WSL2 self-hosted runner. Pull requests are validated on GitHub-hosted runners only; the repository is public, so untrusted fork code must never run on the self-hosted runner.
+- CI on trusted branch pushes runs frontend build, Go tests, and Docker image build on a self-hosted runner (WSL2 on the Windows PC or the Ubuntu VM; see [docs/ci-runners.md](docs/ci-runners.md)). Pull requests are validated on GitHub-hosted runners only; the repository is public, so untrusted fork code must never run on the self-hosted runner.
 
 ## Roadmap
 

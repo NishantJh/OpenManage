@@ -82,7 +82,7 @@ Enrollment restricts targets to private IP literals, TCP/22, independently pinne
 - The app and database have explicit memory/CPU limits.
 - The SSH enrollment transaction couples credential persistence, device status update, and its audit event.
 - Private key ciphertext uses AES-GCM with domain-separation associated data and a fresh nonce.
-- CI intentionally avoids running untrusted fork pull-request code on the self-hosted WSL2 runner.
+- CI intentionally avoids running untrusted fork pull-request code on any self-hosted runner (WSL2 or the Ubuntu VM).
 
 ## Required order of work
 
