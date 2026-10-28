@@ -8,7 +8,7 @@ Starting from scratch? [Home setup](home-setup.md) covers installing OpenManage 
 
 - OpenManage running with `OPENMANAGE_ENCRYPTION_KEY` set, and the AP already added as a device, with its LAN IP address (the same address the AP will send RADIUS requests from).
 - An OpenWrt AP with a full `wpad` package. The `wpad-basic-*` builds may lack WPA-Enterprise; check with `opkg list-installed | grep wpad` and install `wpad-mbedtls` (or `wpad-openssl`) if needed.
-- Know what changes: the AP's existing networks keep their names and radios but switch to per-person sign-in. Devices that only know the old Wi-Fi password, such as printers or smart plugs, drop off those networks. To try it on one network first, name only that network when you get the secret (step 2).
+- Know what changes: the AP's existing networks keep their names and radios but switch to per-person sign-in. Every device on them disconnects; devices that only know the old Wi-Fi password, such as printers or smart plugs, cannot rejoin. To try it on one network first, name only that network when you get the secret (step 2).
 - An iPhone on iOS 16 or later.
 
 ## 1. Turn on RADIUS in OpenManage
@@ -38,6 +38,8 @@ Never forward UDP 1812 from the internet.
 The screen that shows the secret also shows every command in step 3, with the secret, port and OpenManage address filled in. The first time, type the OpenManage host's LAN IP in **OpenManage LAN address**; it is saved and filled in for every device after that. Leave **Wi-Fi networks to change** empty to change every network on the AP, or list network names (comma separated) to change only those.
 
 ## 3. Configure the AP
+
+**Every device on the changed networks disconnects as soon as the commands below run, including the phone or laptop you are using; the old Wi-Fi password stops working.** Devices without a username and password field, such as most smart-home devices, cannot rejoin at all. Install the iPhone profile from step 4 first, so you can rejoin straight away, and keep the undo command at the end of this step to hand. On the secret screen the commands stay hidden until you tick that you understand this.
 
 On the AP (SSH):
 

@@ -39,6 +39,9 @@ async function readSteps(page, { first = false } = {}) {
     assert.equal(await addressField.inputValue(), lanAddress, "saved OpenManage address not filled in");
   }
   await page.getByLabel("Wi-Fi networks to change").fill("Home");
+  // The commands that change existing Wi-Fi stay hidden until the warning is confirmed.
+  assert.equal(await page.getByLabel("AP setup commands", { exact: true }).count(), 0, "switch commands shown before the warning was confirmed");
+  await page.getByLabel(/I understand that every device/).check();
   const text = label => page.getByLabel(label, { exact: true }).innerText();
   const out = { secret, check: await text("Check command"), ssh: await text("SSH command"), backup: await text("Backup command"), setup: await text("AP setup commands"), undo: await text("Undo commands") };
   assert.equal(out.ssh, "ssh root@" + deviceIp);
@@ -55,6 +58,16 @@ try {
   await page.getByLabel(/password/i).fill(password);
   await page.getByRole("button", { name: /sign in|log in/i }).click();
   await page.locator("aside nav a", { hasText: "Devices" }).click();
+
+  // With RADIUS off (answered here by a stubbed status), no RADIUS option appears at all.
+  await page.route("**/api/radius", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ enabled: false, listen_addr: "", dropped_packets: 0, clients: [], certificate: null, server_address: "" }) }));
+  await page.getByRole("button", { name: /add device/i }).first().click();
+  await page.getByRole("button", { name: "Advanced / manual" }).click();
+  await page.getByText("This records the device only", { exact: false }).waitFor();
+  assert.equal(await page.getByText(/check Wi-Fi sign-ins/i).count(), 0, "RADIUS tick box shown while RADIUS is off");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.unroute("**/api/radius");
+  console.log("PASS: with RADIUS off, the add screens show no RADIUS option");
 
   // Add device opens the wizard; the metadata-only form is behind Advanced / manual.
   await page.getByRole("button", { name: /add device/i }).first().click();

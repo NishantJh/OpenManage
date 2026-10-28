@@ -9,7 +9,7 @@ OpenManage uses a Go API, PostgreSQL, and a React/TypeScript UI served by the sa
 
 ## Features
 
-- **Adding devices:** one wizard step takes a device's IP address, a host-key fingerprint you verified, and its root password (used once, never stored). OpenManage installs a generated key, checks it works, and stores the management key encrypted at rest. A RADIUS tick box on every add path (wizard, **Advanced / manual** form, and the key icon on a device without a key) also sets the device up for Wi-Fi sign-in, and the screen with the new secret lists the commands that turn on RADIUS on the AP's existing Wi-Fi networks. Persistent monitoring stays a separate, global setting.
+- **Adding devices:** one wizard step takes a device's IP address, a host-key fingerprint you verified, and its root password (used once, never stored). OpenManage installs a generated key, checks it works, and stores the management key encrypted at rest. When RADIUS is switched on (it is off by default and hidden until then), a RADIUS tick box on every add path (wizard, **Advanced / manual** form, and the key icon on a device without a key) also sets the device up for Wi-Fi sign-in, and the screen with the new secret lists the commands that turn on RADIUS on the AP's existing Wi-Fi networks. Persistent monitoring stays a separate, global setting.
 - **Health and monitoring:** read-only health checks, plus opt-in persistent monitoring with 30 days of history.
 - **Configuration snapshots and drift:** encrypted `uci export` snapshots, change review with secrets redacted, and optional scheduled captures.
 - **Controlled changes:** the system hostname can be changed with a preview, a timed rollback, and verification over a fresh SSH connection.
