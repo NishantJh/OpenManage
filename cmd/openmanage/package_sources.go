@@ -115,43 +115,37 @@ func newPackageFetchClient() *http.Client {
 
 var packageFetchClient = newPackageFetchClient()
 
-var githubReleasePath = regexp.MustCompile(`^/[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}/releases/download/[^/]{1,200}/[^/]{1,200}$`)
+const githubBase = "https://github.com/"
 
-// packageLinkAllowed is the rule for a link: a GitHub release asset, which is where
-// OpenWrt themes and add-ons are published. Anything else is uploaded as a file. Tests
-// replace it to reach a local server.
-var packageLinkAllowed = githubReleaseLink
-
-func githubReleaseLink(u *url.URL) bool {
-	return u.Host == "github.com" && githubReleasePath.MatchString(u.Path)
-}
+var githubReleasePath = regexp.MustCompile(`^/[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}/releases/download/[A-Za-z0-9_.+-]{1,200}/[A-Za-z0-9_.+-]{1,200}$`)
 
 // packageRedirectAllowed is the rule for where a GitHub release link may redirect: GitHub
 // serves release assets from its own hosts.
-var packageRedirectAllowed = func(u *url.URL) bool {
+func packageRedirectAllowed(u *url.URL) bool {
 	return u.Scheme == "https" && (u.Host == "github.com" || strings.HasSuffix(u.Host, ".githubusercontent.com"))
 }
 
-// parsePackageURL returns the link without its query or fragment, which is what is
-// remembered (and audited) as the origin.
-func parsePackageURL(raw string) (*url.URL, string, error) {
+// parsePackageURL accepts only a link to a GitHub release file, which is where OpenWrt
+// themes and add-ons are published; anything else is uploaded. It returns the path under
+// github.com that is fetched (the query string and fragment are dropped) and the link as
+// remembered and audited.
+func parsePackageURL(raw string) (path, origin string, err error) {
 	raw = strings.TrimSpace(raw)
-	u, err := url.Parse(raw)
-	if err != nil || len(raw) > packageURLMax || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" {
-		return nil, "", errors.New("enter an https link to a package file")
+	u, perr := url.Parse(raw)
+	if perr != nil || len(raw) > packageURLMax || u.Scheme != "https" || u.User != nil || u.Opaque != "" {
+		return "", "", errors.New("enter an https link to a package file")
 	}
-	if !packageLinkAllowed(u) {
-		return nil, "", errors.New("links must point to a GitHub release file (https://github.com/<owner>/<repo>/releases/download/<tag>/<file>); upload other files instead")
+	if u.Host != "github.com" || !githubReleasePath.MatchString(u.Path) {
+		return "", "", errors.New("links must point to a GitHub release file (https://github.com/<owner>/<repo>/releases/download/<tag>/<file>); upload other files instead")
 	}
-	origin := *u
-	origin.RawQuery, origin.Fragment = "", ""
-	return u, origin.String(), nil
+	return u.Path, githubBase + strings.TrimPrefix(u.Path, "/"), nil
 }
 
-func fetchPackageFile(ctx context.Context, u *url.URL) ([]byte, error) {
+// fetchPackageFile downloads a GitHub release file by its path under github.com.
+func fetchPackageFile(ctx context.Context, path string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, packageFetchTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubBase+strings.TrimPrefix(path, "/"), nil)
 	if err != nil {
 		return nil, errors.New("enter an https link to a package file")
 	}
@@ -228,12 +222,12 @@ func (a *app) createPackageSource(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid request")
 			return
 		}
-		u, shown, err := parsePackageURL(in.URL)
+		path, shown, err := parsePackageURL(in.URL)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if data, err = fetchPackageFile(r.Context(), u); err != nil {
+		if data, err = fetchPackageFile(r.Context(), path); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}

@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -50,55 +49,71 @@ func TestParsePackageURL(t *testing.T) {
 	}
 }
 
-// useLocalPackageServer lets package downloads reach a local TLS test server.
+// rewriteTransport sends every request to a local TLS test server, whatever its host.
+type rewriteTransport struct {
+	base http.RoundTripper
+	host string
+}
+
+func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.URL.Host = r.host
+	return r.base.RoundTrip(req)
+}
+
+// useLocalPackageServer lets github.com package downloads reach a local TLS test server.
 func useLocalPackageServer(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(handler)
-	oldClient, oldControl, oldAllowed := packageFetchClient, packageDialControl, packageLinkAllowed
-	packageFetchClient = &http.Client{Transport: srv.Client().Transport, CheckRedirect: newPackageFetchClient().CheckRedirect}
-	packageDialControl = func(string, string, syscall.RawConn) error { return nil }
-	packageLinkAllowed = func(u *url.URL) bool { return true }
+	u, _ := url.Parse(srv.URL)
+	oldClient := packageFetchClient
+	packageFetchClient = &http.Client{
+		Transport:     rewriteTransport{base: srv.Client().Transport, host: u.Host},
+		CheckRedirect: newPackageFetchClient().CheckRedirect,
+	}
 	t.Cleanup(func() {
 		srv.Close()
-		packageFetchClient, packageDialControl, packageLinkAllowed = oldClient, oldControl, oldAllowed
+		packageFetchClient = oldClient
 	})
 	return srv
 }
 
-func TestFetchPackageRefusesLocalAddresses(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("x")) }))
-	defer srv.Close()
-	u, _ := url.Parse(srv.URL + "/x.ipk")
-	if _, err := fetchPackageFile(context.Background(), u); err == nil {
+func TestPackageDialControlRefusesLocalAddresses(t *testing.T) {
+	if err := packageDialControl("tcp", "127.0.0.1:443", nil); err == nil {
 		t.Fatal("a download from a loopback address must be refused")
+	}
+	if err := packageDialControl("tcp", "192.168.1.1:443", nil); err == nil {
+		t.Fatal("a download from a private address must be refused")
+	}
+	if err := packageDialControl("tcp", "8.8.8.8:443", nil); err != nil {
+		t.Fatalf("a public address is fine: %v", err)
 	}
 }
 
 func TestFetchPackageFile(t *testing.T) {
 	ipk := fixture(t, "ca-bundle.ipk")
-	srv := useLocalPackageServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	useLocalPackageServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/ok.ipk":
+		case "/o/r/releases/download/v1/ok.ipk":
 			w.Write(ipk)
-		case "/big.ipk":
+		case "/o/r/releases/download/v1/big.ipk":
 			w.Header().Set("Content-Length", fmt.Sprint(packageMaxFileBytes+1))
 			w.Write([]byte("x"))
-		case "/redirect":
+		case "/o/r/releases/download/v1/redirect":
 			http.Redirect(w, r, "http://example.invalid/x", http.StatusFound)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	get := func(path string) ([]byte, error) {
-		u, _ := url.Parse(srv.URL + path)
-		return fetchPackageFile(context.Background(), u)
+	get := func(name string) ([]byte, error) {
+		return fetchPackageFile(context.Background(), "/o/r/releases/download/v1/"+name)
 	}
-	if data, err := get("/ok.ipk"); err != nil || !bytes.Equal(data, ipk) {
+	if data, err := get("ok.ipk"); err != nil || !bytes.Equal(data, ipk) {
 		t.Fatalf("download: %v", err)
 	}
-	for _, path := range []string{"/big.ipk", "/redirect", "/missing"} {
-		if _, err := get(path); err == nil {
-			t.Errorf("%s must fail", path)
+	for _, name := range []string{"big.ipk", "redirect", "missing"} {
+		if _, err := get(name); err == nil {
+			t.Errorf("%s must fail", name)
 		}
 	}
 }
@@ -238,7 +253,7 @@ func TestCreatePackageSourceFromURL(t *testing.T) {
 	a := &app{db: db}
 	_, userID := seedDeviceAndUser(t, db)
 	apk := fixture(t, "ca-bundle.apk")
-	srv := useLocalPackageServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(apk) }))
+	useLocalPackageServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(apk) }))
 	post := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/api/package-sources", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -250,18 +265,16 @@ func TestCreatePackageSourceFromURL(t *testing.T) {
 	if rec := post(`{"url":"http://example.com/x.apk"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("plain http: %d", rec.Code)
 	}
-	packageLinkAllowed = githubReleaseLink
 	if rec := post(`{"url":"https://example.com/x.apk"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("a link that is not a GitHub release: %d", rec.Code)
 	}
-	packageLinkAllowed = func(u *url.URL) bool { return true }
-	rec := post(`{"url":"` + srv.URL + `/theme.apk?sig=abc"}`)
+	rec := post(`{"url":"https://github.com/o/r/releases/download/v1/theme.apk?sig=abc"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create from link: %d %s", rec.Code, rec.Body)
 	}
 	var src packageSource
 	json.Unmarshal(rec.Body.Bytes(), &src)
-	if src.Format != "apk" || src.Origin != srv.URL+"/theme.apk" || strings.Contains(rec.Body.String(), "sig=abc") {
+	if src.Format != "apk" || src.Origin != "https://github.com/o/r/releases/download/v1/theme.apk" || strings.Contains(rec.Body.String(), "sig=abc") {
 		t.Fatalf("unexpected source: %s", rec.Body)
 	}
 }
