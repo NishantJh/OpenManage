@@ -224,6 +224,82 @@ api GET "/api/devices/$device_id/firmware-plan?version=..%2F..%2Fetc"
 [[ "$status" == 400 ]] || fail "a malformed release must be refused (HTTP $status)"
 echo "PASS: the upgrade plan lists releases from the build server, maps the image profile and flags packages the official feeds lack"
 
+# Prepare a firmware upgrade (no flash). The router's web server also stands in for ASU's
+# build API through a CGI script: the first poll says "started", the second returns a
+# finished build whose image is random bytes. A container cannot flash, so the
+# device-side checks stop at sysupgrade -T: with the real tool the random image must be
+# rejected; with a stub that approves -T (and passes -b through to the real tool, which
+# the backup needs), the job becomes ready and can be cancelled.
+docker exec -i "$router" sh -c 'mkdir -p /www/api/v1 /www/store/abcdef0123456789 && cat > /www/api/v1/build && chmod 755 /www/api/v1/build &&
+  head -c 300000 /dev/urandom > /www/store/abcdef0123456789/img-sysupgrade.bin &&
+  uci set uhttpd.main.cgi_prefix=/api && uci commit uhttpd && /etc/init.d/uhttpd restart' <<'EOS'
+#!/bin/sh
+img=/www/store/abcdef0123456789/img-sysupgrade.bin
+if [ "$REQUEST_METHOD" = POST ]; then
+  cat > /dev/null
+  rm -f /tmp/build-polls
+  printf 'Status: 202 Accepted\r\nContent-Type: application/json\r\n\r\n{"status":202,"detail":"queued","request_hash":"abcdef0123456789"}'
+  exit 0
+fi
+n=$(cat /tmp/build-polls 2>/dev/null || echo 0); n=$((n+1)); echo $n > /tmp/build-polls
+if [ "$n" -lt 2 ]; then
+  printf 'Status: 202 Accepted\r\nContent-Type: application/json\r\n\r\n{"status":202,"detail":"started","request_hash":"abcdef0123456789"}'
+else
+  sum=$(sha256sum $img | cut -d' ' -f1)
+  printf 'Content-Type: application/json\r\n\r\n{"status":200,"detail":"done","bin_dir":"abcdef0123456789","images":[{"name":"img-sysupgrade.bin","type":"sysupgrade","filesystem":"squashfs","sha256":"%s"}]}' "$sum"
+fi
+EOS
+image_sum="$(docker exec "$router" sh -c 'sha256sum /www/store/abcdef0123456789/img-sysupgrade.bin | cut -d" " -f1')"
+wait_upgrade() { # waits until the newest upgrade job leaves "preparing"; leaves the list in $body
+  for _ in $(seq 1 40); do
+    api GET "/api/devices/$device_id/firmware-upgrades"
+    [[ "$status" == 200 ]] || { cat "$body" >&2; fail "listing firmware upgrades returned HTTP $status"; }
+    [[ "$(json 'print(d[0]["status"])' < "$body")" != preparing ]] && return 0
+    sleep 3
+  done
+  cat "$body" >&2; fail "the firmware upgrade stayed in preparing"
+}
+pinned_backups() { compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM device_backups WHERE pinned"; }
+
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+[[ "$status" == 202 ]] || { cat "$body" >&2; fail "starting a firmware upgrade returned HTTP $status"; }
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+[[ "$status" == 409 ]] || fail "a second open upgrade on the same device must be refused (HTTP $status)"
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"../x"}'
+[[ "$status" == 400 || "$status" == 409 ]] || fail "a malformed release must be refused (HTTP $status)"
+wait_upgrade
+json 'u=d[0]; assert u["status"]=="stopped" and "sysupgrade -T" in u["detail"], u; assert u["plan"]["packages"]==["-wpad-basic-mbedtls"], u["plan"]' < "$body"
+[[ "$(pinned_backups)" == 0 ]] || fail "a stopped upgrade left a backup pinned"
+docker exec "$router" test ! -e /tmp/.om-firmware || fail "a stopped upgrade left its image on the device"
+echo "PASS: preparing builds and verifies the image, takes a backup, stages it, and the device's own check rejects a bad image, which unpins the backup and removes the file"
+
+docker exec "$router" sh -c 'mkdir -p /tmp/lab-aside && mv /sbin/sysupgrade /tmp/lab-aside/sysupgrade.real &&
+  printf "#!/bin/sh\ncase \" \$* \" in *\" -T \"*) exit 0;; esac\nexec /tmp/lab-aside/sysupgrade.real \"\$@\"\n" > /sbin/sysupgrade && chmod 755 /sbin/sysupgrade'
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+[[ "$status" == 202 ]] || { cat "$body" >&2; fail "starting a firmware upgrade returned HTTP $status"; }
+upgrade_id="$(json 'print(d["id"])' < "$body")"
+wait_upgrade
+json '
+u=d[0]
+assert u["status"]=="ready" and u["image_sha256"]==sys.argv[1] and u["image_size"]==300000 and u["backup_id"], u
+assert u["expires_at"] and u["image_name"]=="img-sysupgrade.bin", u' "$image_sum" < "$body"
+[[ "$(pinned_backups)" == 1 ]] || fail "a ready upgrade must hold exactly one pinned backup"
+[[ "$(docker exec "$router" sh -c 'sha256sum /tmp/.om-firmware/image.bin | cut -d" " -f1; ls -ld /tmp/.om-firmware | cut -c1-10')" == "$image_sum"$'\n'drwx------ ]] || fail "the staged image is missing, altered, or its directory is not mode 700"
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+[[ "$status" == 409 ]] || fail "a ready upgrade must block another one (HTTP $status)"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/cancel"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "cancel returned HTTP $status"; }
+json 'assert d["status"]=="stopped" and d["detail"]=="cancelled", d' < "$body"
+[[ "$(pinned_backups)" == 0 ]] || fail "cancelling left a backup pinned"
+docker exec "$router" test ! -e /tmp/.om-firmware || fail "cancelling left the image on the device"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/cancel"
+[[ "$status" == 409 ]] || fail "a finished upgrade cannot be cancelled again (HTTP $status)"
+audited="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action IN ('device.firmware_upgrade_prepare','device.firmware_upgrade_ready','device.firmware_upgrade_stopped')")"
+[[ "$audited" == 5 ]] || fail "firmware upgrade steps were not all audited ($audited)"
+docker exec "$router" sh -c 'mv /tmp/lab-aside/sysupgrade.real /sbin/sysupgrade &&
+  uci delete uhttpd.main.cgi_prefix && uci commit uhttpd && mv /www/api /www/store /tmp/lab-aside/'
+echo "PASS: a prepared upgrade pins one backup, stages a mode-700 image with the expected hash, blocks a second upgrade, and cancelling removes the image and unpins the backup"
+
 # Put the router back as it was (moved aside, not deleted) and turn the build server off.
 docker exec "$router" sh -c '/etc/init.d/uhttpd stop; mv /tmp/opkg-status.lab /usr/lib/opkg/status && mv /tmp/customfeeds.lab /etc/opkg/customfeeds.conf &&
   mkdir -p /tmp/lab-aside && mv /rom /tmp/sysinfo /www/json /www/releases /tmp/lab-aside/'

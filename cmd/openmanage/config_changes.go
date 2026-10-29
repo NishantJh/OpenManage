@@ -311,10 +311,14 @@ func (a *app) claimConfigChange(ctx context.Context, deviceID string, changeID i
 		return c, http.StatusInternalServerError, "could not start the change"
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `UPDATE config_changes SET status='failed', finished_at=NOW(),
+	// Serialised with restores and firmware upgrades on this device.
+	_, err = tx.Exec(ctx, lockDeviceSQL, deviceID)
+	if err == nil {
+		_, err = tx.Exec(ctx, `UPDATE config_changes SET status='failed', finished_at=NOW(),
 		detail='interrupted while applying; the device rolled back on its own timer'
 		WHERE device_id=$1 AND status='applying' AND created_at < NOW() - ($2 * INTERVAL '1 second')`,
-		deviceID, int(staleApplyAfter.Seconds()))
+			deviceID, int(staleApplyAfter.Seconds()))
+	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `UPDATE config_changes SET status='expired', finished_at=NOW()
 			WHERE device_id=$1 AND status='previewed' AND created_at < NOW() - ($2 * INTERVAL '1 second')`,
@@ -326,6 +330,13 @@ func (a *app) claimConfigChange(ctx context.Context, deviceID string, changeID i
 	}
 	if err == nil && restoring {
 		return c, http.StatusConflict, "a backup restore is running on this device"
+	}
+	var upgrading bool
+	if err == nil {
+		err = tx.QueryRow(ctx, openUpgradeSQL, deviceID).Scan(&upgrading)
+	}
+	if err == nil && upgrading {
+		return c, http.StatusConflict, openUpgradeMessage
 	}
 	if err == nil {
 		err = scanConfigChange(tx.QueryRow(ctx, `UPDATE config_changes SET status='applying', applied_by=$3

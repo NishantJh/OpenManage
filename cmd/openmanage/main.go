@@ -191,6 +191,9 @@ func main() {
 	mux.HandleFunc("POST /api/devices/{id}/firmware-inventory", a.captureFirmwareInventory)
 	mux.HandleFunc("GET /api/devices/{id}/firmware-inventory", a.getFirmwareInventory)
 	mux.HandleFunc("GET /api/devices/{id}/firmware-plan", a.getFirmwarePlan)
+	mux.HandleFunc("GET /api/devices/{id}/firmware-upgrades", a.listFirmwareUpgrades)
+	mux.HandleFunc("POST /api/devices/{id}/firmware-upgrades", a.startFirmwareUpgrade)
+	mux.HandleFunc("POST /api/devices/{id}/firmware-upgrades/{job}/cancel", a.cancelFirmwareUpgrade)
 	mux.HandleFunc("GET /api/firmware/settings", a.getFirmwareSettings)
 	mux.HandleFunc("PUT /api/firmware/settings", a.updateFirmwareSettings)
 	mux.HandleFunc("GET /api/firmware/releases", a.listFirmwareReleases)
@@ -255,6 +258,7 @@ func main() {
 		defer close(monitorDone)
 		a.monitorLoop(ctx)
 	}()
+	go a.recoverFirmwareUpgradesAtStartup(ctx)
 
 	handler := securityHeaders(frontendFallback(apiDeadline(a.authMiddleware(mux))))
 	srv := &http.Server{

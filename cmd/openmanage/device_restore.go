@@ -299,13 +299,25 @@ func (a *app) restoreDeviceBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), staleRestoreSQL, deviceID, int(staleRestoreAfter.Seconds()))
+	// Serialised with config changes and firmware upgrades on this device.
+	_, err = tx.Exec(r.Context(), lockDeviceSQL, deviceID)
+	if err == nil {
+		_, err = tx.Exec(r.Context(), staleRestoreSQL, deviceID, int(staleRestoreAfter.Seconds()))
+	}
 	var changing bool
 	if err == nil {
 		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM config_changes WHERE device_id=$1 AND status='applying')`, deviceID).Scan(&changing)
 	}
 	if err == nil && changing {
 		writeError(w, http.StatusConflict, "a configuration change is being applied to this device; wait for it to finish")
+		return
+	}
+	var upgrading bool
+	if err == nil {
+		err = tx.QueryRow(r.Context(), openUpgradeSQL, deviceID).Scan(&upgrading)
+	}
+	if err == nil && upgrading {
+		writeError(w, http.StatusConflict, openUpgradeMessage)
 		return
 	}
 	if err == nil {
