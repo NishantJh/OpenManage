@@ -50,6 +50,9 @@ type packageInfo struct {
 	Depends       []string        `json:"depends"`
 	Scripts       []packageScript `json:"scripts"`
 	InstalledSize int64           `json:"installed_size"`
+	// UnpackedSize is measured from the package's data archive (.ipk only); InstalledSize is
+	// only what the package claims. Zero means it could not be measured.
+	UnpackedSize int64 `json:"unpacked_size,omitempty"`
 }
 
 var errPackageUnsupported = errors.New("this is not a supported .ipk or .apk package file")
@@ -182,14 +185,21 @@ func inspectIPK(data []byte) (packageInfo, error) {
 			info.Scripts = append(info.Scripts, s)
 		}
 	}
+	info.UnpackedSize = ipkUnpackedSize(data)
 	return info, nil
 }
 
 // ipkControlArchive returns the bytes of control.tar.gz from an .ipk, which is either a
 // gzip-compressed tar (what OpenWrt builds) or an ar archive (what Debian tools build).
 func ipkControlArchive(data []byte) ([]byte, error) {
+	return ipkMember(data, "control.tar.gz", packageMaxControlBytes)
+}
+
+// ipkMember returns the named member of an .ipk, which is either an ar archive or a
+// gzip-compressed tar, refusing a member larger than limit.
+func ipkMember(data []byte, want string, limit int) ([]byte, error) {
 	if bytes.HasPrefix(data, []byte("!<arch>\n")) {
-		return arMember(data, "control.tar.gz")
+		return arMember(data, want, limit)
 	}
 	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
@@ -199,23 +209,55 @@ func ipkControlArchive(data []byte) ([]byte, error) {
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return nil, errors.New("the package has no control archive")
+			return nil, errors.New("the package has no " + want)
 		}
 		if err != nil {
 			return nil, errors.New("the package file is damaged or not an .ipk")
 		}
-		if strings.TrimPrefix(hdr.Name, "./") != "control.tar.gz" {
+		if strings.TrimPrefix(hdr.Name, "./") != want {
 			continue
 		}
-		body, err := io.ReadAll(io.LimitReader(tr, packageMaxControlBytes+1))
-		if err != nil || len(body) > packageMaxControlBytes {
-			return nil, errors.New("the package's control archive is damaged or too large")
+		body, err := io.ReadAll(io.LimitReader(tr, int64(limit)+1))
+		if err != nil || len(body) > limit {
+			return nil, errors.New("the package's " + want + " is damaged or too large")
 		}
 		return body, nil
 	}
 }
 
-func arMember(data []byte, want string) ([]byte, error) {
+// ipkUnpackedSize adds up the file sizes in the package's data archive by reading it, so a
+// highly compressible package cannot hide how much space it needs. It returns 0 when the
+// size cannot be established.
+func ipkUnpackedSize(data []byte) int64 {
+	member, err := ipkMember(data, "data.tar.gz", packageMaxFileBytes)
+	if err != nil {
+		return 0
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(member))
+	if err != nil {
+		return 0
+	}
+	tr := tar.NewReader(io.LimitReader(gz, packageMaxExpanded))
+	var total int64
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return total
+		}
+		if err != nil {
+			return 0
+		}
+		total += hdr.Size
+		if total > packageMaxExpanded {
+			return 0
+		}
+		if _, err := io.Copy(io.Discard, tr); err != nil {
+			return 0
+		}
+	}
+}
+
+func arMember(data []byte, want string, limit int) ([]byte, error) {
 	pos := 8
 	for pos+60 <= len(data) {
 		name := strings.TrimRight(strings.TrimSpace(string(data[pos:pos+16])), "/")
@@ -228,8 +270,8 @@ func arMember(data []byte, want string) ([]byte, error) {
 			return nil, errors.New("the package file is truncated")
 		}
 		if name == want {
-			if size > packageMaxControlBytes {
-				return nil, errors.New("the package's control archive is too large")
+			if size > limit {
+				return nil, errors.New("the package's " + want + " is too large")
 			}
 			return data[pos : pos+size], nil
 		}

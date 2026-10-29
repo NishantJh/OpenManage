@@ -141,6 +141,20 @@ Registering a package source installs nothing on any device yet; installing and 
 - **Review and confirm:** a registered file is stored as *pending* for one hour. An administrator confirms it by sending the SHA-256 shown on the review screen, which must match; only then is the source usable. The same file cannot be registered twice. At most 100 sources and 512 MiB are stored.
 - **Audit:** `package_source.create`, `package_source.confirm` and `package_source.delete`, each with name, version, hash and the script names.
 
+### Installing a package source (as built)
+
+`POST /api/devices/{id}/package-installs` (administrators only) installs a confirmed source on one device; `GET` lists the device's recent installs. It returns at once and the install runs in the background, one per device. It never runs on its own.
+
+- **Asked for in full:** the request names a confirmed source, repeats the device name exactly, and acknowledges that the package's install scripts run as root on the device. A pending source is refused.
+- **Checks before anything is sent:** the file format matches the device's package manager (`.ipk` for opkg, `.apk` for apk); the package architecture equals the device's (`all` and `noarch` always fit); free flash is at least twice the largest of the file size, the package's claimed installed size and, for an `.ipk`, the unpacked size measured from its data archive when it was registered (an `.apk`'s size is only the package's claim and is reported as a warning), plus 1 MB; free memory covers the file plus 16 MB; for `.ipk`, every dependency is already installed (`.apk` dependencies are left to apk); the same version is not already installed; and a package that came with the firmware or as a dependency is never replaced (a package the owner installed, such as an older theme, is). Any failed check ends the install with nothing sent.
+- **On the device:** the stored copy goes in on stdin to a fresh mode-700 directory (`/tmp/.om-pkg`), its SHA-256 is checked there, then one fixed command installs that one file: `opkg install <file>` or `apk add --no-network --allow-untrusted <file>`. apk applies `--allow-untrusted` to the whole transaction, so `--no-network` keeps it to that one hash-checked file: nothing is fetched from a feed while signatures are off, and an `.apk` whose dependencies are not installed fails with nothing changed. The directory is removed afterwards, whatever happened.
+- **Verified from the device:** the package list is read again and must show the package at the expected version. The command's exit status alone is not trusted.
+- **Exclusion:** no install while a firmware upgrade is open, a restore is running or a configuration change is applying, and none of those start while an install runs. A server restart ends a running install as failed with a note to check the device.
+- **Audit:** `device.package_install` records the source, version and hash. The package manager's output is never stored: an install script runs as root and could print a secret, and operators can read install records.
+- **Tested** on a real OpenWrt VM in the opt-in "OpenWrt VM flash test" workflow, after the flash: register, review, confirm, install, check the files and the post-install script on the VM, and a second install of the same version refused.
+
+Not built yet: reinstalling sources after a flash as a reported check, the Software sources screen, and the "Check for update" button.
+
 ### The package set changes over time
 
 There is no fixed list of third-party packages anywhere in the code. What should be on a device is data:

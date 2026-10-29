@@ -152,3 +152,15 @@ func TestEscapedScriptIsNeverTruncated(t *testing.T) {
 		t.Fatalf("escaped script length %d, want %d", len(sc.Body), want)
 	}
 }
+
+// The fixture keeps the real control data but a trimmed data archive, so only the fact of
+// measuring is checked here; the VM test installs a package whose data is real.
+func TestIPKUnpackedSizeIsMeasured(t *testing.T) {
+	info, err := inspectPackage(fixture(t, "ca-bundle.ipk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.UnpackedSize <= 0 {
+		t.Fatalf("the data archive of a real .ipk must be measured, got %d", info.UnpackedSize)
+	}
+}
