@@ -3,10 +3,6 @@ name: OpenWrt VM flash
 # OpenManage's firmware upgrade and checks the device after it restarts. GitHub-hosted
 # only; it never runs on the self-hosted runner and never touches real devices.
 on:
-  # TEMPORARY while the test is developed: a workflow can only be dispatched once it is on main.
-  push:
-    branches: [claude/project-thread-0bwcas]
-    paths: [scripts/openwrt-vm-flash-test.sh, scripts/openwrt-vm/**, .github/workflows/openwrt-vm-flash.yml]
   workflow_dispatch:
     inputs:
       old_version:
@@ -30,6 +26,6 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-utils
       - name: Run the VM flash test
         env:
-          OPENWRT_OLD_VERSION: ${{ inputs.old_version || '24.10.3' }}
-          OPENWRT_NEW_VERSION: ${{ inputs.new_version || '24.10.4' }}
+          OPENWRT_OLD_VERSION: ${{ inputs.old_version }}
+          OPENWRT_NEW_VERSION: ${{ inputs.new_version }}
         run: bash scripts/openwrt-vm-flash-test.sh
