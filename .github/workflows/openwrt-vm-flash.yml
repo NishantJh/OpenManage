@@ -1,0 +1,35 @@
+name: OpenWrt VM flash
+# Opt-in: boots an official OpenWrt x86-64 image in QEMU, flashes the next release through
+# OpenManage's firmware upgrade and checks the device after it restarts. GitHub-hosted
+# only; it never runs on the self-hosted runner and never touches real devices.
+on:
+  # TEMPORARY while the test is developed: a workflow can only be dispatched once it is on main.
+  push:
+    branches: [claude/project-thread-0bwcas]
+    paths: [scripts/openwrt-vm-flash-test.sh, scripts/openwrt-vm/**, .github/workflows/openwrt-vm-flash.yml]
+  workflow_dispatch:
+    inputs:
+      old_version:
+        description: OpenWrt release the VM starts on
+        default: "24.10.3"
+      new_version:
+        description: OpenWrt release to flash
+        default: "24.10.4"
+permissions:
+  contents: read
+concurrency:
+  group: openwrt-vm-flash-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  flash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install QEMU
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-utils
+      - name: Run the VM flash test
+        env:
+          OPENWRT_OLD_VERSION: ${{ inputs.old_version || '24.10.3' }}
+          OPENWRT_NEW_VERSION: ${{ inputs.new_version || '24.10.4' }}
+        run: bash scripts/openwrt-vm-flash-test.sh
