@@ -512,11 +512,15 @@ type firmwarePlan struct {
 // "-name" for each image default the owner removed that is still a default. The
 // owner's packages missing from the feeds are reported, not requested; they are
 // typically third-party themes reinstalled after the upgrade.
-func planPackages(m firmwareManifest, defaults map[string]bool, available map[string]bool, changes []asuPackageChange, toRevision int, plan *firmwarePlan) {
+func planPackages(m firmwareManifest, defaults map[string]bool, available map[string]bool, changes []asuPackageChange, fromRevision, toRevision int, plan *firmwarePlan) {
 	rename := map[string]string{}
 	drop := map[string]bool{}
 	for _, c := range changes {
-		if c.Revision > toRevision || !packageNamePattern.MatchString(c.Source) {
+		// A change applies to a device built before it (revision at most the change's)
+		// and for a release built at or after it. A device already past the change that
+		// still has the old name got it from somewhere else, such as a custom feed, so the
+		// change says nothing about it. An unknown installed revision applies everything.
+		if c.Revision > toRevision || (fromRevision > 0 && fromRevision > c.Revision) || !packageNamePattern.MatchString(c.Source) {
 			continue
 		}
 		if c.Target == "" {
@@ -525,14 +529,16 @@ func planPackages(m firmwareManifest, defaults map[string]bool, available map[st
 			rename[c.Source] = c.Target
 		}
 	}
-	has := func(name string) bool {
+	// feedName returns the name to request: the installed name, or its ABI-free form when
+	// that is what the v2 package index lists (libubox20240329 is listed as libubox).
+	feedName := func(name string) (string, bool) {
 		if available[name] {
-			return true
+			return name, true
 		}
-		if m := abiSuffixPattern.FindStringSubmatch(name); m != nil {
-			return available[m[1]]
+		if m := abiSuffixPattern.FindStringSubmatch(name); m != nil && available[m[1]] {
+			return m[1], true
 		}
-		return false
+		return "", false
 	}
 	requested := map[string]bool{}
 	for _, name := range m.UserInstalled {
@@ -542,15 +548,27 @@ func planPackages(m firmwareManifest, defaults map[string]bool, available map[st
 		case rename[name] != "":
 			plan.Renamed = append(plan.Renamed, packageRename{From: name, To: rename[name]})
 			requested[rename[name]] = true
-		case has(name):
-			plan.Kept = append(plan.Kept, name)
-			requested[name] = true
 		default:
-			plan.Unavailable = append(plan.Unavailable, name)
+			if requestName, ok := feedName(name); ok {
+				plan.Kept = append(plan.Kept, requestName)
+				requested[requestName] = true
+			} else {
+				plan.Unavailable = append(plan.Unavailable, name)
+			}
 		}
 	}
+	// A default the owner removed stays removed under its new name when the release
+	// renamed it; a default the release dropped needs no removal.
+	left := map[string]bool{}
 	for _, name := range m.RemovedDefaults {
-		if defaults[name] && !requested[name] {
+		if drop[name] {
+			continue
+		}
+		if to := rename[name]; to != "" {
+			name = to
+		}
+		if defaults[name] && !requested[name] && !left[name] {
+			left[name] = true
 			plan.RemovedDefaults = append(plan.RemovedDefaults, name)
 		}
 	}
@@ -558,6 +576,7 @@ func planPackages(m firmwareManifest, defaults map[string]bool, available map[st
 		plan.Packages = append(plan.Packages, name)
 	}
 	sort.Strings(plan.Packages)
+	sort.Strings(plan.RemovedDefaults)
 	for _, name := range plan.RemovedDefaults {
 		plan.Packages = append(plan.Packages, "-"+name)
 	}
@@ -656,7 +675,7 @@ func firmwarePlanFor(ctx context.Context, serverURL string, m firmwareManifest, 
 	for name := range defaults {
 		available[name] = true
 	}
-	planPackages(m, defaults, available, branch.PackageChanges, revisionNumber(profiles.VersionCode), &plan)
+	planPackages(m, defaults, available, branch.PackageChanges, revisionNumber(m.Revision), revisionNumber(profiles.VersionCode), &plan)
 
 	switch c := compareReleases(version, m.Release); {
 	case version == m.Release:

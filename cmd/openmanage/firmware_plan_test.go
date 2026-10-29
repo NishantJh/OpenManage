@@ -72,8 +72,8 @@ func TestPlanPackages(t *testing.T) {
 		{Source: "wpad-openssl", Target: "future", Revision: 999},
 	}
 	var plan firmwarePlan
-	planPackages(m, defaults, available, changes, 500, &plan)
-	if !slices.Equal(plan.Packages, []string{"libfoo20240329", "new-name", "wpad-openssl", "-wpad-basic-mbedtls"}) {
+	planPackages(m, defaults, available, changes, 0, 500, &plan)
+	if !slices.Equal(plan.Packages, []string{"libfoo", "new-name", "wpad-openssl", "-wpad-basic-mbedtls"}) {
 		t.Fatalf("packages = %v", plan.Packages)
 	}
 	if !slices.Equal(plan.Unavailable, []string{"luci-theme-fluent"}) || !slices.Equal(plan.Dropped, []string{"old-dropped"}) ||
@@ -205,5 +205,36 @@ func TestFirmwareEndpointRoles(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("%s: status %d, want 403", name, rec.Code)
 		}
+	}
+}
+
+func TestPlanPackagesGatesChangesOnInstalledRevision(t *testing.T) {
+	m := firmwareManifest{UserInstalled: []string{"old-name"}}
+	available := map[string]bool{"old-name": true, "new-name": true}
+	changes := []asuPackageChange{{Source: "old-name", Target: "new-name", Revision: 100}}
+
+	var before firmwarePlan
+	planPackages(m, nil, available, changes, 90, 500, &before)
+	if !slices.Equal(before.Packages, []string{"new-name"}) || len(before.Renamed) != 1 {
+		t.Fatalf("a device older than the change is renamed: %+v", before)
+	}
+	var after firmwarePlan
+	planPackages(m, nil, available, changes, 200, 500, &after)
+	if !slices.Equal(after.Packages, []string{"old-name"}) || len(after.Renamed) != 0 {
+		t.Fatalf("a device already past the change keeps the name it has: %+v", after)
+	}
+}
+
+func TestPlanPackagesKeepsRemovedDefaultsRemovedUnderNewName(t *testing.T) {
+	m := firmwareManifest{RemovedDefaults: []string{"firewall", "odhcpd", "same"}}
+	defaults := map[string]bool{"firewall4": true, "same": true}
+	changes := []asuPackageChange{
+		{Source: "firewall", Target: "firewall4", Revision: 10},
+		{Source: "odhcpd", Revision: 10},
+	}
+	var plan firmwarePlan
+	planPackages(m, defaults, map[string]bool{}, changes, 0, 500, &plan)
+	if !slices.Equal(plan.Packages, []string{"-firewall4", "-same"}) {
+		t.Fatalf("packages = %v (a removed default stays removed under its new name; a dropped one needs no removal)", plan.Packages)
 	}
 }
