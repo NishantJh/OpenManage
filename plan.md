@@ -186,7 +186,7 @@ Not scheduled; starts after the firmware work is done and tested. Agreed in prin
 
 - [ ] Read-only view of all UCI settings per device, grouped in the LuCI-like menu, secrets redacted.
 - [ ] Widen the Section 3 controlled-change workflow from one setting to a batch: pre-change backup, diff, `uci apply` with 60 s rollback, read-back over a fresh connection, confirm. Refuse if the device config changed since the page loaded.
-- [ ] Hand-built pages for common sections, Wireless first (this absorbs Section 9), then System, Network interfaces, DHCP/DNS, Firewall.
+- [ ] Hand-built pages for common sections, Wireless first (built on the Section 9 Wi-Fi write, which stays scheduled as next and is not deferred), then System, Network interfaces, DHCP/DNS, Firewall.
 - [ ] Admin-only raw UCI editor for everything else, including third-party apps, through the same workflow.
 
 Safety rules: changes that can drop clients (wireless, network, firewall, management access) need an explicit opt-in tickbox; existing SSIDs and passphrases stay locked unless the user unlocks that field; no change ever forces clients to rejoin without opt-in.
