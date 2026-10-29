@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CloudDownload } from "lucide-react";
 import { apiJSON } from "../api";
+import UpgradeJob from "./UpgradeJob";
 import type { FirmwareInventory, FirmwarePlan, FirmwareRelease, FirmwareSettings, Role } from "../types";
 
 function Names({title,items,empty,note}:{title:string;items:string[];empty:string;note?:string}){
@@ -16,7 +17,7 @@ function defaultRelease(releases:FirmwareRelease[],current:string){
 
 // What upgrading one device to a chosen release would request. Read-only: it reads
 // release metadata from the build server and changes nothing on the device.
-export default function UpgradePlan({deviceId,inventory,role,settings,onSettings}:{deviceId:string;inventory:FirmwareInventory;role:Role;settings:FirmwareSettings|null;onSettings:(s:FirmwareSettings)=>void}){
+export default function UpgradePlan({deviceId,deviceName,inventory,role,settings,onSettings}:{deviceId:string;deviceName:string;inventory:FirmwareInventory;role:Role;settings:FirmwareSettings|null;onSettings:(s:FirmwareSettings)=>void}){
  const [releases,setReleases]=useState<FirmwareRelease[]>([]),[version,setVersion]=useState(""),[plan,setPlan]=useState<FirmwarePlan|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
  const current=inventory.manifest.release,canPlan=role==="admin"||role==="operator",enabled=Boolean(settings?.build_server_enabled),key=useRef("");
  useEffect(()=>{if(!enabled||!canPlan)return;setError("");apiJSON<{releases:FirmwareRelease[]}>("/api/firmware/releases","GET",undefined,"Could not list releases").then(d=>{setReleases(d.releases);setVersion(v=>v&&d.releases.some(r=>r.version===v)?v:defaultRelease(d.releases,current))}).catch(e=>setError(e instanceof Error?e.message:"Could not list releases"))},[enabled,canPlan,deviceId]);
@@ -44,6 +45,7 @@ export default function UpgradePlan({deviceId,inventory,role,settings,onSettings
     {plan.renamed.length>0&&<Names title="Renamed in this release" items={plan.renamed.map(r=>r.from+" → "+r.to)} empty=""/>}
     {plan.dropped.length>0&&<Names title="Dropped in this release" items={plan.dropped} empty=""/>}
    </div>}
+   {plan.blockers.length===0&&<UpgradeJob deviceId={deviceId} deviceName={deviceName} version={plan.version} role={role} plan={plan}/>}
   </>}
  </>}
  </div>;
