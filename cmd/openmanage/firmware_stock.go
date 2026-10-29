@@ -60,7 +60,10 @@ func diffAgainstStock(m firmwareManifest, stock []string) (added, removed []stri
 func stockDiffFor(ctx context.Context, serverURL string, inv firmwareInventory) (stockDiff, error) {
 	m := inv.Manifest
 	out := stockDiff{InventoryID: inv.ID, Release: m.Release, Target: m.Target, Added: []string{}, Removed: []string{}}
-	plan, err := firmwarePlanFor(ctx, serverURL, m, m.Release)
+	// Extroot only blocks upgrades; the release's profile defaults can still be resolved.
+	planned := m
+	planned.Extroot = false
+	plan, err := firmwarePlanFor(ctx, serverURL, planned, m.Release)
 	if err != nil {
 		return out, err
 	}

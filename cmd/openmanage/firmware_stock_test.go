@@ -60,6 +60,12 @@ func TestStockDiffAgainstFakeASU(t *testing.T) {
 	if diff.Note != "" {
 		t.Errorf("unexpected note %q", diff.Note)
 	}
+	// An extroot device cannot be upgraded, but its stock comparison still works.
+	m.Extroot = true
+	if d, err := stockDiffFor(context.Background(), srv.URL, firmwareInventory{Manifest: m}); err != nil || d.StockCount != 4 {
+		t.Errorf("extroot device: %+v %v", d, err)
+	}
+	m.Extroot = false
 	m.Release = "21.02.7"
 	if _, err := stockDiffFor(context.Background(), srv.URL, firmwareInventory{Manifest: m}); err == nil {
 		t.Error("a release the build server does not offer must fail")
