@@ -1,6 +1,6 @@
 # Firmware build and upgrade: design
 
-Status: in progress (started 2026-10-29). Phase 0 (backups) is built; Phase 1 has the read-only inventory (`firmware_inventory.go`). It refines plan.md Section 5.
+Status: in progress (started 2026-10-29). Phase 0 (backups) is built; Phase 1 has the read-only inventory (`firmware_inventory.go`) and upgrade plan (`firmware_plan.go`). It refines plan.md Section 5.
 
 ## Goal
 
@@ -37,6 +37,17 @@ As built (`firmware_inventory`, `POST`/`GET /api/devices/{id}/firmware-inventory
 - Feed-origin detection against the official index waits for the upgrade plan step, which is the first one that contacts the build service.
 - Custom feed lines lose URL credentials and query strings before they are stored. Extroot means an enabled fstab mount targets `/overlay`.
 - The newest 20 inventories per device are kept. A capture that differs only in free space and memory updates the newest row instead of adding one.
+
+### Upgrade plan (as built)
+
+Decided with Nishant 2026-10-29: every release the build server offers is listed (final releases, release candidates and snapshots), newest first, and the admin picks one, as in the ASU web client. apk (25.x) is supported from the start. The order agreed is: single-device upgrade with official packages first, then the package source registry.
+
+- **Opt-in:** `firmware_settings` (one row) holds `build_server_enabled` (off by default) and `build_server_url` (default `https://sysupgrade.openwrt.org`). Only an administrator changes it; changes are audited. The URL must be https, or plain http to a private IP literal (a self-hosted server on the LAN). No credentials, query or fragment.
+- **What is fetched**, read-only and cached for an hour: the build server's `/json/v1/overview.json` (branches, versions, renames, upstream URL), the upstream `profiles.json` for the release and target, and the build server's target and architecture package indexes (`/json/v1/<dir>/targets/<target>/index.json`, `/json/v1/<dir>/packages/<arch>-index.json`). Requests carry only release, target and architecture in the path. Bodies are capped at 16 MiB, requests time out after 20 s, and redirects to another host are refused.
+- **Profile:** the board name with commas as underscores, else a profile that lists it under `supported_devices`, else `generic` (x86), as ASU and owut do.
+- **Packages** (the owut "fs-user" form, additive to the release defaults): the owner's packages that the feeds still offer, after the branch's `package_changes` renames and removals up to the target revision, plus `-name` for each default the owner removed that is still a default. Owner packages the feeds lack are listed as "install again afterwards" and not requested.
+- **Blockers:** extroot, no board name, no image for the board or target, and going from apk back to an opkg release. **Warnings:** same release, downgrade, snapshot, release candidate, new branch, opkg to apk, packages missing from the feeds, and no `/rom` to compare with.
+- API: `GET`/`PUT /api/firmware/settings`, `GET /api/firmware/releases`, `GET /api/devices/{id}/firmware-plan?version=` (admins and operators). The plan uses the newest stored inventory.
 
 ## Building the image
 
