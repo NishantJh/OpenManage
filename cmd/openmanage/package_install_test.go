@@ -24,7 +24,8 @@ func checkStatus(checks []upgradeCheck, name string) string {
 func TestPackagePreflight(t *testing.T) {
 	m := firmwareManifest{
 		PackageManager: "apk", Arch: "aarch64_cortex-a53", OverlayFreeKB: 10000, MemAvailableKB: 100000,
-		Packages: []firmwarePackage{{Name: "libc", Version: "1"}, {Name: "luci-theme-x", Version: "1.0"}},
+		Packages:      []firmwarePackage{{Name: "libc", Version: "1"}, {Name: "luci-theme-x", Version: "1.0"}, {Name: "dropbear", Version: "2024"}},
+		UserInstalled: []string{"luci-theme-x"},
 	}
 	good := packageInfo{Format: "apk", Name: "luci-theme-fluent", Version: "2.0", Arch: "noarch", InstalledSize: 100 << 10}
 	for _, c := range packagePreflight(good, 50<<10, m) {
@@ -79,6 +80,9 @@ func TestInstallCommandsAreFixed(t *testing.T) {
 	}
 	if !strings.Contains(installFormats["apk"].install.command, "--allow-untrusted "+packageStagePath("apk")) {
 		t.Error("apk install must name the one staged file")
+	}
+	if !strings.Contains(installFormats["apk"].install.command, "--no-network") {
+		t.Error("apk install must not reach a feed while signatures are not checked")
 	}
 	if strings.Contains(installFormats["ipk"].install.command, "--allow-untrusted") {
 		t.Error("opkg install must not be given --allow-untrusted")

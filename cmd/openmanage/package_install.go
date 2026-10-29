@@ -72,9 +72,11 @@ var installFormats = map[string]installFormat{
 		hash: packageOperation("package_hash_apk", "Check staged package file",
 			"sha256sum "+packageStagePath("apk"), healthCheckTimeout),
 		// --allow-untrusted is needed because the package is not signed by a key the device
-		// knows. It applies to this one stored, hash-checked file only.
+		// knows. apk applies it to the whole transaction, so --no-network keeps that
+		// transaction to this one stored, hash-checked file and packages already installed:
+		// nothing is fetched from a feed while signatures are not checked.
 		install: packageOperation("package_install_apk", "Install package",
-			"apk add --allow-untrusted "+packageStagePath("apk")+" </dev/null 2>&1", packageInstallTTL),
+			"apk add --no-network --allow-untrusted "+packageStagePath("apk")+" </dev/null 2>&1", packageInstallTTL),
 	},
 }
 
@@ -289,11 +291,21 @@ func packagePreflight(info packageInfo, size int64, m firmwareManifest) []upgrad
 	for _, p := range m.Packages {
 		installed[p.Name] = p.Version
 	}
-	if v, ok := installed[info.Name]; ok && v == info.Version {
+	userInstalled := map[string]bool{}
+	for _, n := range m.UserInstalled {
+		userInstalled[n] = true
+	}
+	v, ok := installed[info.Name]
+	switch {
+	case ok && v == info.Version:
 		add("already installed", "failed", fmt.Sprintf("%s %s is already installed", info.Name, v))
-	} else if ok {
+	case ok && !userInstalled[info.Name]:
+		// Replacing a package that came with the firmware (dropbear, netifd, ...) with a
+		// third-party file could cut the device off; that is not what a package source is for.
+		add("already installed", "failed", fmt.Sprintf("%s came with the firmware or as a dependency; a package source does not replace it", info.Name))
+	case ok:
 		add("already installed", "ok", fmt.Sprintf("version %s is installed; this replaces it", v))
-	} else {
+	default:
 		add("already installed", "ok", "not installed")
 	}
 	// apk dependencies are shared-library names the package manager resolves itself.
@@ -351,13 +363,15 @@ func (a *app) runPackageInstall(id int64) {
 	var deviceID string
 	var sourceID *int64
 	var wantHash string
-	if err := a.db.QueryRow(ctx, `SELECT device_id::text, source_id, sha256 FROM package_installs WHERE id=$1`, id).Scan(&deviceID, &sourceID, &wantHash); err != nil || sourceID == nil {
+	err := a.db.QueryRow(ctx, `SELECT device_id::text, source_id, sha256 FROM package_installs WHERE id=$1`, id).Scan(&deviceID, &sourceID, &wantHash)
+	// The hash is compared with the device's output by prefix, so it must be a full one.
+	if err != nil || sourceID == nil || !imageHashPattern.MatchString(wantHash) {
 		fail("could not load the install", nil)
 		return
 	}
 	var info packageInfo
 	var infoJSON, file []byte
-	err := a.db.QueryRow(ctx, `SELECT info, file FROM package_sources WHERE id=$1 AND status='confirmed' AND sha256=$2`, *sourceID, wantHash).Scan(&infoJSON, &file)
+	err = a.db.QueryRow(ctx, `SELECT info, file FROM package_sources WHERE id=$1 AND status='confirmed' AND sha256=$2`, *sourceID, wantHash).Scan(&infoJSON, &file)
 	if err != nil || json.Unmarshal(infoJSON, &info) != nil {
 		fail("the package source was removed or changed; nothing was installed", nil)
 		return
