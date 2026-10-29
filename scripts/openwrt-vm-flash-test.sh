@@ -219,6 +219,10 @@ def tgz(entries):
     with tarfile.open(fileobj=raw, mode="w", format=tarfile.USTAR_FORMAT) as t:
         for name, data, mode in entries:
             info = tarfile.TarInfo(name)
+            if data is None:  # a directory entry, as in real packages
+                info.type, info.mode, info.mtime = tarfile.DIRTYPE, mode, 0
+                t.addfile(info)
+                continue
             info.size, info.mode, info.mtime = len(data), mode, 0
             t.addfile(info, io.BytesIO(data))
     return gzip.compress(raw.getvalue(), mtime=0)
@@ -227,7 +231,7 @@ control = b"Package: om-test-pkg\nVersion: 1.0-r1\nArchitecture: all\nDescriptio
 postinst = b"#!/bin/sh\ntouch /etc/om-test-pkg.installed\nexit 0\n"
 outer = tgz([
     ("./debian-binary", b"2.0\n", 0o644),
-    ("./data.tar.gz", tgz([("./usr/share/om-test/hello", b"hello\n", 0o644)]), 0o644),
+    ("./data.tar.gz", tgz([("./", None, 0o755), ("./usr/", None, 0o755), ("./usr/share/", None, 0o755), ("./usr/share/om-test/", None, 0o755), ("./usr/share/om-test/hello", b"hello\n", 0o644)]), 0o644),
     ("./control.tar.gz", tgz([("./control", control, 0o644), ("./postinst", postinst, 0o755)]), 0o644),
 ])
 open(sys.argv[1], "wb").write(outer)
