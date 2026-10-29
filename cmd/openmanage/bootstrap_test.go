@@ -142,11 +142,11 @@ func TestStoreBootstrapEnrollsExistingDevice(t *testing.T) {
 	db := newEnrollmentTestDB(t)
 	deviceID, userID := seedDeviceAndUser(t, db)
 	a := &app{db: db}
-	d, err := a.storeBootstrap(context.Background(), userID, bootstrapRequest{DeviceID: deviceID, Name: "test-router", Address: "192.168.1.1", Role: "router", Username: "root", ExpectedFingerprint: "SHA256:x"}, []byte("sealed"))
+	d, err := a.storeBootstrap(context.Background(), userID, bootstrapRequest{DeviceID: deviceID, Name: "test-router", Address: "192.168.1.1", Role: "router", DHCPHost: true, Username: "root", ExpectedFingerprint: "SHA256:x"}, []byte("sealed"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.ID != deviceID || d.Role != "router" || !d.Enrollable || !d.HasKey {
+	if d.ID != deviceID || d.Role != "router" || !d.DHCPHost || !d.Enrollable || !d.HasKey {
 		t.Fatalf("got %+v", d)
 	}
 	var count int
