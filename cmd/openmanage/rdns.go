@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +24,21 @@ const (
 type reverseDNS struct {
 	mu     sync.Mutex
 	cache  map[string]rdnsEntry
-	lookup func(ctx context.Context, ip string) ([]string, error) // net.DefaultResolver.LookupAddr unless set
+	lookup func(ctx context.Context, ip string) ([]string, error) // resolverFor(OPENMANAGE_DNS_SERVER).LookupAddr unless set
+}
+
+// resolverFor returns the resolver for reverse lookups. With a DNS server configured
+// (a bare private IPv4 address, port 53) PTR queries go to that server, for example the
+// network's authoritative dnsmasq, instead of whatever the container's resolv.conf names.
+func resolverFor(server string) *net.Resolver {
+	ip := net.ParseIP(strings.TrimSpace(server))
+	if ip == nil || ip.To4() == nil || !ip.IsPrivate() {
+		return net.DefaultResolver
+	}
+	addr := net.JoinHostPort(ip.String(), "53")
+	return &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{Timeout: rdnsTimeout}).DialContext(ctx, network, addr)
+	}}
 }
 
 type rdnsEntry struct {
@@ -31,7 +46,8 @@ type rdnsEntry struct {
 	till time.Time
 }
 
-// hostFromPTR keeps the first label of a PTR answer if it is a plain hostname.
+// hostFromPTR keeps the first label of a PTR answer if it is a plain hostname, which
+// strips the internal domain: "phone.internal.lan." becomes "phone".
 func hostFromPTR(ptr string) string {
 	host, _, _ := strings.Cut(strings.TrimSuffix(strings.TrimSpace(ptr), "."), ".")
 	if !leaseNamePattern.MatchString(host) {
@@ -53,7 +69,7 @@ func (r *reverseDNS) name(ctx context.Context, ip string) string {
 	r.mu.Unlock()
 	lookup := r.lookup
 	if lookup == nil {
-		lookup = net.DefaultResolver.LookupAddr
+		lookup = resolverFor(os.Getenv("OPENMANAGE_DNS_SERVER")).LookupAddr
 	}
 	lctx, cancel := context.WithTimeout(ctx, rdnsTimeout)
 	defer cancel()
