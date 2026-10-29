@@ -799,6 +799,9 @@ func apiDeadline(next http.Handler) http.Handler {
 		if isBackupCreate(r) {
 			timeout = backupJobTimeout
 		}
+		if isPackageSourceCreate(r) {
+			timeout = packageRequestTimeout
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))

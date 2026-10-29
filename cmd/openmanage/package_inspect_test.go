@@ -141,3 +141,14 @@ func TestScriptTooLargeToReviewIsRefused(t *testing.T) {
 		t.Fatalf("a 64 KiB script must be kept whole: %v %d", err, len(s.Body))
 	}
 }
+
+func TestEscapedScriptIsNeverTruncated(t *testing.T) {
+	body := bytes.Repeat([]byte{0x01}, packageMaxFieldBytes) // every byte becomes an 8-byte escape
+	sc, err := scriptFrom("postinst", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 8 * len(body); len(sc.Body) != want {
+		t.Fatalf("escaped script length %d, want %d", len(sc.Body), want)
+	}
+}

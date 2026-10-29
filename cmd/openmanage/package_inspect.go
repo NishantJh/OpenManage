@@ -124,7 +124,7 @@ func scriptFrom(name string, body []byte) (packageScript, error) {
 	if len(body) > packageMaxFieldBytes {
 		return packageScript{}, errScriptTooLarge
 	}
-	return packageScript{Name: name, Body: cleanPackageText(string(body), 4*packageMaxFieldBytes+64)}, nil
+	return packageScript{Name: name, Body: cleanPackageText(string(body), 8*packageMaxFieldBytes+64)}, nil
 }
 
 // --- .ipk ------------------------------------------------------------------------------

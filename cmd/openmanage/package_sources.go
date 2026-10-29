@@ -30,8 +30,11 @@ import (
 // installed anywhere by this file.
 
 const (
-	packagePendingTTL     = time.Hour
-	packageFetchTimeout   = 90 * time.Second
+	packagePendingTTL   = time.Hour
+	packageFetchTimeout = 90 * time.Second
+	// packageRequestTimeout is the outer deadline for registering a package: the download
+	// plus inspecting and storing the file.
+	packageRequestTimeout = packageFetchTimeout + 30*time.Second
 	packageSourceMaxCount = 100
 	packageSourceMaxBytes = 512 << 20
 	packageURLMax         = 512
@@ -67,14 +70,35 @@ func publicAddress(ip net.IP) bool {
 		ip = ip4
 		switch {
 		case ip4[0] == 0, // "this network"; Linux routes 0.x.x.x to the local machine
-			ip4[0] == 100 && ip4[1]&0xc0 == 64, // carrier-grade NAT, 100.64.0.0/10
-			ip4[0] == 198 && ip4[1]&0xfe == 18, // benchmarking, 198.18.0.0/15
-			ip4[0] >= 240:                      // reserved and broadcast
+			ip4[0] == 100 && ip4[1]&0xc0 == 64,                           // carrier-grade NAT, 100.64.0.0/10
+			ip4[0] == 198 && ip4[1]&0xfe == 18,                           // benchmarking, 198.18.0.0/15
+			ip4[0] >= 240,                                                // reserved and broadcast
+			ip4[0] == 192 && ip4[1] == 0 && (ip4[2] == 0 || ip4[2] == 2), // IETF protocol assignments, TEST-NET-1
+			ip4[0] == 192 && ip4[1] == 88 && ip4[2] == 99,                // 6to4 relay anycast
+			ip4[0] == 198 && ip4[1] == 51 && ip4[2] == 100,               // TEST-NET-2
+			ip4[0] == 203 && ip4[1] == 0 && ip4[2] == 113:                // TEST-NET-3
 			return false
 		}
+	} else if len(ip) == net.IPv6len && !globalIPv6(ip) {
+		return false
 	}
 	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast())
+}
+
+// globalIPv6 is true only for global unicast space (2000::/3) outside the tunnelling and
+// documentation prefixes, whose embedded addresses this check cannot vouch for.
+func globalIPv6(ip net.IP) bool {
+	if ip[0]&0xe0 != 0x20 {
+		return false
+	}
+	switch {
+	case ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0x0d && ip[3] == 0xb8, // documentation, 2001:db8::/32
+		ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0 && ip[3] == 0, // Teredo, 2001::/32
+		ip[0] == 0x20 && ip[1] == 0x02:                             // 6to4, 2002::/16
+		return false
+	}
+	return true
 }
 
 // packageDialControl is replaced in tests, which download from a local server.
@@ -227,6 +251,8 @@ func (a *app) createPackageSource(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// The server write timeout is shorter than a slow download; extend it for this response only.
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(packageRequestTimeout + 5*time.Second))
 		if data, err = fetchPackageFile(r.Context(), path); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
@@ -264,6 +290,11 @@ func (a *app) createPackageSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "could not register the package")
+		return
+	}
+	// Concurrent registrations would otherwise all see the same totals; serialize the quota check.
+	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtext('package_sources.quota'))`); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not register the package")
 		return
 	}
@@ -445,4 +476,10 @@ func (a *app) deletePackageSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+}
+
+// isPackageSourceCreate matches POST /api/package-sources, which may download a file and so
+// outlasts apiRequestTimeout.
+func isPackageSourceCreate(r *http.Request) bool {
+	return r.Method == http.MethodPost && r.URL.Path == "/api/package-sources"
 }

@@ -20,7 +20,7 @@ func TestPublicAddress(t *testing.T) {
 	for ip, want := range map[string]bool{
 		"8.8.8.8": true, "2606:4700::1111": true,
 		"127.0.0.1": false, "::1": false, "10.1.2.3": false, "192.168.1.1": false, "172.16.0.9": false,
-		"169.254.1.1": false, "100.64.0.1": false, "0.0.0.0": false, "0.1.2.3": false, "198.18.0.1": false, "255.255.255.255": false, "224.0.0.1": false, "fe80::1": false, "::ffff:192.168.1.5": false,
+		"169.254.1.1": false, "100.64.0.1": false, "0.0.0.0": false, "0.1.2.3": false, "192.0.2.1": false, "198.51.100.7": false, "203.0.113.9": false, "192.88.99.1": false, "2001:db8::1": false, "2002::1": false, "64:ff9b::1": false, "fc00::1": false, "198.18.0.1": false, "255.255.255.255": false, "224.0.0.1": false, "fe80::1": false, "::ffff:192.168.1.5": false,
 	} {
 		if got := publicAddress(net.ParseIP(ip)); got != want {
 			t.Errorf("publicAddress(%s) = %v, want %v", ip, got, want)
