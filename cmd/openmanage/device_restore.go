@@ -308,6 +308,14 @@ func (a *app) restoreDeviceBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "a configuration change is being applied to this device; wait for it to finish")
 		return
 	}
+	var upgrading bool
+	if err == nil {
+		err = tx.QueryRow(r.Context(), openUpgradeSQL, deviceID).Scan(&upgrading)
+	}
+	if err == nil && upgrading {
+		writeError(w, http.StatusConflict, openUpgradeMessage)
+		return
+	}
 	if err == nil {
 		err = scanDeviceRestore(tx.QueryRow(r.Context(), `INSERT INTO device_restores(device_id,backup_id,status,step,release_mismatch_accepted,created_by)
 			VALUES($1,$2,'running','uploading',$3,$4) RETURNING `+deviceRestoreColumns, deviceID, backupID, in.AcceptRelease, user.ID), &rec)

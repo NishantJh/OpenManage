@@ -49,6 +49,19 @@ Decided with Nishant 2026-10-29: every release the build server offers is listed
 - **Blockers:** extroot, no board name, no image for the board or target, and going from apk back to an opkg release. **Warnings:** same release, downgrade, snapshot, release candidate, new branch, opkg to apk, packages missing from the feeds, and no `/rom` to compare with.
 - API: `GET`/`PUT /api/firmware/settings`, `GET /api/firmware/releases`, `GET /api/devices/{id}/firmware-plan?version=` (admins and operators). The plan uses the newest stored inventory.
 
+### Preparing an upgrade (as built)
+
+Step 3, part 1. Approved by Nishant 2026-10-29: confirmation is typing the device name (no password), settings are always kept (the flash command can never carry `-n` or `-F`), only the same release family or the next one the build server lists is allowed (never a downgrade or a snapshot), and the first flash test is an OpenWrt x86-64 VM before his spare TP-Link Archer AX23.
+
+Preparing never flashes and never touches clients; its only device write is one file under `/tmp`.
+
+- **Job:** table `firmware_upgrades`, one open job per device (partial unique index). While a job is open, a restore or a configuration change on that device is refused.
+- **Steps:** read the inventory again, check the upgrade path, build the plan, `POST /api/v1/build` on the build server and poll (15 minutes at most), download the `sysupgrade` image (squashfs preferred; refused if the choice is ambiguous; 64 MiB cap), compare its SHA-256 with the hash the build server reported, check free RAM (image size plus 16 MiB), take and pin a backup, upload the image on stdin to a fresh mode-700 directory `/tmp/.om-firmware`, compare its hash on the device, record the boot id, run `sysupgrade -T`.
+- **Ready:** the job stores the image name, size and hash, the inventory digest and the boot id; the image itself is kept in memory only during the job. A ready job expires after 30 minutes: the staged file is removed and the backup unpinned if the job pinned it. Cancel does the same. A server restart ends preparing and ready jobs the same way.
+- **What the hash proves:** images ASU builds to order are not in the release's signed `sha256sums`, so the hash shows the image is the one the build server says it built, and authenticity rests on HTTPS to the build server. Release signatures apply to stock images only.
+- API (admins and operators): `POST /api/devices/{id}/firmware-upgrades` with `{"version"}`, `GET` the same path, `POST /api/devices/{id}/firmware-upgrades/{job}/cancel`. Audited: `device.firmware_upgrade_prepare`, `_ready`, `_stopped`.
+- Not built yet: the flash, the confirmation screen and the post-reboot checks (next parts of step 3).
+
 ## Building the image
 
 | Option | Extra service | Third-party packages | Notes |

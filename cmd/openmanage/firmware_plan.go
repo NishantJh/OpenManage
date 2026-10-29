@@ -159,17 +159,16 @@ type cachedBody struct {
 	body []byte
 }
 
+func refuseCrossHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 3 || req.URL.Host != via[0].URL.Host || req.URL.Scheme != via[0].URL.Scheme {
+		return errors.New("redirect to another host refused")
+	}
+	return nil
+}
+
 func newBuildServerClient() *buildServerClient {
 	return &buildServerClient{
-		http: &http.Client{
-			Timeout: buildServerTimeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 3 || req.URL.Host != via[0].URL.Host || req.URL.Scheme != via[0].URL.Scheme {
-					return errors.New("redirect to another host refused")
-				}
-				return nil
-			},
-		},
+		http:  &http.Client{Timeout: buildServerTimeout, CheckRedirect: refuseCrossHostRedirect},
 		cache: map[string]cachedBody{},
 	}
 }
