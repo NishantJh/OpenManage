@@ -208,4 +208,63 @@ api POST "/api/devices/$device_id/firmware-inventory"
 expect 200 "firmware inventory after the upgrade"
 json 'assert d["inventory"]["manifest"]["release"]==sys.argv[1], d["inventory"]["manifest"]["release"]' "$new_version" < "$body"
 echo "PASS: the backup is released on acknowledge and the device reads as OpenWrt $new_version"
+# --- Package install ----------------------------------------------------------------------
+# A small third-party package, as a theme would be: registered, reviewed, confirmed and
+# installed from the app on the upgraded VM, then checked on the device.
+python3 - "$work/om-test.ipk" <<'PY'
+import gzip, io, sys, tarfile
+
+def tgz(entries):
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as t:
+        for name, data, mode in entries:
+            info = tarfile.TarInfo(name)
+            info.size, info.mode, info.mtime = len(data), mode, 0
+            t.addfile(info, io.BytesIO(data))
+    return gzip.compress(raw.getvalue(), mtime=0)
+
+control = b"Package: om-test-pkg\nVersion: 1.0-r1\nArchitecture: all\nDescription: OpenManage install test\nDepends: libc\n"
+postinst = b"#!/bin/sh\ntouch /etc/om-test-pkg.installed\nexit 0\n"
+outer = tgz([
+    ("./debian-binary", b"2.0\n", 0o644),
+    ("./data.tar.gz", tgz([("./usr/share/om-test/hello", b"hello\n", 0o644)]), 0o644),
+    ("./control.tar.gz", tgz([("./control", control, 0o644), ("./postinst", postinst, 0o755)]), 0o644),
+])
+open(sys.argv[1], "wb").write(outer)
+PY
+pkg_hash="$(sha256sum "$work/om-test.ipk" | cut -d' ' -f1)"
+status="$(curl --silent -o "$body" -w '%{http_code}' -X POST -b "$cookie_jar" -H "X-CSRF-Token: $csrf" -F "file=@$work/om-test.ipk" "$base_url/api/package-sources")"
+expect 201 "registering the package"
+source_id="$(json 'print(d["id"])' < "$body")"
+json 'assert d["status"]=="pending" and d["name"]=="om-test-pkg" and d["sha256"]==sys.argv[1] and [s["name"] for s in d["info"]["scripts"]]==["postinst"], d' "$pkg_hash" < "$body"
+api POST "/api/devices/$device_id/package-installs" "{\"source_id\":$source_id,\"confirm_name\":\"vm-ap\",\"acknowledge_scripts\":true}"
+expect 404 "an unconfirmed package must not install"
+api POST "/api/package-sources/$source_id/confirm" "{\"sha256\":\"$pkg_hash\"}"
+expect 200 "confirming the package"
+api POST "/api/devices/$device_id/package-installs" "{\"source_id\":$source_id,\"confirm_name\":\"wrong\",\"acknowledge_scripts\":true}"
+expect 400 "a wrong device name must not install"
+vm_ssh 'test ! -e /etc/om-test-pkg.installed' || fail "the package was installed before it was asked for"
+api POST "/api/devices/$device_id/package-installs" "{\"source_id\":$source_id,\"confirm_name\":\"vm-ap\",\"acknowledge_scripts\":true}"
+expect 202 "installing the package"
+wait_install() { # waits until the newest install is no longer running; leaves the list in $body
+  for _ in $(seq 1 60); do
+    api GET "/api/devices/$device_id/package-installs"
+    [[ "$status" == 200 ]] || { cat "$body" >&2; fail "listing package installs returned HTTP $status"; }
+    [[ "$(json 'print(d[0]["status"])' < "$body")" != running ]] && return 0
+    sleep 2
+  done
+  cat "$body" >&2; fail "the package install did not finish"
+}
+wait_install
+echo "---- install result ----"; json 'import pprint; pprint.pprint(d[0])' < "$body"
+json 'assert d[0]["status"]=="done" and all(c["status"]=="ok" for c in d[0]["checks"]), d[0]' < "$body" || fail "the package install did not pass every check"
+vm_ssh 'opkg list-installed om-test-pkg | grep -q "om-test-pkg - 1.0-r1"' || fail "the VM does not list om-test-pkg 1.0-r1"
+vm_ssh 'test -e /etc/om-test-pkg.installed && test -e /usr/share/om-test/hello' || fail "the package's files or postinst did not run"
+vm_ssh 'test ! -e /tmp/.om-pkg' || fail "the staged package file was left on the VM"
+echo "PASS: a confirmed package was installed from the app and verified on the VM"
+api POST "/api/devices/$device_id/package-installs" "{\"source_id\":$source_id,\"confirm_name\":\"vm-ap\",\"acknowledge_scripts\":true}"
+expect 202 "installing the same version again"
+wait_install
+json 'assert d[0]["status"]=="failed" and any(c["name"]=="already installed" and c["status"]=="failed" for c in d[0]["checks"]), d[0]' < "$body" || fail "installing the same version again must be refused by the pre-checks"
+echo "PASS: the same version is refused by the pre-checks"
 echo "All VM flash checks passed."
