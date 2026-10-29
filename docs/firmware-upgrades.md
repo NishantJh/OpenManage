@@ -131,6 +131,16 @@ OpenManage keeps a **package source** registry (admin-managed, audited). A packa
 
 **Packages already on the device** (installed by hand before OpenManage): the inventory marks them "third-party, source unknown". The admin resolves each one by attaching a source (release file or upload). This is a one-time step and cannot be automated, because the package manager does not keep the original file. On `opkg`, a package from a custom feed the user configured by hand also shows as source unknown; the admin attaches the same kind of file source.
 
+### Package sources (as built, registry only)
+
+Registering a package source installs nothing on any device yet; installing and reinstalling after a flash come in later PRs.
+
+- **Endpoints:** `POST /api/package-sources` (administrators; a multipart upload with a `file` field, or JSON `{"url": "https://..."}`), `POST /api/package-sources/{id}/confirm` with `{"sha256": "..."}`, `GET /api/package-sources` (administrators and operators; operators see confirmed sources only) and `DELETE /api/package-sources/{id}` (administrators). File contents are never returned.
+- **Formats:** `.ipk` (OpenWrt's gzip-compressed tar, or an ar archive) and `.apk` (apk-tools 3, the ADB format, which is raw-deflate compressed). The metadata is read with bounded reads and nothing is extracted or executed: name, version, architecture, description, dependencies and the full text of install scripts (`preinst`, `postinst`, `prerm`, `postrm` for `.ipk`; those plus `trigger`, `pre-upgrade` and `post-upgrade` for `.apk`). Hidden characters (control characters, invalid UTF-8, bidirectional overrides) are shown as visible escapes rather than dropped, so the review shows what would run; a script over 64 KiB is refused rather than shown in part. Package name, version and architecture must be well-formed. The readers were checked against real packages from the 24.10 and 25.12 feeds. Only `.ipk` control archives compressed with gzip are supported.
+- **Downloads:** a link must be a GitHub release file (`https://github.com/<owner>/<repo>/releases/download/<tag>/<file>`); any other file is uploaded. https only, no credentials in the link, at most 5 redirects (each to github.com or githubusercontent.com), 32 MiB, 90 seconds. The address actually connected to must be public, so a link cannot reach this machine or the home network; no proxy is used. Only the link without its query string is kept (and audited).
+- **Review and confirm:** a registered file is stored as *pending* for one hour. An administrator confirms it by sending the SHA-256 shown on the review screen, which must match; only then is the source usable. The same file cannot be registered twice. At most 100 sources and 512 MiB are stored.
+- **Audit:** `package_source.create`, `package_source.confirm` and `package_source.delete`, each with name, version, hash and the script names.
+
 ### The package set changes over time
 
 There is no fixed list of third-party packages anywhere in the code. What should be on a device is data:
