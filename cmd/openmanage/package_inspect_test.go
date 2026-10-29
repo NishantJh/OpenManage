@@ -125,7 +125,7 @@ func TestInspectPackageRejectsBadNames(t *testing.T) {
 // Text that would read differently from what runs (a right-to-left override, a raw
 // escape sequence, invalid UTF-8) is shown as visible escapes, never silently dropped.
 func TestCleanPackageTextShowsHiddenCharacters(t *testing.T) {
-	got := cleanPackageText("echo ok ‮# \x1b[2Jrm\xff -rf\r\n\tdone", 1000)
+	got := cleanPackageText("echo ok \u202e# \x1b[2Jrm\xff -rf\r\n\tdone", 1000)
 	want := "echo ok \\u{202E}# \\u{001B}[2Jrm\\xff -rf\\u{000D}\n\tdone"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)

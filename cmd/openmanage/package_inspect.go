@@ -151,7 +151,7 @@ func inspectIPK(data []byte) (packageInfo, error) {
 			return packageInfo{}, errors.New("the package's control archive is damaged")
 		}
 		name := strings.TrimPrefix(hdr.Name, "./")
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 		switch name {
@@ -458,7 +458,7 @@ func inspectAPK(data []byte) (packageInfo, error) {
 		}
 	}
 	if info.Name == "" {
-		return packageInfo{}, fmt.Errorf("this .apk has no package name")
+		return packageInfo{}, errors.New("this .apk has no package name")
 	}
 	return info, nil
 }
