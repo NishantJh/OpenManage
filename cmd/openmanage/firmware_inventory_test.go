@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -190,5 +191,33 @@ func TestFirmwareManifestDigestIgnoresFreeSpaceAndMemory(t *testing.T) {
 	b.UserInstalled = []string{"luci-theme-fluent"}
 	if dc, _ := firmwareManifestDigest(b); dc == da {
 		t.Fatal("a package change must change the digest")
+	}
+}
+
+// The package listing runs on the device, so run its shell function here against a
+// fake opkg status file that holds a removed package's leftover record.
+func TestFirmwareInventoryListsOnlyInstalledOpkgPackages(t *testing.T) {
+	start := strings.Index(firmwareInventoryCommand, "pkgs() {")
+	end := strings.Index(firmwareInventoryCommand[start:], "\n")
+	if start < 0 || end < 0 {
+		t.Fatal("pkgs function not found in the inventory command")
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(dir+"/usr/lib/opkg", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	status := "Package: busybox\nVersion: 1.36\nStatus: install ok installed\n\n" +
+		"Package: luci-theme-old\nVersion: 1.0\nStatus: deinstall user config-files\n\n" +
+		"Package: gone\nVersion: 2\nStatus: deinstall ok not-installed\n\n" +
+		"Package: luci-theme-fluent\nVersion: 3\nStatus: install user installed\n"
+	if err := os.WriteFile(dir+"/usr/lib/opkg/status", []byte(status), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("sh", "-c", firmwareInventoryCommand[start:start+end]+"\npkgs \"$1\"", "sh", dir).Output()
+	if err != nil {
+		t.Skip("no POSIX shell and awk here:", err)
+	}
+	if got := string(out); got != "busybox\t1.36\tok\nluci-theme-fluent\t3\tuser\n" {
+		t.Fatalf("listing = %q", got)
 	}
 }

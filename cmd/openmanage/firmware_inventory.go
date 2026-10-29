@@ -35,13 +35,15 @@ const (
 // firmwareInventoryCommand prints fixed sections, each introduced by an "@@name" line.
 // It reads the package database directly (opkg status file, or the apk installed
 // database and world file) so the output does not depend on package-manager versions.
+// opkg keeps records of removed packages (state "not-installed" or "config-files");
+// only entries whose state is "installed" are listed.
 // /rom holds the original firmware image on squashfs devices; when it is missing the
 // device was not flashed from a squashfs image and ROM comparisons are unknown.
 const firmwareInventoryCommand = `exec 2>/dev/null
 echo @@board; ubus call system board
 echo @@arch; sed -n "s/^DISTRIB_ARCH='\(.*\)'$/\1/p" /etc/openwrt_release
 echo @@manager; if command -v apk >/dev/null; then echo apk; elif command -v opkg >/dev/null; then echo opkg; fi
-pkgs() { if [ -f "$1/lib/apk/db/installed" ]; then awk '/^P:/{p=substr($0,3)} /^V:/{v=substr($0,3)} /^$/{if(p!="")print p"\t"v"\t-";p=v=""} END{if(p!="")print p"\t"v"\t-"}' "$1/lib/apk/db/installed"; elif [ -f "$1/usr/lib/opkg/status" ]; then awk '/^Package:/{p=$2} /^Version:/{v=$2} /^Status:/{s=$3} /^$/{if(p!="")print p"\t"v"\t"s;p=v=s=""} END{if(p!="")print p"\t"v"\t"s}' "$1/usr/lib/opkg/status"; fi; }
+pkgs() { if [ -f "$1/lib/apk/db/installed" ]; then awk '/^P:/{p=substr($0,3)} /^V:/{v=substr($0,3)} /^$/{if(p!="")print p"\t"v"\t-";p=v=""} END{if(p!="")print p"\t"v"\t-"}' "$1/lib/apk/db/installed"; elif [ -f "$1/usr/lib/opkg/status" ]; then awk '/^Package:/{p=$2} /^Version:/{v=$2} /^Status:/{s=($4=="installed")?$3:""} /^$/{if(p!=""&&s!="")print p"\t"v"\t"s;p=v=s=""} END{if(p!=""&&s!="")print p"\t"v"\t"s}' "$1/usr/lib/opkg/status"; fi; }
 echo @@installed; pkgs ""
 echo @@world; cat /etc/apk/world
 if [ -d /rom/etc ]; then echo @@rom; echo @@rom_installed; pkgs /rom; echo @@rom_world; cat /rom/etc/apk/world; fi
