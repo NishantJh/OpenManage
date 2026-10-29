@@ -1,0 +1,159 @@
+@@board
+{
+	"kernel": "6.18.44-fc-v185",
+	"hostname": "361576644e43",
+	"system": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+	"release": {
+		"distribution": "OpenWrt",
+		"version": "24.10.4",
+		"revision": "r28959-29397011cc",
+		"target": "x86/64",
+		"description": "OpenWrt 24.10.4 r28959-29397011cc",
+		"builddate": "1760891865"
+	}
+}
+@@arch
+x86_64
+@@manager
+opkg
+@@installed
+liblucihttp0	2023.03.15~9b5b683f-r1	ok
+cgi-io	2022.08.10~901b0f04-r21	ok
+libc	1.2.5-r4	hold
+mkf2fs	1.16.0-r3	ok
+opkg	2024.10.16~38eccbb1-r1	ok
+libpthread	1.2.5-r4	hold
+ubus	2025.10.17~60e04048-r1	ok
+rpcd	2025.09.01~bba95191-r1	ok
+busybox	1.36.1-r2	ok
+libiwinfo20230701	2024.10.20~b94f066e-r1	ok
+kmod-nft-fib	6.6.110-r1	ok
+kmod-nfnetlink	6.6.110-r1	ok
+kmod-crypto-hash	6.6.110-r1	ok
+kmod-nf-reject6	6.6.110-r1	ok
+luci-mod-system	25.292.66247~75e41cb	ok
+kmod-nf-flow	6.6.110-r1	ok
+libnl-tiny1	2025.03.19~c0df580a-r1	ok
+kmod-lib-crc-ccitt	6.6.110-r1	ok
+px5g-mbedtls	11	ok
+getrandom	2024.04.26~85f10530-r1	ok
+ucode-mod-ubus	2025.07.18~3f64c808-r1	ok
+luci-theme-bootstrap	25.292.66247~75e41cb	ok
+kmod-pppoe	6.6.110-r1	ok
+libuuid1	2.40.2-r1	ok
+kmod-pppox	6.6.110-r1	ok
+kmod-nf-reject	6.6.110-r1	ok
+procd-ujail	2024.12.22~42d39376-r1	ok
+base-files	1665~29397011cc	ok
+kmod-nf-nat	6.6.110-r1	ok
+kmod-input-core	6.6.110-r1	ok
+kmod-crypto-crc32c	6.6.110-r1	ok
+ucode-mod-uci	2025.07.18~3f64c808-r1	ok
+partx-utils	2.40.2-r1	ok
+libustream-mbedtls20201210	2024.07.28~99bd3d2b-r1	ok
+netifd	2025.05.23~7901e66c-r1	ok
+libf2fs6	1.16.0-r3	ok
+libsmartcols1	2.40.2-r1	ok
+firewall4	2024.12.18~18fc0ead-r1	ok
+dnsmasq	2.90-r4	ok
+procd	2024.12.22~42d39376-r1	ok
+ubusd	2025.10.17~60e04048-r1	ok
+kmod-crypto-acompress	6.6.110-r1	ok
+rpcd-mod-ucode	2025.09.01~bba95191-r1	ok
+ucode-mod-math	2025.07.18~3f64c808-r1	ok
+kmod-lib-crc32c	6.6.110-r1	ok
+libubus20250102	2025.10.17~60e04048-r1	ok
+luci-mod-status	25.292.66247~75e41cb	ok
+kmod-fs-vfat	6.6.110-r1	ok
+kmod-nft-nat	6.6.110-r1	ok
+luci-app-firewall	25.292.66247~75e41cb	ok
+grub2-efi	2.12-r1	ok
+libmbedtls21	3.6.5-r1	ok
+libblkid1	2.40.2-r1	ok
+libmnl0	1.0.5-r1	ok
+jansson4	2.14-r3	ok
+grub2-bios-setup	2.12-r1	ok
+odhcp6c	2024.09.25~b6ae9ffa-r1	ok
+fstools	2024.07.14~408c2cc4-r1	ok
+uclient-fetch	2024.10.22~88ae8f20-r1	ok
+uci	2025.01.20~16ff0bad-r1	ok
+grub2	2.12-r1	ok
+ucode-mod-fs	2025.07.18~3f64c808-r1	ok
+luci-ssl	25.292.66247~75e41cb	ok
+dropbear	2024.86-r1	ok
+kmod-nls-utf8	6.6.110-r1	ok
+libnftnl11	1.2.8-r1	ok
+kmod-nls-cp437	6.6.110-r1	ok
+rpcd-mod-file	2025.09.01~bba95191-r1	ok
+mtd	26	ok
+odhcpd-ipv6only	2025.10.02~b14cf98c-r1	ok
+procd-seccomp	2024.12.22~42d39376-r1	ok
+libjson-script20240329	2025.07.23~49056d17-r1	ok
+libiwinfo-data	2024.10.20~b94f066e-r1	ok
+ucode	2025.07.18~3f64c808-r1	ok
+rpcd-mod-luci	20240305-r1	ok
+kmod-nf-log	6.6.110-r1	ok
+luci-app-package-manager	25.292.66247~75e41cb	ok
+libuci20250120	2025.01.20~16ff0bad-r1	ok
+urandom-seed	3	ok
+luci-proto-ppp	25.292.66247~75e41cb	ok
+libcomerr0	1.47.0-r2	ok
+ppp	2.5.1-r1	ok
+luci-mod-admin-full	25.292.66247~75e41cb	ok
+luci-base	25.292.66247~75e41cb	ok
+logd	2024.04.26~85f10530-r1	ok
+kmod-nf-log6	6.6.110-r1	ok
+librt	1.2.5-r4	hold
+luci-proto-ipv6	25.292.66247~75e41cb	ok
+openwrt-keyring	2024.11.01~fbae29d7-r2	ok
+libext2fs2	1.47.0-r2	ok
+jshn	2025.07.23~49056d17-r1	ok
+nftables-json	1.1.1-r1	ok
+e2fsprogs	1.47.0-r2	ok
+kmod-ppp	6.6.110-r1	ok
+kmod-nft-offload	6.6.110-r1	ok
+libss2	1.47.0-r2	ok
+libjson-c5	0.18-r1	ok
+uhttpd	2025.07.06~7e64e8ba-r4	ok
+kmod-nf-conntrack	6.6.110-r1	ok
+usign	2020.05.23~f1f65026-r1	ok
+libblobmsg-json20240329	2025.07.23~49056d17-r1	ok
+ca-bundle	20250419-r1	ok
+libuclient20201210	2024.10.22~88ae8f20-r1	ok
+kmod-nls-iso8859-1	6.6.110-r1	ok
+ucode-mod-html	1	ok
+luci	25.292.66247~75e41cb	ok
+luci-light	25.292.66247~75e41cb	ok
+kmod-nf-conntrack6	6.6.110-r1	ok
+libgcc1	13.3.0-r4	hold
+kmod-lib-lzo	6.6.110-r1	ok
+ubox	2024.04.26~85f10530-r1	ok
+kernel	6.6.110~484466e2719a743506c36b4bb2103582-r1	ok
+rpcd-mod-iwinfo	2025.09.01~bba95191-r1	ok
+luci-mod-network	25.292.66247~75e41cb	ok
+kmod-nft-core	6.6.110-r1	ok
+libucode20230711	2025.07.18~3f64c808-r1	ok
+kmod-button-hotplug	6.6.110-r3	ok
+kmod-nls-base	6.6.110-r1	ok
+uhttpd-mod-ubus	2025.07.06~7e64e8ba-r4	ok
+fwtool	2019.11.12~8f7fe925-r1	ok
+jsonfilter	2025.04.18~8a86fb78-r1	ok
+liblucihttp-ucode	2023.03.15~9b5b683f-r1	ok
+libubox20240329	2025.07.23~49056d17-r1	ok
+libe2p2	1.47.0-r2	ok
+libudebug	2025.08.24~edeb4d6d	ok
+urngd	2023.11.01~44365eb1-r1	ok
+kmod-slhc	6.6.110-r1	ok
+rpcd-mod-rrdns	20170710	ok
+ppp-mod-pppoe	2.5.1-r1	ok
+@@world
+@@feeds
+@@keep
+
+@@fstab
+@@df
+Filesystem           1K-blocks      Used Available Use% Mounted on
+overlay              264212084   9820216  30533796  24% /
+@@mem
+MemTotal:       16477352 kB
+MemAvailable:   15711116 kB

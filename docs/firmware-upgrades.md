@@ -1,6 +1,6 @@
 # Firmware build and upgrade: design
 
-Status: proposal, not started. Design only; no code. Comes after the current plan (Sections 3 to 8) is finished and tested. It refines plan.md Section 5.
+Status: in progress (started 2026-10-29). Phase 0 (backups) is built; Phase 1 has the read-only inventory (`firmware_inventory.go`). It refines plan.md Section 5.
 
 ## Goal
 
@@ -30,6 +30,13 @@ A **package manifest** is captured per device by typed read operations and store
 - Free flash and RAM, so an image that will not fit is rejected early.
 
 These are new typed read operations (names `firmware_inventory`, similar), using fixed command templates. No generic shell.
+
+As built (`firmware_inventory`, `POST`/`GET /api/devices/{id}/firmware-inventory`; admins and operators capture, every role reads):
+- The device's package database is read directly: the opkg status file, or the apk installed database and `/etc/apk/world`.
+- "Installed by the owner" means: opkg packages flagged `user` that are not in the image, or apk world entries that are not in the image's world. "Removed defaults" are image packages that are no longer installed. Both need `/rom` (the squashfs image). When it is missing (x86 ext4 images, the lab container) the result is marked `rom_known: false`. On apk without `/rom`, every world entry is listed as installed by the owner.
+- Feed-origin detection against the official index waits for the upgrade plan step, which is the first one that contacts the build service.
+- Custom feed lines lose URL credentials and query strings before they are stored. Extroot means an enabled fstab mount targets `/overlay`.
+- The newest 20 inventories per device are kept. A capture that differs only in free space and memory updates the newest row instead of adding one.
 
 ## Building the image
 
