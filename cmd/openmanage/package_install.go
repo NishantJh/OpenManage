@@ -269,16 +269,25 @@ func packagePreflight(info packageInfo, size int64, m firmwareManifest) []upgrad
 	default:
 		add("architecture", "failed", fmt.Sprintf("the package is for %s but the device is %s", info.Arch, m.Arch))
 	}
+	// The package's own installed-size claim can be missing or too low, so for an .ipk the
+	// data archive was measured when it was registered and the larger number is used.
 	need := info.InstalledSize
-	if size > need {
-		need = size
+	for _, n := range []int64{size, info.UnpackedSize} {
+		if n > need {
+			need = n
+		}
 	}
 	needKB := need*2/1024 + packageFlashMarginKB
 	switch {
+	case info.Format == "ipk" && info.UnpackedSize <= 0:
+		add("free flash", "failed", "the size of the unpacked files could not be measured; register the file again")
 	case m.OverlayFreeKB <= 0:
 		add("free flash", "failed", "could not read the device's free flash space")
 	case m.OverlayFreeKB < needKB:
 		add("free flash", "failed", fmt.Sprintf("needs about %d KB free, the device has %d KB", needKB, m.OverlayFreeKB))
+	case info.Format == "apk":
+		// An .apk's unpacked size is only what the package claims.
+		add("free flash", "warning", fmt.Sprintf("%d KB free, about %d KB needed by the package's own size claim", m.OverlayFreeKB, needKB))
 	default:
 		add("free flash", "ok", fmt.Sprintf("%d KB free, about %d KB needed", m.OverlayFreeKB, needKB))
 	}

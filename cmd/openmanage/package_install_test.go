@@ -29,7 +29,8 @@ func TestPackagePreflight(t *testing.T) {
 	}
 	good := packageInfo{Format: "apk", Name: "luci-theme-fluent", Version: "2.0", Arch: "noarch", InstalledSize: 100 << 10}
 	for _, c := range packagePreflight(good, 50<<10, m) {
-		if c.Status != "ok" {
+		// An .apk's unpacked size is only a claim, which is reported as a warning.
+		if c.Status == "failed" || (c.Status == "warning" && c.Name != "free flash") {
 			t.Errorf("%s should pass: %s", c.Name, c.Detail)
 		}
 	}
