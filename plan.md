@@ -180,6 +180,24 @@ Not scheduled; starts after the sections above are done and tested. Goal: build 
 - [ ] Phase 3: staged rollout (canary, concurrency limit, stop on failure).
 - [ ] Phase 4 (optional): self-hosted ASU mode. A build-server URL setting plus a single setup script for a separate Linux machine (outside the OpenManage stack), with optional extra feeds. Public ASU stays the default. Decided by Nishant 2026-10-23.
 
+### Later: per-device settings editor (after firmware)
+
+Not scheduled; starts after the firmware work is done and tested. Agreed in principle by Nishant 2026-10-29. Goal: view and change each device's settings from OpenManage, with a LuCI-like menu (System, Network, Wireless, DHCP/DNS, Firewall, Software) so users find things where they expect them. LuCI's own pages are not reused; OpenManage builds its own pages.
+
+- [ ] Read-only view of all UCI settings per device, grouped in the LuCI-like menu, secrets redacted.
+- [ ] Widen the Section 3 controlled-change workflow from one setting to a batch: pre-change backup, diff, `uci apply` with 60 s rollback, read-back over a fresh connection, confirm. Refuse if the device config changed since the page loaded.
+- [ ] Hand-built pages for common sections, Wireless first (this absorbs Section 9), then System, Network interfaces, DHCP/DNS, Firewall.
+- [ ] Admin-only raw UCI editor for everything else, including third-party apps, through the same workflow.
+
+Safety rules: changes that can drop clients (wireless, network, firewall, management access) need an explicit opt-in tickbox; existing SSIDs and passphrases stay locked unless the user unlocks that field; no change ever forces clients to rejoin without opt-in.
+
+### Later: Software page (package install and remove)
+
+Builds on the firmware package work (inventory, package source registry, desired package sets); not a separate package system. Search the package list, install, remove, and refresh lists, for apk and opkg, through typed operations.
+
+- [ ] Software page with search, install, remove, refresh lists; installs and removes update the device's desired package set so they survive a firmware upgrade.
+- [ ] Guardrails: core packages (dropbear, wpad/hostapd, firewall, kernel modules, OpenManage dependencies) blocked or behind a typed confirmation; free-space check before install; kernel modules must match the running kernel; note that removing a package that shipped in the firmware image frees no space.
+
 ## Deferred and optional items
 
 - SSH key ciphertext is bound to a fixed domain label (`sshKeyAAD`), not to the device. Binding it to the device is deferred to the encryption-key rotation work in Section 4, because existing ciphertext must be re-encrypted in the same change.
