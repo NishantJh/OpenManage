@@ -54,7 +54,7 @@ type bootstrapRequest struct {
 	Name                string `json:"name"`
 	Address             string `json:"address"`
 	Role                string `json:"role"`
-	DHCPHost            bool   `json:"dhcp_host"`
+	DHCPHost            *bool  `json:"dhcp_host"` // nil keeps the stored value of an existing device
 	Username            string `json:"username"`
 	Password            string `json:"password"`
 	ExpectedFingerprint string `json:"expected_fingerprint"`
@@ -360,11 +360,11 @@ func (a *app) storeBootstrap(ctx context.Context, userID string, req bootstrapRe
 	defer tx.Rollback(ctx)
 	var d device
 	if req.DeviceID != "" {
-		err = tx.QueryRow(ctx, `UPDATE devices SET status='online', role=$2, dhcp_host=$3, last_seen_at=NOW() WHERE id=$1 RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE,role,dhcp_host`,
+		err = tx.QueryRow(ctx, `UPDATE devices SET status='online', role=$2, dhcp_host=COALESCE($3,dhcp_host), last_seen_at=NOW() WHERE id=$1 RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE,role,dhcp_host`,
 			req.DeviceID, req.Role, req.DHCPHost).
 			Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost)
 	} else {
-		err = tx.QueryRow(ctx, `INSERT INTO devices(name,address,model,firmware,status,role,dhcp_host,last_seen_at) VALUES($1,$2,'','','online',$3,$4,NOW()) RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE,role,dhcp_host`,
+		err = tx.QueryRow(ctx, `INSERT INTO devices(name,address,model,firmware,status,role,dhcp_host,last_seen_at) VALUES($1,$2,'','','online',$3,COALESCE($4,FALSE),NOW()) RETURNING id::text,name,address,model,firmware,status,last_seen_at,created_at,FALSE,role,dhcp_host`,
 			req.Name, req.Address, req.Role, req.DHCPHost).
 			Scan(&d.ID, &d.Name, &d.Address, &d.Model, &d.Firmware, &d.Status, &d.LastSeenAt, &d.CreatedAt, &d.ConfigDrift, &d.Role, &d.DHCPHost)
 	}
