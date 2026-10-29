@@ -432,11 +432,9 @@ func (a *app) runPackageInstall(id int64) {
 	a.setPackageInstallStep(ctx, id, "installing")
 	res = session.runWriteRaw(format.install, nil)
 	if res.Status != "ok" {
-		detail := "the install command failed"
-		if res.Output != "" {
-			detail += ": " + tail(res.Output, packageDetailLimit)
-		}
-		fail(detail, append(checks, upgradeCheck{Name: "install", Status: "failed", Detail: res.Error}))
+		// The package manager's output is not stored: a root-running install script can
+		// print anything, including secrets, and operators can read this record.
+		fail("the install command failed; nothing is stored from its output", append(checks, upgradeCheck{Name: "install", Status: "failed", Detail: res.Error}))
 		return
 	}
 	checks = append(checks, upgradeCheck{Name: "install", Status: "ok", Detail: "the package manager reported success"})
@@ -460,14 +458,6 @@ func (a *app) runPackageInstall(id int64) {
 	}
 	checks = append(checks, upgradeCheck{Name: "installed version", Status: "ok", Detail: info.Name + " " + info.Version + " is listed on the device"})
 	a.finishPackageInstall(id, "done", "installed", checks)
-}
-
-// tail returns the last n bytes of s.
-func tail(s string, n int) string {
-	if len(s) > n {
-		return s[len(s)-n:]
-	}
-	return s
 }
 
 // recoverPackageInstalls ends installs left running by a server restart. The device may
