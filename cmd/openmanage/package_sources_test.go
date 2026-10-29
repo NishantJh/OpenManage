@@ -20,7 +20,7 @@ func TestPublicAddress(t *testing.T) {
 	for ip, want := range map[string]bool{
 		"8.8.8.8": true, "2606:4700::1111": true,
 		"127.0.0.1": false, "::1": false, "10.1.2.3": false, "192.168.1.1": false, "172.16.0.9": false,
-		"169.254.1.1": false, "100.64.0.1": false, "0.0.0.0": false, "224.0.0.1": false, "fe80::1": false, "::ffff:192.168.1.5": false,
+		"169.254.1.1": false, "100.64.0.1": false, "0.0.0.0": false, "0.1.2.3": false, "198.18.0.1": false, "255.255.255.255": false, "224.0.0.1": false, "fe80::1": false, "::ffff:192.168.1.5": false,
 	} {
 		if got := publicAddress(net.ParseIP(ip)); got != want {
 			t.Errorf("publicAddress(%s) = %v, want %v", ip, got, want)
@@ -214,11 +214,8 @@ func TestPackageSourceLifecycle(t *testing.T) {
 	}
 	var audited int
 	_ = db.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action LIKE 'package_source.%'`).Scan(&audited)
-	if audited != 5 { // create, confirm, create (apk), delete
-		// create ipk, confirm ipk, create apk, delete ipk
-		if audited != 4 {
-			t.Fatalf("audit events = %d, want 4", audited)
-		}
+	if audited != 4 { // create ipk, confirm ipk, create apk, delete ipk
+		t.Fatalf("audit events = %d, want 4", audited)
 	}
 }
 

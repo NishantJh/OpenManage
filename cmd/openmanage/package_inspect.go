@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Reading the metadata of a package file that an administrator registers as a package
@@ -26,7 +28,6 @@ const (
 	packageMaxControlBytes = 1 << 20   // control.tar.gz, expanded
 	packageMaxFieldBytes   = 64 << 10  // control file or one script
 	packageMaxADBBytes     = 4 << 20   // first ADB block (metadata, file list, scripts)
-	packageScriptShowBytes = 16 << 10  // part of a script kept to show the administrator
 	packageMaxDepends      = 256
 )
 
@@ -34,9 +35,8 @@ const (
 var packageArchPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 
 type packageScript struct {
-	Name      string `json:"name"`
-	Body      string `json:"body"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Name string `json:"name"`
+	Body string `json:"body"`
 }
 
 // packageInfo is what the administrator reviews before a source is confirmed. Text taken
@@ -92,28 +92,39 @@ func inspectPackage(data []byte) (packageInfo, error) {
 	return info, nil
 }
 
-// cleanPackageText keeps printable text, so a control character cannot reach a log or
-// the screen, and cuts it to max bytes.
+// cleanPackageText makes text from a package safe and honest to show: invalid UTF-8,
+// control characters (other than newline and tab) and invisible formatting characters
+// such as bidirectional overrides are written as visible escapes instead of being
+// dropped, so what the administrator reads is what the device would run. The result is
+// cut to about max bytes.
 func cleanPackageText(s string, max int) string {
 	var b strings.Builder
-	for _, r := range s {
-		if b.Len() >= max {
-			break
-		}
-		if r == '\n' || r == '\t' || (r >= 0x20 && r != 0x7f && r != 0xfffd) {
+	for i := 0; i < len(s) && b.Len() < max; {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size <= 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029:
+			fmt.Fprintf(&b, `\u{%04X}`, r)
+		default:
 			b.WriteRune(r)
 		}
+		i += size
 	}
 	return strings.TrimSpace(b.String())
 }
 
-func scriptFrom(name string, body []byte) packageScript {
-	s := packageScript{Name: name}
-	if len(body) > packageScriptShowBytes {
-		body, s.Truncated = body[:packageScriptShowBytes], true
+var errScriptTooLarge = errors.New("an install script in this package is larger than 64 KiB, too large to review")
+
+// scriptFrom keeps the whole script: one that is too large to show in full is refused,
+// so no part of a script that runs as root goes unseen.
+func scriptFrom(name string, body []byte) (packageScript, error) {
+	if len(body) > packageMaxFieldBytes {
+		return packageScript{}, errScriptTooLarge
 	}
-	s.Body = cleanPackageText(string(body), packageScriptShowBytes+4)
-	return s
+	return packageScript{Name: name, Body: cleanPackageText(string(body), 4*packageMaxFieldBytes+64)}, nil
 }
 
 // --- .ipk ------------------------------------------------------------------------------
@@ -156,7 +167,11 @@ func inspectIPK(data []byte) (packageInfo, error) {
 			parseIPKControl(string(body), &info)
 			haveControl = true
 		} else {
-			scripts[name] = scriptFrom(name, body)
+			script, err := scriptFrom(name, body)
+			if err != nil {
+				return packageInfo{}, err
+			}
+			scripts[name] = script
 		}
 	}
 	if !haveControl {
@@ -434,7 +449,11 @@ func inspectAPK(data []byte) (packageInfo, error) {
 				break
 			}
 			if body, ok := b.blob(v); ok && len(body) > 0 {
-				info.Scripts = append(info.Scripts, scriptFrom(adbScriptNames[i], body))
+				script, err := scriptFrom(adbScriptNames[i], body)
+				if err != nil {
+					return packageInfo{}, err
+				}
+				info.Scripts = append(info.Scripts, script)
 			}
 		}
 	}

@@ -64,7 +64,11 @@ func scanPackageSource(row pgx.Row, s *packageSource) error {
 func publicAddress(ip net.IP) bool {
 	if ip4 := ip.To4(); ip4 != nil {
 		ip = ip4
-		if ip4[0] == 100 && ip4[1]&0xc0 == 64 { // carrier-grade NAT, 100.64.0.0/10
+		switch {
+		case ip4[0] == 0, // "this network"; Linux routes 0.x.x.x to the local machine
+			ip4[0] == 100 && ip4[1]&0xc0 == 64, // carrier-grade NAT, 100.64.0.0/10
+			ip4[0] == 198 && ip4[1]&0xfe == 18, // benchmarking, 198.18.0.0/15
+			ip4[0] >= 240:                      // reserved and broadcast
 			return false
 		}
 	}
