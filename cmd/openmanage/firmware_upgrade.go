@@ -51,6 +51,10 @@ const (
 	upgradeListLimit       = 10
 )
 
+// upgradeImageSlots bounds how many images are held in memory at once (download to
+// staged), since each can be up to upgradeImageLimit.
+var upgradeImageSlots = make(chan struct{}, 2)
+
 // upgradeBuildPoll is how often a pending build is polled; tests shorten it.
 var upgradeBuildPoll = 5 * time.Second
 
@@ -501,6 +505,14 @@ func (j *upgradeJob) run(ctx context.Context) {
 		return
 	}
 
+	j.setStep(ctx, "waiting for a download slot")
+	select {
+	case upgradeImageSlots <- struct{}{}:
+	case <-ctx.Done():
+		fail("")
+		return
+	}
+	defer func() { <-upgradeImageSlots }()
 	j.setStep(ctx, "downloading")
 	image, err := downloadFirmwareImage(ctx, serverURL, built.BinDir, img.Name)
 	if err != nil {
@@ -528,15 +540,10 @@ func (j *upgradeJob) run(ctx context.Context) {
 		fail("could not take the pre-flash backup: " + bfail.msg)
 		return
 	}
-	if _, err := a.db.Exec(ctx, `UPDATE device_backups SET pinned=TRUE WHERE id=$1 AND device_id=$2`, backup.Backup.ID, j.deviceID); err != nil {
+	// Pinned and recorded together, so a stop or a restart unpins exactly what this
+	// job pinned.
+	if err := j.pinBackup(ctx, backup.Backup); err != nil {
 		fail("could not pin the pre-flash backup")
-		return
-	}
-	// Recorded at once so a restart or a stop can unpin what this job pinned.
-	if _, err := a.db.Exec(ctx, `UPDATE firmware_upgrades SET backup_id=$2, backup_pinned_by_job=$3 WHERE id=$1`,
-		j.id, backup.Backup.ID, !backup.Backup.Pinned); err != nil {
-		_, _ = a.db.Exec(context.Background(), `UPDATE device_backups SET pinned=$2 WHERE id=$1`, backup.Backup.ID, backup.Backup.Pinned)
-		fail("could not record the pre-flash backup")
 		return
 	}
 
@@ -575,6 +582,21 @@ func (j *upgradeJob) run(ctx context.Context) {
 		defer cancel()
 		a.endReadyUpgrade(ectx, id, "the staged image expired; prepare the upgrade again", "")
 	})
+}
+
+func (j *upgradeJob) pinBackup(ctx context.Context, b deviceBackup) error {
+	tx, err := j.a.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `UPDATE device_backups SET pinned=TRUE WHERE id=$1 AND device_id=$2`, b.ID, j.deviceID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE firmware_upgrades SET backup_id=$2, backup_pinned_by_job=$3 WHERE id=$1`, j.id, b.ID, !b.Pinned); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // stageOnDevice uploads the image, checks its hash on the device, notes the boot id
@@ -763,6 +785,13 @@ func (a *app) cancelFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "this upgrade is not running any more; try again in a moment")
 			return
 		}
+		// The job records the stop itself; this records who asked.
+		if tx, err := a.db.Begin(r.Context()); err == nil {
+			if insertAuditEvent(r.Context(), tx, user.ID, "device.firmware_upgrade_cancel", "device", deviceID, map[string]any{"upgrade_id": id}) == nil {
+				_ = tx.Commit(r.Context())
+			}
+			_ = tx.Rollback(r.Context())
+		}
 	case "ready":
 		if !a.endReadyUpgrade(r.Context(), id, "cancelled", user.ID) {
 			writeError(w, http.StatusConflict, "this upgrade changed state; reload it")
@@ -780,11 +809,12 @@ func (a *app) cancelFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, up)
 }
 
-// recoverFirmwareUpgrades runs once at startup. A job that was preparing or ready when
+// recoverFirmwareUpgrades runs once at startup, for jobs created before startedAt (a job
+// started through this process is not touched). A job that was preparing or ready when
 // the server stopped has no image in memory and no timer, so it is ended and the staged
 // file removed. Nothing was flashed by either state.
-func (a *app) recoverFirmwareUpgrades(ctx context.Context) {
-	rows, err := a.db.Query(ctx, `SELECT id, status FROM firmware_upgrades WHERE status IN ('preparing','ready')`)
+func (a *app) recoverFirmwareUpgrades(ctx context.Context, startedAt time.Time) {
+	rows, err := a.db.Query(ctx, `SELECT id, status FROM firmware_upgrades WHERE status IN ('preparing','ready') AND created_at < $1`, startedAt)
 	if err != nil {
 		log.Printf("firmware upgrades: could not look for interrupted jobs")
 		return

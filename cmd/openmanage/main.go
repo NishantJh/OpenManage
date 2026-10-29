@@ -258,7 +258,7 @@ func main() {
 		defer close(monitorDone)
 		a.monitorLoop(ctx)
 	}()
-	go a.recoverFirmwareUpgrades(ctx)
+	go a.recoverFirmwareUpgrades(ctx, time.Now())
 
 	handler := securityHeaders(frontendFallback(apiDeadline(a.authMiddleware(mux))))
 	srv := &http.Server{
