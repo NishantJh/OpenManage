@@ -1,0 +1,23 @@
+name: TEMP package samples
+# Temporary: prints small real .ipk and .apk files (base64) so the package source parser can be tested against real data. Removed in the same PR.
+on:
+  push:
+    branches: [claude/project-thread-0bwcas]
+    paths: [.github/workflows/tmp-pkg-samples.yml]
+permissions:
+  contents: read
+jobs:
+  samples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: ipk (opkg, 24.10)
+        run: |
+          mkdir -p out-ipk && chmod 777 out-ipk
+          docker run --rm -v "$PWD/out-ipk:/out" -w /out openwrt/rootfs:x86-64-24.10.4 sh -c 'mkdir -p /var/lock && opkg update >/dev/null 2>&1; opkg download ca-bundle; opkg --version; ls -l /out' || true
+          for f in out-ipk/*.ipk; do echo "== $f $(wc -c < "$f")"; file "$f" || true; base64 -w0 "$f"; echo; done
+      - name: apk (apk-tools, 25.12)
+        run: |
+          mkdir -p out-apk && chmod 777 out-apk
+          docker run --rm -v "$PWD/out-apk:/out" openwrt/rootfs:x86-64-25.12.2 sh -c 'mkdir -p /var/lock /tmp/pk/files/etc && echo hi > /tmp/pk/files/etc/om-test && printf "#!/bin/sh\necho post\n" > /tmp/pk/post && apk --version; apk update >/dev/null 2>&1; apk fetch -o /out ca-bundle; apk mkpkg -I name:om-test -I version:1.0-r1 -I arch:noarch -I description:test -I depends:libc -s post-install:/tmp/pk/post -F /tmp/pk/files -o /out/om-test-1.0-r1.apk; ls -l /out' || true
+          for f in out-apk/*.apk; do echo "== $f $(wc -c < "$f")"; file "$f" || true; base64 -w0 "$f"; echo; done
