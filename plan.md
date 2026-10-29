@@ -170,15 +170,33 @@ Trusted hosts such as Home Assistant still need to reach IoT devices. Policy: ma
 
 Safety defaults: the IoT VLAN is opt-in and off by default. Cast and print devices stay on the main network unless the user moves them. A scoped reflector (avahi or umdns, limited to the chosen service types and the IoT and main interfaces) is offered only to users who move such devices, with a pre-flight warning listing what may break, such as phone casting and printer discovery. A second HA interface on the IoT VLAN helps HA only; it does not let phones on the main network see IoT devices.
 
-### Later: per-device firmware build and upgrade (design only)
+### Later: per-device firmware build and upgrade — in progress
 
-Not scheduled; starts after the sections above are done and tested. Goal: build and flash a firmware image per device that keeps all installed packages (including third-party ones such as `luci-theme-fluent`) and reapplies configuration, like ASU. Design, feasibility verdict and open questions: [docs/firmware-upgrades.md](docs/firmware-upgrades.md). It refines Section 5 and inherits its safety rules.
+Started 2026-10-29. Goal: build and flash a firmware image per device that keeps all installed packages (including third-party ones such as `luci-theme-fluent`) and reapplies configuration, like ASU. Design, feasibility verdict and open questions: [docs/firmware-upgrades.md](docs/firmware-upgrades.md). It refines Section 5 and inherits its safety rules.
 
-- [ ] Phase 0: device config backup. A typed `firmware_backup` operation (`sysupgrade -b` archive of `/etc/config` and the keep-list files), stored encrypted with the existing key bound to device and backup id, size-capped, never logged, never extracted on the server. Download and restore are admin-only and audited; restore takes only an OpenManage-captured archive to the same device and board, with lockout checks. Last 5 kept per device, pre-flash backup pinned. Usable as a standalone "back up this router" button and optional schedule, and required before any firmware flash. Agreed by Nishant 2026-10-26; security rules from the review agreed 2026-10-26 (see the firmware design doc).
-- [ ] Phase 1: package and feed inventory, plan-only package diff (read-only), and a package source registry (stored release file or upload, installed allow-untrusted after admin review of its control data) for installing external packages such as themes, with source-unknown packages flagged, and a versioned desired package set per device or group (no fixed list) that is diffed against the installed packages and applied on the next flash or on request.
+- [x] Phase 0: device config backup (#92, #94, #98, #99). A typed `firmware_backup` operation (`sysupgrade -b` archive of `/etc/config` and the keep-list files), stored encrypted with the existing key bound to device and backup id, size-capped, never logged, never extracted on the server. Download and restore are admin-only and audited; restore takes only an OpenManage-captured archive to the same device and board, with lockout checks. Last 5 kept per device, pre-flash backup pinned. Usable as a standalone "back up this router" button and optional schedule, and required before any firmware flash. Agreed by Nishant 2026-10-26; security rules from the review agreed 2026-10-26 (see the firmware design doc).
+- [ ] Phase 1: package and feed inventory (read-only `firmware_inventory`: release, board, package manager, hand-installed packages, removed defaults, custom feeds with credentials stripped, keep list, extroot, free space, shown on the Firmware page; done), a read-only upgrade plan for any release the build server offers (opt-in build server; done), preparing an upgrade (build, hash check, pinned backup, staged image, `sysupgrade -T`; done), flashing it with post-reboot checks (done, tested in the container lab and in a real OpenWrt x86-64 VM; hardware test next), plan-only package diff (read-only), and a package source registry (stored release file or upload, installed allow-untrusted after admin review of its control data; the registry itself is done, installing is next) for installing external packages such as themes, with source-unknown packages flagged, and a versioned desired package set per device or group (no fixed list) that is diffed against the installed packages and applied on the next flash or on request.
 - [ ] Phase 2: single-device upgrade through the ASU API, third-party packages reinstalled afterward, encrypted config backup, post-reboot verification and drift review.
 - [ ] Phase 3: staged rollout (canary, concurrency limit, stop on failure).
 - [ ] Phase 4 (optional): self-hosted ASU mode. A build-server URL setting plus a single setup script for a separate Linux machine (outside the OpenManage stack), with optional extra feeds. Public ASU stays the default. Decided by Nishant 2026-10-23.
+
+### Later: per-device settings editor (after firmware)
+
+Not scheduled; starts after the firmware work is done and tested. Agreed in principle by Nishant 2026-10-29. Goal: view and change each device's settings from OpenManage, with a LuCI-like menu (System, Network, Wireless, DHCP/DNS, Firewall, Software) so users find things where they expect them. LuCI's own pages are not reused; OpenManage builds its own pages.
+
+- [ ] Read-only view of all UCI settings per device, grouped in the LuCI-like menu, secrets redacted.
+- [ ] Widen the Section 3 controlled-change workflow from one setting to a batch: pre-change backup, diff, `uci apply` with 60 s rollback, read-back over a fresh connection, confirm. Refuse if the device config changed since the page loaded.
+- [ ] Hand-built pages for common sections, Wireless first (built on the Section 9 Wi-Fi write, which stays scheduled as next and is not deferred), then System, Network interfaces, DHCP/DNS, Firewall.
+- [ ] Admin-only raw UCI editor for everything else, including third-party apps, through the same workflow.
+
+Safety rules: changes that can drop clients (wireless, network, firewall, management access) need an explicit opt-in tickbox; existing SSIDs and passphrases stay locked unless the user unlocks that field; no change ever forces clients to rejoin without opt-in.
+
+### Later: Software page (package install and remove)
+
+Builds on the firmware package work (inventory, package source registry, desired package sets); not a separate package system. Search the package list, install, remove, and refresh lists, for apk and opkg, through typed operations.
+
+- [ ] Software page with search, install, remove, refresh lists; installs and removes update the device's desired package set so they survive a firmware upgrade.
+- [ ] Guardrails: core packages (dropbear, wpad/hostapd, firewall, kernel modules, OpenManage dependencies) blocked or behind a typed confirmation; free-space check before install; kernel modules must match the running kernel; note that removing a package that shipped in the firmware image frees no space.
 
 ## Deferred and optional items
 

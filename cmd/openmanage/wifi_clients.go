@@ -39,6 +39,7 @@ const (
 	// than a few KB; the limit still bounds what a device can make us hold.
 	clientOutputLimit = 1 << 20
 	pollErrorMax      = 120
+	noKeyPollError    = "no SSH key is stored. Set one up with the key icon on the Devices page"
 )
 
 // wifiClientsOperation reads the hostapd association tables, plus two small side tables
@@ -509,9 +510,21 @@ type wifiClientView struct {
 
 // listWifiClients returns clients seen in the last 24 hours. A client counts as
 // connected only if its AP was polled recently enough to trust the record.
-// wifiPollStatus reports each AP's latest poll outcome (in memory; empty until the first poll).
+// wifiPollStatus reports each AP's latest poll outcome (in memory; empty until the first poll),
+// plus every access point that is never polled because it has no SSH key. Without that entry a
+// device that moved to such an AP just turns red, "last on" the AP it left.
 func (a *app) wifiPollStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, a.clientPolls.statuses())
+	out := a.clientPolls.statuses()
+	ids, err := queryDeviceIDs(r.Context(), a.db, `SELECT d.id::text FROM devices d
+		WHERE d.role='access_point' AND NOT EXISTS (SELECT 1 FROM device_credentials dc WHERE dc.device_id=d.id)
+		ORDER BY d.created_at LIMIT 50`)
+	if err != nil {
+		log.Printf("client tracking could not list access points without a key")
+	}
+	for _, id := range ids {
+		out = append(out, pollStatus{DeviceID: id, Error: noKeyPollError})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *app) listWifiClients(w http.ResponseWriter, r *http.Request) {

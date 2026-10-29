@@ -8,6 +8,7 @@ export const pages=[
  {path:"/monitoring",key:"monitoring",label:"Monitoring"},
  {path:"/access",key:"access",label:"Access & security"},
  {path:"/backups",key:"backups",label:"Backups"},
+ {path:"/firmware",key:"firmware",label:"Firmware"},
 ] as const;
 export type PageKey=typeof pages[number]["key"];
 

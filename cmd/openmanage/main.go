@@ -188,6 +188,21 @@ func main() {
 	mux.HandleFunc("DELETE /api/devices/{id}/backups/{backup}", a.deleteDeviceBackup)
 	mux.HandleFunc("POST /api/devices/{id}/backups/{backup}/restore", a.restoreDeviceBackup)
 	mux.HandleFunc("GET /api/devices/{id}/restores", a.listDeviceRestores)
+	mux.HandleFunc("POST /api/devices/{id}/firmware-inventory", a.captureFirmwareInventory)
+	mux.HandleFunc("GET /api/devices/{id}/firmware-inventory", a.getFirmwareInventory)
+	mux.HandleFunc("GET /api/devices/{id}/firmware-plan", a.getFirmwarePlan)
+	mux.HandleFunc("GET /api/package-sources", a.listPackageSources)
+	mux.HandleFunc("POST /api/package-sources", a.createPackageSource)
+	mux.HandleFunc("POST /api/package-sources/{id}/confirm", a.confirmPackageSource)
+	mux.HandleFunc("DELETE /api/package-sources/{id}", a.deletePackageSource)
+	mux.HandleFunc("GET /api/devices/{id}/firmware-upgrades", a.listFirmwareUpgrades)
+	mux.HandleFunc("POST /api/devices/{id}/firmware-upgrades", a.startFirmwareUpgrade)
+	mux.HandleFunc("POST /api/devices/{id}/firmware-upgrades/{job}/cancel", a.cancelFirmwareUpgrade)
+	mux.HandleFunc("POST /api/devices/{id}/firmware-upgrades/{job}/flash", a.flashFirmwareUpgrade)
+	mux.HandleFunc("POST /api/devices/{id}/firmware-upgrades/{job}/acknowledge", a.acknowledgeFirmwareUpgrade)
+	mux.HandleFunc("GET /api/firmware/settings", a.getFirmwareSettings)
+	mux.HandleFunc("PUT /api/firmware/settings", a.updateFirmwareSettings)
+	mux.HandleFunc("GET /api/firmware/releases", a.listFirmwareReleases)
 	mux.HandleFunc("GET /api/config-settings", a.listWritableSettings)
 	mux.HandleFunc("GET /api/devices/{id}/config-changes", a.listConfigChanges)
 	mux.HandleFunc("POST /api/devices/{id}/config-changes", a.previewConfigChange)
@@ -249,6 +264,7 @@ func main() {
 		defer close(monitorDone)
 		a.monitorLoop(ctx)
 	}()
+	go a.recoverFirmwareUpgradesAtStartup(ctx)
 
 	handler := securityHeaders(frontendFallback(apiDeadline(a.authMiddleware(mux))))
 	srv := &http.Server{
@@ -782,6 +798,9 @@ func apiDeadline(next http.Handler) http.Handler {
 		timeout := apiRequestTimeout
 		if isBackupCreate(r) {
 			timeout = backupJobTimeout
+		}
+		if isPackageSourceCreate(r) {
+			timeout = packageRequestTimeout
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()

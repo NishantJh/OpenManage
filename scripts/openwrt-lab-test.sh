@@ -165,6 +165,200 @@ json 'assert d["acknowledged"]==1, d' < "$body"
 api GET "/api/devices/$device_id"; json 'assert not d["config_drift"], d' < "$body"
 echo "PASS: drift counts for the device until an administrator acknowledges it"
 
+# Firmware inventory (read-only). The container has no /rom, so fake an image package
+# list with one default the owner "removed", mark one package as installed by hand, and
+# add a custom feed carrying credentials. Everything is put back afterwards.
+api GET "/api/devices/$device_id/firmware-inventory"
+json 'assert d["inventory"] is None, d' < "$body"
+docker exec "$router" sh -c 'cp /usr/lib/opkg/status /tmp/opkg-status.lab && cp /etc/opkg/customfeeds.conf /tmp/customfeeds.lab &&
+  mkdir -p /rom/etc /rom/usr/lib/opkg && cp /usr/lib/opkg/status /rom/usr/lib/opkg/status &&
+  printf "\nPackage: wpad-basic-mbedtls\nVersion: 2024.09.15-r1\nStatus: install ok installed\n\n" >> /rom/usr/lib/opkg/status &&
+  printf "\nPackage: luci-theme-lab\nVersion: 1.0-r1\nStatus: install user installed\nArchitecture: all\n\n" >> /usr/lib/opkg/status &&
+  echo "src/gz lab https://lab:labtoken@feeds.example.invalid/lab?key=labsecret" >> /etc/opkg/customfeeds.conf'
+api POST "/api/devices/$device_id/firmware-inventory"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "firmware inventory returned HTTP $status"; }
+inventory_id="$(json '
+m=d["inventory"]["manifest"]
+assert d["first"] and m["release"]=="24.10.4" and m["package_manager"]=="opkg" and m["arch"]=="x86_64", m
+assert m["rom_known"] and m["user_installed"]==["luci-theme-lab"] and m["removed_defaults"]==["wpad-basic-mbedtls"], m
+assert m["custom_feeds"]==["src/gz lab https://redacted@feeds.example.invalid/lab?redacted"], m["custom_feeds"]
+assert m["overlay_free_kb"]>0 and m["mem_available_kb"]>0 and not m["extroot"], m
+print(d["inventory"]["id"])' < "$body")"
+api POST "/api/devices/$device_id/firmware-inventory"
+json 'assert not d["first"] and not d["changed"] and d["inventory"]["id"]==int(sys.argv[1]), d' "$inventory_id" < "$body"
+leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM firmware_inventories WHERE manifest::text LIKE '%labtoken%' OR manifest::text LIKE '%labsecret%'")"
+[[ "$leaks" == 0 ]] || fail "feed credentials stored in the firmware inventory"
+echo "PASS: firmware inventory lists hand-installed and removed packages, strips feed credentials, and stores only changes"
+
+# Upgrade plan (read-only). The router's own web server stands in for the ASU build
+# server and the download server, with the JSON shapes ASU serves. The board name is
+# set for this test only, since the container reports none.
+api GET /api/firmware/releases
+[[ "$status" == 409 ]] || { cat "$body" >&2; fail "releases must be refused while the build server is off (HTTP $status)"; }
+api PUT /api/firmware/settings '{"build_server_enabled":true,"build_server_url":"http://8.8.8.8"}'
+[[ "$status" == 400 ]] || fail "a public plain-http build server must be refused (HTTP $status)"
+docker exec -i "$router" sh -c 'mkdir -p /tmp/sysinfo /www/json/v1/releases/25.12.2/targets/x86/64 /www/json/v1/releases/25.12.2/packages /www/releases/25.12.2/targets/x86/64 &&
+  echo lab,router > /tmp/sysinfo/board_name && echo "Lab Router" > /tmp/sysinfo/model &&
+  cat > /www/json/v1/overview.json && /etc/init.d/uhttpd start' <<EOF
+{"latest":["25.12.2"],"upstream_url":"http://$router_ip","branches":{
+ "25.12":{"enabled":true,"path":"releases/{version}","versions":["25.12.2","25.12.0-rc1"],"targets":{"x86/64":"x86_64"},"package_changes":[]},
+ "24.10":{"enabled":true,"path":"releases/{version}","versions":["24.10.4"],"targets":{"x86/64":"x86_64"},"package_changes":[]}}}
+EOF
+docker exec "$router" sh -c 'echo "{\"version_code\":\"r32400-lab\",\"arch_packages\":\"x86_64\",\"default_packages\":[\"busybox\",\"wpad-basic-mbedtls\"],\"linux_kernel\":{\"version\":\"6.12.74\"},\"profiles\":{\"generic\":{\"device_packages\":[],\"supported_devices\":[],\"titles\":[{\"vendor\":\"\",\"model\":\"Generic x86/64\"}]}}}" > /www/releases/25.12.2/targets/x86/64/profiles.json &&
+  echo "{\"packages\":{\"kmod-e1000\":\"6.12\"}}" > /www/json/v1/releases/25.12.2/targets/x86/64/index.json &&
+  echo "{\"tcpdump\":\"4.99\"}" > /www/json/v1/releases/25.12.2/packages/x86_64-index.json'
+api PUT /api/firmware/settings "{\"build_server_enabled\":true,\"build_server_url\":\"http://$router_ip\"}"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "firmware settings returned HTTP $status"; }
+api GET /api/firmware/releases
+json 'assert [r["version"] for r in d["releases"]]==["25.12.2","25.12.0-rc1","24.10.4"], d; assert d["releases"][1]["release_candidate"], d' < "$body"
+api POST "/api/devices/$device_id/firmware-inventory"
+json 'assert d["changed"] and d["inventory"]["manifest"]["board_name"]=="lab,router", d' < "$body"
+api GET "/api/devices/$device_id/firmware-plan?version=25.12.2"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "upgrade plan returned HTTP $status"; }
+json '
+p=d["plan"]
+assert p["profile"]=="generic" and p["version_code"]=="r32400-lab" and p["package_manager"]=="apk" and not p["blockers"], p
+assert p["packages"]==["-wpad-basic-mbedtls"] and p["unavailable"]==["luci-theme-lab"], p
+assert any("opkg to apk" in w for w in p["warnings"]), p["warnings"]' < "$body"
+api GET "/api/devices/$device_id/firmware-plan?version=..%2F..%2Fetc"
+[[ "$status" == 400 ]] || fail "a malformed release must be refused (HTTP $status)"
+echo "PASS: the upgrade plan lists releases from the build server, maps the image profile and flags packages the official feeds lack"
+
+# Prepare a firmware upgrade (no flash). The router's web server also stands in for ASU's
+# build API through a CGI script: the first poll says "started", the second returns a
+# finished build whose image is random bytes. A container cannot flash, so the
+# device-side checks stop at sysupgrade -T: with the real tool the random image must be
+# rejected; with a stub that approves -T (and passes -b through to the real tool, which
+# the backup needs), the job becomes ready and can be cancelled.
+docker exec -i "$router" sh -c 'mkdir -p /www/api/v1 /www/store/abcdef0123456789 && cat > /www/api/v1/build && chmod 755 /www/api/v1/build &&
+  head -c 300000 /dev/urandom > /www/store/abcdef0123456789/img-sysupgrade.bin &&
+  uci set uhttpd.main.cgi_prefix=/api && uci commit uhttpd && /etc/init.d/uhttpd restart' <<'EOS'
+#!/bin/sh
+img=/www/store/abcdef0123456789/img-sysupgrade.bin
+if [ "$REQUEST_METHOD" = POST ]; then
+  cat > /dev/null
+  rm -f /tmp/build-polls
+  printf 'Status: 202 Accepted\r\nContent-Type: application/json\r\n\r\n{"status":202,"detail":"queued","request_hash":"abcdef0123456789"}'
+  exit 0
+fi
+n=$(cat /tmp/build-polls 2>/dev/null || echo 0); n=$((n+1)); echo $n > /tmp/build-polls
+if [ "$n" -lt 2 ]; then
+  printf 'Status: 202 Accepted\r\nContent-Type: application/json\r\n\r\n{"status":202,"detail":"started","request_hash":"abcdef0123456789"}'
+else
+  sum=$(sha256sum $img | cut -d' ' -f1)
+  printf 'Content-Type: application/json\r\n\r\n{"status":200,"detail":"done","bin_dir":"abcdef0123456789","images":[{"name":"img-sysupgrade.bin","type":"sysupgrade","filesystem":"squashfs","sha256":"%s"}]}' "$sum"
+fi
+EOS
+image_sum="$(docker exec "$router" sh -c 'sha256sum /www/store/abcdef0123456789/img-sysupgrade.bin | cut -d" " -f1')"
+wait_upgrade() { # [rounds]: waits until the newest upgrade job is neither preparing, flashing nor verifying; leaves the list in $body
+  for _ in $(seq 1 "${1:-40}"); do
+    api GET "/api/devices/$device_id/firmware-upgrades"
+    [[ "$status" == 200 ]] || { cat "$body" >&2; fail "listing firmware upgrades returned HTTP $status"; }
+    case "$(json 'print(d[0]["status"])' < "$body")" in preparing|flashing|verifying) ;; *) return 0 ;; esac
+    sleep 3
+  done
+  cat "$body" >&2; fail "the firmware upgrade did not settle"
+}
+prepare_upgrade() { # starts an upgrade to 25.12.2 and waits until it is ready; sets $upgrade_id
+  api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+  [[ "$status" == 202 ]] || { cat "$body" >&2; fail "starting a firmware upgrade returned HTTP $status"; }
+  upgrade_id="$(json 'print(d["id"])' < "$body")"
+  wait_upgrade
+  json 'assert d[0]["status"]=="ready", d[0]' < "$body"
+}
+pinned_backups() { compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM device_backups WHERE pinned"; }
+
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+[[ "$status" == 202 ]] || { cat "$body" >&2; fail "starting a firmware upgrade returned HTTP $status"; }
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+[[ "$status" == 409 ]] || fail "a second open upgrade on the same device must be refused (HTTP $status)"
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"../x"}'
+[[ "$status" == 400 || "$status" == 409 ]] || fail "a malformed release must be refused (HTTP $status)"
+wait_upgrade
+json 'u=d[0]; assert u["status"]=="stopped" and "sysupgrade -T" in u["detail"], u; assert u["plan"]["packages"]==["-wpad-basic-mbedtls"], u["plan"]' < "$body"
+[[ "$(pinned_backups)" == 0 ]] || fail "a stopped upgrade left a backup pinned"
+docker exec "$router" test ! -e /tmp/.om-firmware || fail "a stopped upgrade left its image on the device"
+echo "PASS: preparing builds and verifies the image, takes a backup, stages it, and the device's own check rejects a bad image, which unpins the backup and removes the file"
+
+docker exec "$router" sh -c 'mkdir -p /tmp/lab-aside && mv /sbin/sysupgrade /tmp/lab-aside/sysupgrade.real &&
+  printf "#!/bin/sh\ncase \" \$* \" in *\" -T \"*) exit 0;; esac\nexec /tmp/lab-aside/sysupgrade.real \"\$@\"\n" > /sbin/sysupgrade && chmod 755 /sbin/sysupgrade'
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+[[ "$status" == 202 ]] || { cat "$body" >&2; fail "starting a firmware upgrade returned HTTP $status"; }
+upgrade_id="$(json 'print(d["id"])' < "$body")"
+wait_upgrade
+json '
+u=d[0]
+assert u["status"]=="ready" and u["image_sha256"]==sys.argv[1] and u["image_size"]==300000 and u["backup_id"], u
+assert u["expires_at"] and u["image_name"]=="img-sysupgrade.bin", u' "$image_sum" < "$body"
+[[ "$(pinned_backups)" == 1 ]] || fail "a ready upgrade must hold exactly one pinned backup"
+[[ "$(docker exec "$router" sh -c 'sha256sum /tmp/.om-firmware/image.bin | cut -d" " -f1; ls -ld /tmp/.om-firmware | cut -c1-10')" == "$image_sum"$'\n'drwx------ ]] || fail "the staged image is missing, altered, or its directory is not mode 700"
+api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+[[ "$status" == 409 ]] || fail "a ready upgrade must block another one (HTTP $status)"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/cancel"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "cancel returned HTTP $status"; }
+json 'assert d["status"]=="stopped" and d["detail"]=="cancelled", d' < "$body"
+[[ "$(pinned_backups)" == 0 ]] || fail "cancelling left a backup pinned"
+docker exec "$router" test ! -e /tmp/.om-firmware || fail "cancelling left the image on the device"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/cancel"
+[[ "$status" == 409 ]] || fail "a finished upgrade cannot be cancelled again (HTTP $status)"
+# Flash checks. A container cannot flash or restart, so these cover the claim and the
+# re-checks, the one flash command, and the "device did not restart" outcome; the
+# post-reboot checks need the VM test.
+prepare_upgrade
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"wrong","acknowledge_warnings":true}'
+[[ "$status" == 400 ]] || fail "flashing needs the exact device name (HTTP $status)"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"lab-router"}'
+[[ "$status" == 400 ]] || fail "flashing needs every warning acknowledged (HTTP $status)"
+api GET "/api/devices/$device_id/firmware-upgrades"
+json 'assert d[0]["status"]=="ready", d[0]' < "$body"
+# Scenario A: a package changes after the image was prepared, so the re-check stops the flash.
+docker exec "$router" sh -c 'printf "\nPackage: luci-theme-lab2\nVersion: 1.0-r1\nStatus: install user installed\nArchitecture: all\n\n" >> /usr/lib/opkg/status'
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"lab-router","acknowledge_warnings":true}'
+[[ "$status" == 202 ]] || { cat "$body" >&2; fail "flash claim returned HTTP $status"; }
+wait_upgrade
+json 'u=d[0]; assert u["status"]=="stopped" and u["detail"].startswith("not flashed:") and "changed after the image was prepared" in u["detail"] and not u["flash_sent_at"], u' < "$body"
+[[ "$(pinned_backups)" == 0 ]] || fail "an upgrade stopped before flashing left a backup pinned"
+docker exec "$router" test ! -e /tmp/.om-firmware || fail "an upgrade stopped before flashing left its image on the device"
+echo "PASS: the flash re-checks the device and stops with nothing flashed when its packages changed after preparation"
+
+# Scenario B: everything checks out, the flash command is sent, and the device never
+# restarts (the container's sysupgrade rejects a random image), so after three minutes the
+# job needs attention, says so plainly, and keeps the backup pinned until acknowledged.
+prepare_upgrade
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"lab-router","acknowledge_warnings":true}'
+[[ "$status" == 202 ]] || { cat "$body" >&2; fail "flash claim returned HTTP $status"; }
+wait_upgrade 90
+json '
+u=d[0]
+assert u["status"]=="needs_attention" and u["flash_sent_at"] and "did not restart" in u["detail"], u
+assert [c["name"] for c in u["result"] if c["status"]=="failed"]==["Went down"], u["result"]' < "$body"
+[[ "$(pinned_backups)" == 1 ]] || fail "an upgrade that needs attention must keep its backup pinned"
+docker exec "$router" test ! -e /tmp/.om-firmware || fail "an image that was not written was left staged"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"lab-router","acknowledge_warnings":true}'
+[[ "$status" == 409 ]] || fail "a finished upgrade cannot be flashed again (HTTP $status)"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/acknowledge"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "acknowledge returned HTTP $status"; }
+[[ "$(pinned_backups)" == 0 ]] || fail "acknowledging left the backup pinned"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/acknowledge"
+[[ "$status" == 409 ]] || fail "a second acknowledge must be refused (HTTP $status)"
+audited="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action LIKE 'device.firmware_upgrade%'")"
+[[ "$audited" == 14 ]] || fail "firmware upgrade steps were not all audited ($audited)"
+echo "PASS: a flash that never restarts the device ends as needs attention with the backup pinned, and acknowledging releases it"
+
+docker exec "$router" sh -c 'mv /tmp/lab-aside/sysupgrade.real /sbin/sysupgrade &&
+  uci delete uhttpd.main.cgi_prefix && uci commit uhttpd && mv /www/api /www/store /tmp/lab-aside/'
+echo "PASS: a prepared upgrade pins one backup, stages a mode-700 image with the expected hash, blocks a second upgrade, and cancelling removes the image and unpins the backup"
+
+# Put the router back as it was (moved aside, not deleted) and turn the build server off.
+docker exec "$router" sh -c '/etc/init.d/uhttpd stop; mv /tmp/opkg-status.lab /usr/lib/opkg/status && mv /tmp/customfeeds.lab /etc/opkg/customfeeds.conf &&
+  mkdir -p /tmp/lab-aside && mv /rom /tmp/sysinfo /www/json /www/releases /tmp/lab-aside/'
+api PUT /api/firmware/settings '{"build_server_enabled":false}'
+api POST "/api/devices/$device_id/firmware-inventory"
+json 'm=d["inventory"]["manifest"]; assert d["changed"] and not m["rom_known"] and m["user_installed"]==[] and m["custom_feeds"]==[] and m["board_name"]=="", m' < "$body"
+api GET "/api/devices/$device_id/firmware-inventory"
+json 'assert d["inventory"]["id"]!=int(sys.argv[1]), d' "$inventory_id" < "$body"
+echo "PASS: firmware test changes are undone on the router"
+
 # Scheduled snapshots: backdating the newest snapshot makes the device due on the
 # next 15-second scheduler poll.
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"snapshots_enabled":true,"snapshot_interval_seconds":900}'

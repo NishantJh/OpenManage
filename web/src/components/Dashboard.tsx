@@ -20,6 +20,7 @@ import ConfigModal from "./ConfigModal";
 import SnapshotScheduleCard from "./SnapshotScheduleCard";
 import BackupSettingsCard from "./BackupSettingsCard";
 import DeviceBackups from "./DeviceBackups";
+import DeviceFirmware from "./DeviceFirmware";
 import UsersSection from "./UsersSection";
 import WifiSection from "./WifiSection";
 import Attention from "./Attention";
@@ -34,6 +35,7 @@ const headings:Record<PageKey,[string,string]>={
  monitoring:["Monitoring","Scheduled health checks and their history."],
  access:["Access & security","Users, roles and the audit trail."],
  backups:["Backups","Device backups, restore, and configuration drift detection."],
+ firmware:["Firmware","Releases and packages on each device, ahead of upgrades."],
 };
 
 export default function Dashboard({username,role,onLogout}:{username:string;role:string;onLogout:()=>void}){
@@ -74,6 +76,7 @@ export default function Dashboard({username,role,onLogout}:{username:string;role
  {page==="access"&&<AuditLog audit={audit} auditLoading={auditLoading} auditError={auditError} onRefresh={()=>void loadAudit()}/>}
  {page==="overview"&&<Attention devices={devices} monitoring={monitoring} history={monitorHistory} audit={audit} loading={loading}/>}
  {page==="overview"&&<div className="bottom-cards"><div className="info-card"><ShieldCheck size={20}/><div><b>Security first</b><p>SSH enrollment pins the router host key and encrypts stored credentials. Configuration changes are previewed, applied with automatic rollback, and audited.</p><span>SECURITY ROADMAP</span></div></div><div className="info-card blue"><Activity size={20}/><div><b>Persistent monitoring</b><p>{monitoring?"Server-side checks are enabled and continue independently of this browser.":"Monitoring is disabled. Enable it to begin scheduled, read-only SSH health checks."} Each cycle is bounded to five enrolled devices; check history is stored in PostgreSQL.</p><span>{monitoring?"SERVER MONITORING ON":"OPT-IN · READ-ONLY"}</span></div></div></div>}
+ {page==="firmware"&&<DeviceFirmware devices={devices} role={role as Role} onChanged={()=>void loadAudit()}/>}
  {page==="backups"&&<DeviceBackups devices={devices} role={role as Role} settings={savedSettings} onChanged={()=>void loadAudit()}/>}
  {page==="backups"&&<div className="bottom-cards"><BackupSettingsCard settings={savedSettings} isAdmin={role==="admin"} onSaved={s=>{setSavedSettings(s);void loadAudit()}}/><SnapshotScheduleCard settings={savedSettings} isAdmin={role==="admin"} onSaved={s=>{setSavedSettings(s);void loadAudit()}}/></div>}
  {page==="configuration"&&role!=="admin"&&<div className="notice">Only administrators can change network configuration.</div>}

@@ -1,6 +1,6 @@
 # Firmware build and upgrade: design
 
-Status: proposal, not started. Design only; no code. Comes after the current plan (Sections 3 to 8) is finished and tested. It refines plan.md Section 5.
+Status: in progress (started 2026-10-29). Phase 0 (backups) is built; Phase 1 has the read-only inventory (`firmware_inventory.go`) and upgrade plan (`firmware_plan.go`). It refines plan.md Section 5.
 
 ## Goal
 
@@ -30,6 +30,50 @@ A **package manifest** is captured per device by typed read operations and store
 - Free flash and RAM, so an image that will not fit is rejected early.
 
 These are new typed read operations (names `firmware_inventory`, similar), using fixed command templates. No generic shell.
+
+As built (`firmware_inventory`, `POST`/`GET /api/devices/{id}/firmware-inventory`; admins and operators capture, every role reads):
+- The device's package database is read directly: the opkg status file, or the apk installed database and `/etc/apk/world`.
+- "Installed by the owner" means: opkg packages flagged `user` that are not in the image, or apk world entries that are not in the image's world. "Removed defaults" are image packages that are no longer installed. Both need `/rom` (the squashfs image). When it is missing (x86 ext4 images, the lab container) the result is marked `rom_known: false`. On apk without `/rom`, every world entry is listed as installed by the owner.
+- Feed-origin detection against the official index waits for the upgrade plan step, which is the first one that contacts the build service.
+- Custom feed lines lose URL credentials and query strings before they are stored. Extroot means an enabled fstab mount targets `/overlay`.
+- The newest 20 inventories per device are kept. A capture that differs only in free space and memory updates the newest row instead of adding one.
+
+### Upgrade plan (as built)
+
+Decided with Nishant 2026-10-29: every release the build server offers is listed (final releases, release candidates and snapshots), newest first, and the admin picks one, as in the ASU web client. apk (25.x) is supported from the start. The order agreed is: single-device upgrade with official packages first, then the package source registry.
+
+- **Opt-in:** `firmware_settings` (one row) holds `build_server_enabled` (off by default) and `build_server_url` (default `https://sysupgrade.openwrt.org`). Only an administrator changes it; changes are audited. The URL must be https, or plain http to a private IP literal (a self-hosted server on the LAN). No credentials, query or fragment.
+- **What is fetched**, read-only and cached for an hour: the build server's `/json/v1/overview.json` (branches, versions, renames, upstream URL), the upstream `profiles.json` for the release and target, and the build server's target and architecture package indexes (`/json/v1/<dir>/targets/<target>/index.json`, `/json/v1/<dir>/packages/<arch>-index.json`). Requests carry only release, target and architecture in the path. Bodies are capped at 16 MiB, requests time out after 20 s, and redirects to another host are refused.
+- **Profile:** the board name with commas as underscores, else a profile that lists it under `supported_devices`, else `generic` (x86), as ASU and owut do.
+- **Packages** (the owut "fs-user" form, additive to the release defaults): the owner's packages that the feeds still offer, after the branch's `package_changes` renames and removals up to the target revision, plus `-name` for each default the owner removed that is still a default. Owner packages the feeds lack are listed as "install again afterwards" and not requested.
+- **Blockers:** extroot, no board name, no image for the board or target, and going from apk back to an opkg release. **Warnings:** same release, downgrade, snapshot, release candidate, new branch, opkg to apk, packages missing from the feeds, and no `/rom` to compare with.
+- API: `GET`/`PUT /api/firmware/settings`, `GET /api/firmware/releases`, `GET /api/devices/{id}/firmware-plan?version=` (admins and operators). The plan uses the newest stored inventory.
+
+### Preparing an upgrade (as built)
+
+Step 3, part 1. Approved by Nishant 2026-10-29: confirmation is typing the device name (no password), settings are always kept (the flash command can never carry `-n` or `-F`), only the same release family or the next one the build server lists is allowed (never a downgrade or a snapshot), and the first flash test is an OpenWrt x86-64 VM before his spare TP-Link Archer AX23.
+
+Preparing never flashes and never touches clients; its only device write is one file under `/tmp`.
+
+- **Job:** table `firmware_upgrades`, one open job per device (partial unique index). While a job is open, a restore or a configuration change on that device is refused.
+- **Steps:** read the inventory again, check the upgrade path, build the plan, `POST /api/v1/build` on the build server and poll (15 minutes at most), download the `sysupgrade` image (squashfs preferred; refused if the choice is ambiguous; 64 MiB cap), compare its SHA-256 with the hash the build server reported, check free RAM (image size plus 16 MiB), take and pin a backup, upload the image on stdin to a fresh mode-700 directory `/tmp/.om-firmware`, compare its hash on the device, record the boot id, run `sysupgrade -T`.
+- **Ready:** the job stores the image name, size and hash, the inventory digest and the boot id; the image itself is kept in memory only during the job. A ready job expires after 30 minutes: the staged file is removed and the backup unpinned if the job pinned it. Cancel does the same. A server restart ends preparing and ready jobs the same way.
+- **What the hash proves:** images ASU builds to order are not in the release's signed `sha256sums`, so the hash shows the image is the one the build server says it built, and authenticity rests on HTTPS to the build server. Release signatures apply to stock images only.
+- API (admins and operators): `POST /api/devices/{id}/firmware-upgrades` with `{"version"}`, `GET` the same path, `POST /api/devices/{id}/firmware-upgrades/{job}/cancel`. Audited: `device.firmware_upgrade_prepare`, `_ready`, `_stopped`.
+- The flash and the post-reboot checks are described next; the screens for all of it are the next part of step 3.
+
+### Flashing and verifying (as built)
+
+- **Flash** (`POST /api/devices/{id}/firmware-upgrades/{job}/flash`) is admin only and needs `confirm_name` equal to the device name, and `acknowledge_warnings` when the plan has warnings. The server claims the device with a row lock, so a restore or config change cannot start at the same moment, and moves a still-ready, unexpired job to `flashing`.
+- **Re-checks on the live device** before anything is sent: same boot id as when the image was staged, same package and release digest, the staged image still has its hash, and `sysupgrade -T` still accepts it. Any failure ends the job as `stopped` with "not flashed", removes the staged file and unpins the backup.
+- **The one command** reads the expected hash from stdin, checks it on the device, then starts `sysupgrade image.bin` detached. It never carries `-n` or `-F`, so settings are always kept. `flash_sent_at` is recorded before the command is sent; after that the server only watches and never sends a second flash.
+- **Verification** polls every 5 seconds for up to 10 minutes. A different boot id counts as a restart. The same boot id three minutes after the command means the device never restarted: the job needs attention and the staged file is removed. After a restart, in order: pinned host key and OpenManage's key (a mismatch stops everything and is never re-pinned), the release equals the target and the board name is unchanged, the normal health check, every package the plan asked for is installed (a missing one is a warning), and a configuration snapshot compared with the one before (differences are a warning for review and are never rewritten).
+- **Outcomes:** `done`, `done_with_warnings`, `needs_attention`. The pinned backup stays pinned until a person acknowledges the result (`POST .../acknowledge`, admins and operators). A server restart while flashing or verifying resumes watching if the command may have been sent, and stops the job otherwise.
+- **Tested** in the container lab for the claim, the re-checks and the "never restarted" outcome; the post-reboot checks need a real restart and are tested in the VM step before the first real device.
+
+### Real restart test (OpenWrt VM)
+
+`scripts/openwrt-vm-flash-test.sh` (GitHub workflow "OpenWrt VM flash", run it by hand) boots an official OpenWrt x86-64 image in QEMU, enrolls it, prepares an upgrade to the next release and flashes it. A small stand-in for the ASU build server (`scripts/openwrt-vm/asu.py`) hands out the official image of the next release, whose checksum is first checked against the published `sha256sums`. After the VM restarts, the script requires the job to end as `done` with every check `ok`, a new boot id, the new release, the staged file gone, and the pinned backup released only on acknowledge. It starts on 24.10.3 and flashes 24.10.4 by default; both are inputs. It does not test a real ASU build or package changes, and it is not a hardware test: the first flash on real hardware is still done by hand on a spare device.
 
 ## Building the image
 
@@ -86,6 +130,16 @@ OpenManage keeps a **package source** registry (admin-managed, audited). A packa
 **What allow-untrusted means here:** with `apk` it is the `--allow-untrusted` flag; installing a local `.ipk` with `opkg` is believed not to be signature-checked (to confirm in the lab). Integrity then rests only on the stored hash and on the admin having reviewed the file, and the package runs as root. To limit this: the flag is used for that single stored file only and never set as a global option; the audit trail records source, hash, device and who confirmed it; and the UI says plainly that the package is unsigned and trusted by the admin's choice.
 
 **Packages already on the device** (installed by hand before OpenManage): the inventory marks them "third-party, source unknown". The admin resolves each one by attaching a source (release file or upload). This is a one-time step and cannot be automated, because the package manager does not keep the original file. On `opkg`, a package from a custom feed the user configured by hand also shows as source unknown; the admin attaches the same kind of file source.
+
+### Package sources (as built, registry only)
+
+Registering a package source installs nothing on any device yet; installing and reinstalling after a flash come in later PRs.
+
+- **Endpoints:** `POST /api/package-sources` (administrators; a multipart upload with a `file` field, or JSON `{"url": "https://..."}`), `POST /api/package-sources/{id}/confirm` with `{"sha256": "..."}`, `GET /api/package-sources` (administrators and operators; operators see confirmed sources only) and `DELETE /api/package-sources/{id}` (administrators). File contents are never returned.
+- **Formats:** `.ipk` (OpenWrt's gzip-compressed tar, or an ar archive) and `.apk` (apk-tools 3, the ADB format, which is raw-deflate compressed). The metadata is read with bounded reads and nothing is extracted or executed: name, version, architecture, description, dependencies and the full text of install scripts (`preinst`, `postinst`, `prerm`, `postrm` for `.ipk`; those plus `trigger`, `pre-upgrade` and `post-upgrade` for `.apk`). Hidden characters (control characters, invalid UTF-8, bidirectional overrides) are shown as visible escapes rather than dropped, so the review shows what would run; a script over 64 KiB is refused rather than shown in part. Package name, version and architecture must be well-formed. The readers were checked against real packages from the 24.10 and 25.12 feeds. Only `.ipk` control archives compressed with gzip are supported.
+- **Downloads:** a link must be a GitHub release file (`https://github.com/<owner>/<repo>/releases/download/<tag>/<file>`); any other file is uploaded. https only, no credentials in the link, at most 5 redirects (each to github.com or githubusercontent.com), 32 MiB, 90 seconds. The address actually connected to must be public, so a link cannot reach this machine or the home network; no proxy is used. Only the link without its query string is kept (and audited).
+- **Review and confirm:** a registered file is stored as *pending* for one hour. An administrator confirms it by sending the SHA-256 shown on the review screen, which must match; only then is the source usable. The same file cannot be registered twice. At most 100 sources and 512 MiB are stored.
+- **Audit:** `package_source.create`, `package_source.confirm` and `package_source.delete`, each with name, version, hash and the script names.
 
 ### The package set changes over time
 
