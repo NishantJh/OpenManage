@@ -33,3 +33,6 @@ export type FirmwareInventoryResult={inventory:FirmwareInventory;first:boolean;c
 export type FirmwareSettings={build_server_enabled:boolean;build_server_url:string;updated_at:string|null};
 export type FirmwareRelease={version:string;branch:string;snapshot:boolean;release_candidate:boolean};
 export type FirmwarePlan={version:string;version_code:string;kernel:string;target:string;profile:string;profile_title:string;package_manager:"opkg"|"apk";packages:string[];kept:string[];renamed:{from:string;to:string}[];dropped:string[];unavailable:string[];removed_defaults:string[];blockers:string[];warnings:string[]};
+
+export type FirmwareUpgradeCheck={name:string;status:"ok"|"warning"|"failed";detail:string};
+export type FirmwareUpgrade={id:number;device_id:string;version:string;status:"preparing"|"ready"|"stopped"|"flashing"|"verifying"|"done"|"done_with_warnings"|"needs_attention";step:string;detail:string;plan:FirmwarePlan|null;image_name:string;image_sha256:string;image_size:number;backup_id:string|null;created_at:string;ready_at:string|null;expires_at:string|null;finished_at:string|null;flash_sent_at:string|null;result:FirmwareUpgradeCheck[]|null;acknowledged_at:string|null};

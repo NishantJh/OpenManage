@@ -43,7 +43,7 @@ export default function DeviceFirmware({devices,role,onChanged}:{devices:Device[
    <List title="Custom feeds" items={m.custom_feeds} empty="None." note="credentials hidden"/>
    <List title="Files kept on upgrade" items={m.keep_list} empty="Only the standard configuration files." note="/etc/sysupgrade.conf"/>
   </div>
-  <UpgradePlan deviceId={deviceId} inventory={inventory!} role={role} settings={settings} onSettings={s=>{setSettings(s);onChanged()}}/>
+  <UpgradePlan deviceId={deviceId} deviceName={device?.name??""} inventory={inventory!} role={role} settings={settings} onSettings={s=>{setSettings(s);onChanged()}}/>
   <div className="table-card firmware-all"><div className="table-meta"><span>● &nbsp; All packages &nbsp; <b>{m.packages.length}</b></span><button className="secondary" onClick={()=>setShowAll(v=>!v)}>{showAll?"Hide":"Show"}</button></div>{showAll&&<div className="table-scroll"><table><thead><tr><th>PACKAGE</th><th>VERSION</th><th></th></tr></thead><tbody>{m.packages.map(p=><tr key={p.name}><td>{p.name}</td><td><code>{p.version||"—"}</code></td><td>{p.user_installed&&<span className="drift-tag">YOURS</span>}{p.hold&&<span className="drift-tag">HELD</span>}</td></tr>)}</tbody></table></div>}</div>
  </>}
  </div>;

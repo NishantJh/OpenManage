@@ -250,14 +250,21 @@ else
 fi
 EOS
 image_sum="$(docker exec "$router" sh -c 'sha256sum /www/store/abcdef0123456789/img-sysupgrade.bin | cut -d" " -f1')"
-wait_upgrade() { # waits until the newest upgrade job leaves "preparing"; leaves the list in $body
-  for _ in $(seq 1 40); do
+wait_upgrade() { # [rounds]: waits until the newest upgrade job is neither preparing, flashing nor verifying; leaves the list in $body
+  for _ in $(seq 1 "${1:-40}"); do
     api GET "/api/devices/$device_id/firmware-upgrades"
     [[ "$status" == 200 ]] || { cat "$body" >&2; fail "listing firmware upgrades returned HTTP $status"; }
-    [[ "$(json 'print(d[0]["status"])' < "$body")" != preparing ]] && return 0
+    case "$(json 'print(d[0]["status"])' < "$body")" in preparing|flashing|verifying) ;; *) return 0 ;; esac
     sleep 3
   done
-  cat "$body" >&2; fail "the firmware upgrade stayed in preparing"
+  cat "$body" >&2; fail "the firmware upgrade did not settle"
+}
+prepare_upgrade() { # starts an upgrade to 25.12.2 and waits until it is ready; sets $upgrade_id
+  api POST "/api/devices/$device_id/firmware-upgrades" '{"version":"25.12.2"}'
+  [[ "$status" == 202 ]] || { cat "$body" >&2; fail "starting a firmware upgrade returned HTTP $status"; }
+  upgrade_id="$(json 'print(d["id"])' < "$body")"
+  wait_upgrade
+  json 'assert d[0]["status"]=="ready", d[0]' < "$body"
 }
 pinned_backups() { compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM device_backups WHERE pinned"; }
 
@@ -294,8 +301,50 @@ json 'assert d["status"]=="stopped" and d["detail"]=="cancelled", d' < "$body"
 docker exec "$router" test ! -e /tmp/.om-firmware || fail "cancelling left the image on the device"
 api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/cancel"
 [[ "$status" == 409 ]] || fail "a finished upgrade cannot be cancelled again (HTTP $status)"
-audited="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action IN ('device.firmware_upgrade_prepare','device.firmware_upgrade_ready','device.firmware_upgrade_stopped')")"
-[[ "$audited" == 5 ]] || fail "firmware upgrade steps were not all audited ($audited)"
+# Flash checks. A container cannot flash or restart, so these cover the claim and the
+# re-checks, the one flash command, and the "device did not restart" outcome; the
+# post-reboot checks need the VM test.
+prepare_upgrade
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"wrong","acknowledge_warnings":true}'
+[[ "$status" == 400 ]] || fail "flashing needs the exact device name (HTTP $status)"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"lab-router"}'
+[[ "$status" == 400 ]] || fail "flashing needs every warning acknowledged (HTTP $status)"
+api GET "/api/devices/$device_id/firmware-upgrades"
+json 'assert d[0]["status"]=="ready", d[0]' < "$body"
+# Scenario A: a package changes after the image was prepared, so the re-check stops the flash.
+docker exec "$router" sh -c 'printf "\nPackage: luci-theme-lab2\nVersion: 1.0-r1\nStatus: install user installed\nArchitecture: all\n\n" >> /usr/lib/opkg/status'
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"lab-router","acknowledge_warnings":true}'
+[[ "$status" == 202 ]] || { cat "$body" >&2; fail "flash claim returned HTTP $status"; }
+wait_upgrade
+json 'u=d[0]; assert u["status"]=="stopped" and u["detail"].startswith("not flashed:") and "changed after the image was prepared" in u["detail"] and not u["flash_sent_at"], u' < "$body"
+[[ "$(pinned_backups)" == 0 ]] || fail "an upgrade stopped before flashing left a backup pinned"
+docker exec "$router" test ! -e /tmp/.om-firmware || fail "an upgrade stopped before flashing left its image on the device"
+echo "PASS: the flash re-checks the device and stops with nothing flashed when its packages changed after preparation"
+
+# Scenario B: everything checks out, the flash command is sent, and the device never
+# restarts (the container's sysupgrade rejects a random image), so after three minutes the
+# job needs attention, says so plainly, and keeps the backup pinned until acknowledged.
+prepare_upgrade
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"lab-router","acknowledge_warnings":true}'
+[[ "$status" == 202 ]] || { cat "$body" >&2; fail "flash claim returned HTTP $status"; }
+wait_upgrade 90
+json '
+u=d[0]
+assert u["status"]=="needs_attention" and u["flash_sent_at"] and "did not restart" in u["detail"], u
+assert [c["name"] for c in u["result"] if c["status"]=="failed"]==["Went down"], u["result"]' < "$body"
+[[ "$(pinned_backups)" == 1 ]] || fail "an upgrade that needs attention must keep its backup pinned"
+docker exec "$router" test ! -e /tmp/.om-firmware || fail "an image that was not written was left staged"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"lab-router","acknowledge_warnings":true}'
+[[ "$status" == 409 ]] || fail "a finished upgrade cannot be flashed again (HTTP $status)"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/acknowledge"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "acknowledge returned HTTP $status"; }
+[[ "$(pinned_backups)" == 0 ]] || fail "acknowledging left the backup pinned"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/acknowledge"
+[[ "$status" == 409 ]] || fail "a second acknowledge must be refused (HTTP $status)"
+audited="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action LIKE 'device.firmware_upgrade%'")"
+[[ "$audited" == 14 ]] || fail "firmware upgrade steps were not all audited ($audited)"
+echo "PASS: a flash that never restarts the device ends as needs attention with the backup pinned, and acknowledging releases it"
+
 docker exec "$router" sh -c 'mv /tmp/lab-aside/sysupgrade.real /sbin/sysupgrade &&
   uci delete uhttpd.main.cgi_prefix && uci commit uhttpd && mv /www/api /www/store /tmp/lab-aside/'
 echo "PASS: a prepared upgrade pins one backup, stages a mode-700 image with the expected hash, blocks a second upgrade, and cancelling removes the image and unpins the backup"
