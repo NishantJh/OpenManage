@@ -50,6 +50,7 @@ var wifiClientsOperation = operation{
 	Name: "wifi_clients", Label: "Wi-Fi clients", Class: operationRead, Roles: readOnlyRoles,
 	Timeout: healthCheckTimeout, OutputLimit: clientOutputLimit, Audit: auditBestEffort,
 	command: `echo "##leases"; awk 'length($4)>0 && length($4)<=60 && $4!="*" {print $2, $4}' /tmp/dhcp.leases 2>/dev/null | head -n 256; ` +
+		`echo "##leaseips"; awk 'NF>=3 {print $2, $3}' /tmp/dhcp.leases 2>/dev/null | head -n 256; ` +
 		`echo "##neigh"; ip -4 neigh show 2>/dev/null | awk '$4=="lladdr" {print $5, $1}' | head -n 256; ` +
 		`for n in $(ubus list 'hostapd.*'); do echo "@@ $n"; ubus call "$n" get_clients; done`,
 }
@@ -65,7 +66,7 @@ type polledClient struct {
 
 var leaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$`)
 
-// parsePreamble reads the "##leases" and "##neigh" side tables the operation prints before
+// parsePreamble reads the "##leases", "##leaseips" and "##neigh" side tables the operation prints before
 // the first hostapd section. Both are "MAC value" lines. Hostnames come from the clients
 // themselves, so anything that is not a plain hostname is dropped; neighbour addresses
 // must be IPv4 literals.
@@ -74,7 +75,7 @@ func parsePreamble(preamble string) (leases map[string]string, neigh map[string]
 	section := ""
 	for _, line := range strings.Split(preamble, "\n") {
 		switch line = strings.TrimSpace(line); line {
-		case "##leases", "##neigh":
+		case "##leases", "##leaseips", "##neigh":
 			section = line
 			continue
 		}
@@ -91,9 +92,9 @@ func parsePreamble(preamble string) (leases map[string]string, neigh map[string]
 			if leaseNamePattern.MatchString(f[1]) {
 				leases[mac] = f[1]
 			}
-		case "##neigh":
+		case "##leaseips", "##neigh":
 			if ip := net.ParseIP(f[1]); ip != nil && ip.To4() != nil {
-				neigh[mac] = ip.String()
+				neigh[mac] = ip.String() // the live neighbour table comes last and wins
 			}
 		}
 	}
@@ -329,11 +330,14 @@ func (a *app) pollWifiClients(parent context.Context, deviceID string) {
 	} else {
 		a.clientPolls.setStatus(deviceID, false, "no Wi-Fi (hostapd) interfaces reported by this device", 0)
 	}
+	a.clientIPs.set(deviceID, neigh)
 	pending := map[string]string{} // MAC -> IP for clients no DHCP host has named
 	for i := range clients {
 		if name := a.leaseNames.lookup(clients[i].MAC); name != "" {
 			clients[i].Name = name
-		} else if ip := neigh[clients[i].MAC]; ip != "" {
+		} else if ip := a.clientIPs.lookup(clients[i].MAC); ip != "" {
+			// An AP's own neighbour table rarely holds its clients, so addresses also come
+			// from the router's leases and neighbours, remembered from its latest poll.
 			pending[clients[i].MAC] = ip
 		}
 	}

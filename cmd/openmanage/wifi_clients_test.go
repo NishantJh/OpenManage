@@ -175,3 +175,14 @@ func TestPollTrackerStatus(t *testing.T) {
 		t.Fatalf("unexpected statuses: %+v", got)
 	}
 }
+
+func TestParsePreambleLeaseIPs(t *testing.T) {
+	out := "##leases\naa:bb:cc:11:22:33 phone\n##leaseips\naa:bb:cc:11:22:33 192.168.1.50\nde:ad:be:ef:00:01 192.168.1.51\nbad 1.2.3.4\n##neigh\nde:ad:be:ef:00:01 192.168.1.99\n@@ hostapd.x\n{}"
+	leases, ips := parsePreamble(leaseSection(out))
+	if leases["aa:bb:cc:11:22:33"] != "phone" || len(leases) != 1 {
+		t.Fatalf("an address must never become a name: %v", leases)
+	}
+	if ips["aa:bb:cc:11:22:33"] != "192.168.1.50" || ips["de:ad:be:ef:00:01"] != "192.168.1.99" {
+		t.Fatalf("lease addresses fill in, the neighbour table wins: %v", ips)
+	}
+}

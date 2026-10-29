@@ -44,6 +44,9 @@ type app struct {
 	clientPolls pollTracker
 	// leaseNames holds DHCP hostnames per device so any router's leases can name a client.
 	leaseNames leaseCache
+	// clientIPs holds MAC -> IP from each device's leases and neighbour table, so a client on
+	// an AP can be looked up in DNS even though that AP never saw its address.
+	clientIPs leaseCache
 	// rdns names clients by reverse DNS of their IP when no DHCP host reports them.
 	rdns reverseDNS
 	// radius is nil unless OPENMANAGE_RADIUS_LISTEN is set.
