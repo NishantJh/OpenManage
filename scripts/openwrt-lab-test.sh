@@ -188,12 +188,51 @@ api POST "/api/devices/$device_id/firmware-inventory"
 json 'assert not d["first"] and not d["changed"] and d["inventory"]["id"]==int(sys.argv[1]), d' "$inventory_id" < "$body"
 leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM firmware_inventories WHERE manifest::text LIKE '%labtoken%' OR manifest::text LIKE '%labsecret%'")"
 [[ "$leaks" == 0 ]] || fail "feed credentials stored in the firmware inventory"
-docker exec "$router" sh -c 'mv /tmp/opkg-status.lab /usr/lib/opkg/status && mv /tmp/customfeeds.lab /etc/opkg/customfeeds.conf && rm -rf /rom'
+echo "PASS: firmware inventory lists hand-installed and removed packages, strips feed credentials, and stores only changes"
+
+# Upgrade plan (read-only). The router's own web server stands in for the ASU build
+# server and the download server, with the JSON shapes ASU serves. The board name is
+# set for this test only, since the container reports none.
+api GET /api/firmware/releases
+[[ "$status" == 409 ]] || { cat "$body" >&2; fail "releases must be refused while the build server is off (HTTP $status)"; }
+api PUT /api/firmware/settings '{"build_server_enabled":true,"build_server_url":"http://8.8.8.8"}'
+[[ "$status" == 400 ]] || fail "a public plain-http build server must be refused (HTTP $status)"
+docker exec -i "$router" sh -c 'mkdir -p /tmp/sysinfo /www/json/v1/releases/25.12.2/targets/x86/64 /www/json/v1/releases/25.12.2/packages /www/releases/25.12.2/targets/x86/64 &&
+  echo lab,router > /tmp/sysinfo/board_name && echo "Lab Router" > /tmp/sysinfo/model &&
+  cat > /www/json/v1/overview.json && /etc/init.d/uhttpd start' <<EOF
+{"latest":["25.12.2"],"upstream_url":"http://$router_ip","branches":{
+ "25.12":{"enabled":true,"path":"releases/{version}","versions":["25.12.2","25.12.0-rc1"],"targets":{"x86/64":"x86_64"},"package_changes":[]},
+ "24.10":{"enabled":true,"path":"releases/{version}","versions":["24.10.4"],"targets":{"x86/64":"x86_64"},"package_changes":[]}}}
+EOF
+docker exec "$router" sh -c 'echo "{\"version_code\":\"r32400-lab\",\"arch_packages\":\"x86_64\",\"default_packages\":[\"busybox\",\"wpad-basic-mbedtls\"],\"linux_kernel\":{\"version\":\"6.12.74\"},\"profiles\":{\"generic\":{\"device_packages\":[],\"supported_devices\":[],\"titles\":[{\"vendor\":\"\",\"model\":\"Generic x86/64\"}]}}}" > /www/releases/25.12.2/targets/x86/64/profiles.json &&
+  echo "{\"packages\":{\"kmod-e1000\":\"6.12\"}}" > /www/json/v1/releases/25.12.2/targets/x86/64/index.json &&
+  echo "{\"tcpdump\":\"4.99\"}" > /www/json/v1/releases/25.12.2/packages/x86_64-index.json'
+api PUT /api/firmware/settings "{\"build_server_enabled\":true,\"build_server_url\":\"http://$router_ip\"}"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "firmware settings returned HTTP $status"; }
+api GET /api/firmware/releases
+json 'assert [r["version"] for r in d["releases"]]==["25.12.2","25.12.0-rc1","24.10.4"], d; assert d["releases"][1]["release_candidate"], d' < "$body"
 api POST "/api/devices/$device_id/firmware-inventory"
-json 'm=d["inventory"]["manifest"]; assert d["changed"] and not m["rom_known"] and m["user_installed"]==[] and m["custom_feeds"]==[], m' < "$body"
+json 'assert d["changed"] and d["inventory"]["manifest"]["board_name"]=="lab,router", d' < "$body"
+api GET "/api/devices/$device_id/firmware-plan?version=25.12.2"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "upgrade plan returned HTTP $status"; }
+json '
+p=d["plan"]
+assert p["profile"]=="generic" and p["version_code"]=="r32400-lab" and p["package_manager"]=="apk" and not p["blockers"], p
+assert p["packages"]==["-wpad-basic-mbedtls"] and p["unavailable"]==["luci-theme-lab"], p
+assert any("opkg to apk" in w for w in p["warnings"]), p["warnings"]' < "$body"
+api GET "/api/devices/$device_id/firmware-plan?version=..%2F..%2Fetc"
+[[ "$status" == 400 ]] || fail "a malformed release must be refused (HTTP $status)"
+echo "PASS: the upgrade plan lists releases from the build server, maps the image profile and flags packages the official feeds lack"
+
+# Put the router back as it was (moved aside, not deleted) and turn the build server off.
+docker exec "$router" sh -c '/etc/init.d/uhttpd stop; mv /tmp/opkg-status.lab /usr/lib/opkg/status && mv /tmp/customfeeds.lab /etc/opkg/customfeeds.conf &&
+  mkdir -p /tmp/lab-aside && mv /rom /tmp/sysinfo /www/json /www/releases /tmp/lab-aside/'
+api PUT /api/firmware/settings '{"build_server_enabled":false}'
+api POST "/api/devices/$device_id/firmware-inventory"
+json 'm=d["inventory"]["manifest"]; assert d["changed"] and not m["rom_known"] and m["user_installed"]==[] and m["custom_feeds"]==[] and m["board_name"]=="", m' < "$body"
 api GET "/api/devices/$device_id/firmware-inventory"
 json 'assert d["inventory"]["id"]!=int(sys.argv[1]), d' "$inventory_id" < "$body"
-echo "PASS: firmware inventory lists hand-installed and removed packages, strips feed credentials, and stores only changes"
+echo "PASS: firmware test changes are undone on the router"
 
 # Scheduled snapshots: backdating the newest snapshot makes the device due on the
 # next 15-second scheduler poll.
