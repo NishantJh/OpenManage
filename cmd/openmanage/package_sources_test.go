@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"syscall"
 	"testing"
@@ -33,7 +34,16 @@ func TestParsePackageURL(t *testing.T) {
 	if err != nil || origin != "https://github.com/o/r/releases/download/v1/x.apk" {
 		t.Fatalf("origin %q err %v", origin, err)
 	}
-	for _, bad := range []string{"http://example.com/x.apk", "ftp://x/y", "https://user:pw@example.com/x", "https:///x", "", "not a url", "https://example.com/" + strings.Repeat("a", 600)} {
+	for _, bad := range []string{
+		"http://github.com/o/r/releases/download/v1/x.apk", "ftp://x/y", "https://user:pw@github.com/o/r/releases/download/v1/x.apk",
+		"https:///x", "", "not a url", "https://github.com/o/r/releases/download/v1/" + strings.Repeat("a", 600),
+		"https://example.com/o/r/releases/download/v1/x.apk",         // not GitHub
+		"https://github.com.evil.example/o/r/releases/download/v1/x", // look-alike host
+		"https://github.com:8443/o/r/releases/download/v1/x.apk",     // unexpected port
+		"https://github.com/o/r/archive/refs/heads/main.zip",         // not a release asset
+		"https://github.com/o/r/releases/download/v1/../../x",        // path tricks
+		"https://github.com/o/r/releases/latest/download/x.apk",
+	} {
 		if _, _, err := parsePackageURL(bad); err == nil {
 			t.Errorf("%q must be refused", bad)
 		}
@@ -44,17 +54,21 @@ func TestParsePackageURL(t *testing.T) {
 func useLocalPackageServer(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(handler)
-	oldClient, oldControl := packageFetchClient, packageDialControl
+	oldClient, oldControl, oldAllowed := packageFetchClient, packageDialControl, packageLinkAllowed
 	packageFetchClient = &http.Client{Transport: srv.Client().Transport, CheckRedirect: newPackageFetchClient().CheckRedirect}
 	packageDialControl = func(string, string, syscall.RawConn) error { return nil }
-	t.Cleanup(func() { srv.Close(); packageFetchClient, packageDialControl = oldClient, oldControl })
+	packageLinkAllowed = func(u *url.URL) bool { return true }
+	t.Cleanup(func() {
+		srv.Close()
+		packageFetchClient, packageDialControl, packageLinkAllowed = oldClient, oldControl, oldAllowed
+	})
 	return srv
 }
 
 func TestFetchPackageRefusesLocalAddresses(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("x")) }))
 	defer srv.Close()
-	u, _, _ := parsePackageURL(srv.URL + "/x.ipk")
+	u, _ := url.Parse(srv.URL + "/x.ipk")
 	if _, err := fetchPackageFile(context.Background(), u); err == nil {
 		t.Fatal("a download from a loopback address must be refused")
 	}
@@ -76,7 +90,7 @@ func TestFetchPackageFile(t *testing.T) {
 		}
 	}))
 	get := func(path string) ([]byte, error) {
-		u, _, _ := parsePackageURL(srv.URL + path)
+		u, _ := url.Parse(srv.URL + path)
 		return fetchPackageFile(context.Background(), u)
 	}
 	if data, err := get("/ok.ipk"); err != nil || !bytes.Equal(data, ipk) {
@@ -236,6 +250,11 @@ func TestCreatePackageSourceFromURL(t *testing.T) {
 	if rec := post(`{"url":"http://example.com/x.apk"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("plain http: %d", rec.Code)
 	}
+	packageLinkAllowed = githubReleaseLink
+	if rec := post(`{"url":"https://example.com/x.apk"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a link that is not a GitHub release: %d", rec.Code)
+	}
+	packageLinkAllowed = func(u *url.URL) bool { return true }
 	rec := post(`{"url":"` + srv.URL + `/theme.apk?sig=abc"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create from link: %d %s", rec.Code, rec.Body)
@@ -244,5 +263,22 @@ func TestCreatePackageSourceFromURL(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &src)
 	if src.Format != "apk" || src.Origin != srv.URL+"/theme.apk" || strings.Contains(rec.Body.String(), "sig=abc") {
 		t.Fatalf("unexpected source: %s", rec.Body)
+	}
+}
+
+func TestPackageRedirectsStayOnGitHub(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://github.com/o/r/releases/download/v1/x.apk":       true,
+		"https://objects.githubusercontent.com/github-production": true,
+		"https://release-assets.githubusercontent.com/x":          true,
+		"http://github.com/x":                                     false,
+		"https://example.com/x":                                   false,
+		"https://githubusercontent.com.evil.example/x":            false,
+		"https://evilgithubusercontent.com/x":                     false,
+	} {
+		u, _ := url.Parse(raw)
+		if got := packageRedirectAllowed(u); got != want {
+			t.Errorf("packageRedirectAllowed(%s) = %v, want %v", raw, got, want)
+		}
 	}
 }

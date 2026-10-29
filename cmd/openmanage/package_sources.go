@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -104,8 +105,8 @@ func newPackageFetchClient() *http.Client {
 			if len(via) > packageMaxRedirects {
 				return errors.New("too many redirects")
 			}
-			if req.URL.Scheme != "https" {
-				return errors.New("a redirect to a link that is not https was refused")
+			if !packageRedirectAllowed(req.URL) {
+				return errors.New("a redirect away from GitHub was refused")
 			}
 			return nil
 		},
@@ -114,13 +115,33 @@ func newPackageFetchClient() *http.Client {
 
 var packageFetchClient = newPackageFetchClient()
 
-// parsePackageURL returns the https URL without its query or fragment, which is what is
+var githubReleasePath = regexp.MustCompile(`^/[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}/releases/download/[^/]{1,200}/[^/]{1,200}$`)
+
+// packageLinkAllowed is the rule for a link: a GitHub release asset, which is where
+// OpenWrt themes and add-ons are published. Anything else is uploaded as a file. Tests
+// replace it to reach a local server.
+var packageLinkAllowed = githubReleaseLink
+
+func githubReleaseLink(u *url.URL) bool {
+	return u.Host == "github.com" && githubReleasePath.MatchString(u.Path)
+}
+
+// packageRedirectAllowed is the rule for where a GitHub release link may redirect: GitHub
+// serves release assets from its own hosts.
+var packageRedirectAllowed = func(u *url.URL) bool {
+	return u.Scheme == "https" && (u.Host == "github.com" || strings.HasSuffix(u.Host, ".githubusercontent.com"))
+}
+
+// parsePackageURL returns the link without its query or fragment, which is what is
 // remembered (and audited) as the origin.
 func parsePackageURL(raw string) (*url.URL, string, error) {
 	raw = strings.TrimSpace(raw)
 	u, err := url.Parse(raw)
 	if err != nil || len(raw) > packageURLMax || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" {
 		return nil, "", errors.New("enter an https link to a package file")
+	}
+	if !packageLinkAllowed(u) {
+		return nil, "", errors.New("links must point to a GitHub release file (https://github.com/<owner>/<repo>/releases/download/<tag>/<file>); upload other files instead")
 	}
 	origin := *u
 	origin.RawQuery, origin.Fragment = "", ""
