@@ -16,6 +16,7 @@ services:
       # also needs a ports entry such as "192.168.1.10:1812:1812/udp" for the LAN
       # address; never forward UDP 1812 from the internet.
       OPENMANAGE_RADIUS_LISTEN: "${OPENMANAGE_RADIUS_LISTEN:-}"
+      OPENMANAGE_DNS_SERVER: "${OPENMANAGE_DNS_SERVER:-}"
     ports:
       - "${OPENMANAGE_PORT:-127.0.0.1:8080}:8080"
     depends_on:
