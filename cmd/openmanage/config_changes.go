@@ -311,10 +311,14 @@ func (a *app) claimConfigChange(ctx context.Context, deviceID string, changeID i
 		return c, http.StatusInternalServerError, "could not start the change"
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `UPDATE config_changes SET status='failed', finished_at=NOW(),
+	// Serialised with restores and firmware upgrades on this device.
+	_, err = tx.Exec(ctx, lockDeviceSQL, deviceID)
+	if err == nil {
+		_, err = tx.Exec(ctx, `UPDATE config_changes SET status='failed', finished_at=NOW(),
 		detail='interrupted while applying; the device rolled back on its own timer'
 		WHERE device_id=$1 AND status='applying' AND created_at < NOW() - ($2 * INTERVAL '1 second')`,
-		deviceID, int(staleApplyAfter.Seconds()))
+			deviceID, int(staleApplyAfter.Seconds()))
+	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `UPDATE config_changes SET status='expired', finished_at=NOW()
 			WHERE device_id=$1 AND status='previewed' AND created_at < NOW() - ($2 * INTERVAL '1 second')`,

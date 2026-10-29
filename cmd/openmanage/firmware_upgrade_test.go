@@ -264,3 +264,54 @@ func TestFirmwareUpgradeJobsInDatabase(t *testing.T) {
 		t.Fatalf("after stopping, open = %v, %v", open, err)
 	}
 }
+
+func TestDeviceClaimsAreSerialisedByTheDeviceLock(t *testing.T) {
+	db := newEnrollmentTestDB(t)
+	ctx := context.Background()
+	deviceID, _ := seedDeviceAndUser(t, db)
+	first, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Rollback(ctx)
+	if _, err := first.Exec(ctx, lockDeviceSQL, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Rollback(ctx)
+	short, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if _, err := second.Exec(short, lockDeviceSQL, deviceID); err == nil {
+		t.Fatal("a second claim must wait while the first holds the device lock")
+	}
+}
+
+func TestRecoverFirmwareUpgradesOnlyEndsJobsFromBeforeStartup(t *testing.T) {
+	db := newEnrollmentTestDB(t)
+	a := &app{db: db}
+	ctx := context.Background()
+	deviceID, userID := seedDeviceAndUser(t, db)
+	var id int64
+	if err := db.QueryRow(ctx, `INSERT INTO firmware_upgrades(device_id,version,status,created_by) VALUES($1,'25.12.2','preparing',$2) RETURNING id`,
+		deviceID, userID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.recoverFirmwareUpgrades(ctx, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	_ = db.QueryRow(ctx, `SELECT status FROM firmware_upgrades WHERE id=$1`, id).Scan(&status)
+	if status != "preparing" {
+		t.Fatalf("a job started after startup must not be touched, status = %q", status)
+	}
+	if err := a.recoverFirmwareUpgrades(ctx, time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.QueryRow(ctx, `SELECT status FROM firmware_upgrades WHERE id=$1`, id).Scan(&status)
+	if status != "stopped" {
+		t.Fatalf("a job from before startup must be ended, status = %q", status)
+	}
+}

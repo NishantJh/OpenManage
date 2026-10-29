@@ -92,6 +92,12 @@ var upgradeOperations = []operation{opUpgradeUpload, opUpgradeHash, opUpgradeChe
 const openUpgradeSQL = `SELECT EXISTS(SELECT 1 FROM firmware_upgrades WHERE device_id=$1
 	AND status IN ('preparing','ready','flashing','verifying'))`
 
+// lockDeviceSQL takes a lock on the device's row for the rest of the transaction. Every
+// path that claims a device for a long job (upgrade, restore, config change) takes it
+// first, so two claims cannot both see the device as idle. NO KEY UPDATE does not block
+// inserts of rows that reference the device.
+const lockDeviceSQL = `SELECT 1 FROM devices WHERE id=$1 FOR NO KEY UPDATE`
+
 const openUpgradeMessage = "a firmware upgrade is open on this device; cancel or finish it first"
 
 type firmwareUpgrade struct {
@@ -561,7 +567,6 @@ func (j *upgradeJob) run(ctx context.Context) {
 		fail("could not record that the image is ready")
 		return
 	}
-	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `UPDATE firmware_upgrades SET status='ready', step='', detail='', image_name=$2, image_sha256=$3,
 		image_size=$4, boot_id=$5, inventory_digest=$6, ready_at=NOW(), expires_at=NOW() + ($7 * INTERVAL '1 second')
 		WHERE id=$1 AND status='preparing'`, j.id, img.Name, imageHash, imageSize, bootID, digest, int(upgradeReadyTTL.Seconds()))
@@ -573,6 +578,8 @@ func (j *upgradeJob) run(ctx context.Context) {
 		err = tx.Commit(ctx)
 	}
 	if err != nil {
+		// Released before stopping, which updates the same row in its own transaction.
+		_ = tx.Rollback(ctx)
 		fail("could not record that the image is ready")
 		return
 	}
@@ -613,6 +620,15 @@ func (j *upgradeJob) stageOnDevice(ctx context.Context, image []byte, imageHash 
 		return "", "could not open a verified SSH session to the device; nothing was changed"
 	}
 	defer session.Close()
+	// The build took time; free memory is read again right before staging.
+	inv := session.run(firmwareInventoryOperation)
+	if inv.Status != "ok" {
+		return "", "could not re-read the device's free memory"
+	}
+	m, err := parseFirmwareInventory(inv.Output)
+	if err != nil || int64(m.MemAvailableKB)*1024 < int64(len(image))+upgradeRAMMargin {
+		return "", "the device no longer has enough free memory to stage this image"
+	}
 	// Clear anything an earlier attempt left, or a local process squatting on the name;
 	// the upload then creates the directory itself or fails.
 	_ = session.runWriteRaw(opUpgradeCleanup, nil)
@@ -670,13 +686,14 @@ func (a *app) startFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var exists bool
-	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM devices WHERE id=$1)`, deviceID).Scan(&exists); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not start the upgrade")
+	var locked int
+	err = tx.QueryRow(r.Context(), lockDeviceSQL, deviceID).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "device not found")
 		return
 	}
-	if !exists {
-		writeError(w, http.StatusNotFound, "device not found")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not start the upgrade")
 		return
 	}
 	var busy string
@@ -792,6 +809,17 @@ func (a *app) cancelFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = tx.Rollback(r.Context())
 		}
+		// The worker may have committed "ready" just before it saw the cancellation;
+		// wait for it to settle and end that job here.
+		for range 20 {
+			if err := a.db.QueryRow(r.Context(), `SELECT status FROM firmware_upgrades WHERE id=$1`, id).Scan(&status); err != nil || status != "preparing" {
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		if status == "ready" {
+			a.endReadyUpgrade(r.Context(), id, "cancelled", user.ID)
+		}
 	case "ready":
 		if !a.endReadyUpgrade(r.Context(), id, "cancelled", user.ID) {
 			writeError(w, http.StatusConflict, "this upgrade changed state; reload it")
@@ -813,11 +841,10 @@ func (a *app) cancelFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 // started through this process is not touched). A job that was preparing or ready when
 // the server stopped has no image in memory and no timer, so it is ended and the staged
 // file removed. Nothing was flashed by either state.
-func (a *app) recoverFirmwareUpgrades(ctx context.Context, startedAt time.Time) {
+func (a *app) recoverFirmwareUpgrades(ctx context.Context, startedAt time.Time) error {
 	rows, err := a.db.Query(ctx, `SELECT id, status FROM firmware_upgrades WHERE status IN ('preparing','ready') AND created_at < $1`, startedAt)
 	if err != nil {
-		log.Printf("firmware upgrades: could not look for interrupted jobs")
-		return
+		return err
 	}
 	type open struct {
 		id     int64
@@ -838,5 +865,23 @@ func (a *app) recoverFirmwareUpgrades(ctx context.Context, startedAt time.Time) 
 			a.cleanupStaged(sctx, deviceID)
 		}
 		cancel()
+	}
+	return nil
+}
+
+// recoverFirmwareUpgradesAtStartup retries while the database is unavailable, since jobs
+// left open block the device's other jobs until they are ended.
+func (a *app) recoverFirmwareUpgradesAtStartup(ctx context.Context) {
+	startedAt := time.Now()
+	for attempt := 0; attempt < 20; attempt++ {
+		if err := a.recoverFirmwareUpgrades(ctx, startedAt); err == nil {
+			return
+		}
+		log.Printf("firmware upgrades: could not look for interrupted jobs; retrying")
+		select {
+		case <-time.After(30 * time.Second):
+		case <-ctx.Done():
+			return
+		}
 	}
 }
