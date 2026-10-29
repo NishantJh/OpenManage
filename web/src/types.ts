@@ -26,3 +26,7 @@ export type WifiClientEvent={id:number;client_id:string;label:string;mac_hint:st
 export type DeviceBackup={id:string;device_id:string;captured_at:string;last_verified_at:string;scheduled:boolean;pinned:boolean;size_bytes:number;file_count:number;board_name:string;target:string;release:string;hardware_id:string;host_key_fingerprint:string};
 export type BackupResult={backup:DeviceBackup;unchanged:boolean};
 export type DeviceRestore={id:number;device_id:string;backup_id:string;status:"running"|"done"|"failed"|"interrupted";step:string;detail:string;created_at:string;finished_at:string|null};
+export type FirmwarePackage={name:string;version:string;user_installed:boolean;hold?:boolean};
+export type FirmwareManifest={release:string;revision:string;target:string;arch:string;board_name:string;model:string;package_manager:"opkg"|"apk";packages:FirmwarePackage[];rom_known:boolean;user_installed:string[];removed_defaults:string[];custom_feeds:string[];keep_list:string[];extroot:boolean;overlay_total_kb:number;overlay_free_kb:number;mem_total_kb:number;mem_available_kb:number};
+export type FirmwareInventory={id:number;device_id:string;captured_at:string;last_verified_at:string;manifest:FirmwareManifest};
+export type FirmwareInventoryResult={inventory:FirmwareInventory;first:boolean;changed:boolean};

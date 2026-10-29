@@ -165,6 +165,36 @@ json 'assert d["acknowledged"]==1, d' < "$body"
 api GET "/api/devices/$device_id"; json 'assert not d["config_drift"], d' < "$body"
 echo "PASS: drift counts for the device until an administrator acknowledges it"
 
+# Firmware inventory (read-only). The container has no /rom, so fake an image package
+# list with one default the owner "removed", mark one package as installed by hand, and
+# add a custom feed carrying credentials. Everything is put back afterwards.
+api GET "/api/devices/$device_id/firmware-inventory"
+json 'assert d["inventory"] is None, d' < "$body"
+docker exec "$router" sh -c 'cp /usr/lib/opkg/status /tmp/opkg-status.lab && cp /etc/opkg/customfeeds.conf /tmp/customfeeds.lab &&
+  mkdir -p /rom/etc /rom/usr/lib/opkg && cp /usr/lib/opkg/status /rom/usr/lib/opkg/status &&
+  printf "\nPackage: wpad-basic-mbedtls\nVersion: 2024.09.15-r1\nStatus: install ok installed\n\n" >> /rom/usr/lib/opkg/status &&
+  printf "\nPackage: luci-theme-lab\nVersion: 1.0-r1\nStatus: install user installed\nArchitecture: all\n\n" >> /usr/lib/opkg/status &&
+  echo "src/gz lab https://lab:labtoken@feeds.example.invalid/lab?key=labsecret" >> /etc/opkg/customfeeds.conf'
+api POST "/api/devices/$device_id/firmware-inventory"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "firmware inventory returned HTTP $status"; }
+inventory_id="$(json '
+m=d["inventory"]["manifest"]
+assert d["first"] and m["release"]=="24.10.4" and m["package_manager"]=="opkg" and m["arch"]=="x86_64", m
+assert m["rom_known"] and m["user_installed"]==["luci-theme-lab"] and m["removed_defaults"]==["wpad-basic-mbedtls"], m
+assert m["custom_feeds"]==["src/gz lab https://redacted@feeds.example.invalid/lab?redacted"], m["custom_feeds"]
+assert m["overlay_free_kb"]>0 and m["mem_available_kb"]>0 and not m["extroot"], m
+print(d["inventory"]["id"])' < "$body")"
+api POST "/api/devices/$device_id/firmware-inventory"
+json 'assert not d["first"] and not d["changed"] and d["inventory"]["id"]==int(sys.argv[1]), d' "$inventory_id" < "$body"
+leaks="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM firmware_inventories WHERE manifest::text LIKE '%labtoken%' OR manifest::text LIKE '%labsecret%'")"
+[[ "$leaks" == 0 ]] || fail "feed credentials stored in the firmware inventory"
+docker exec "$router" sh -c 'mv /tmp/opkg-status.lab /usr/lib/opkg/status && mv /tmp/customfeeds.lab /etc/opkg/customfeeds.conf && rm -rf /rom'
+api POST "/api/devices/$device_id/firmware-inventory"
+json 'm=d["inventory"]["manifest"]; assert d["changed"] and not m["rom_known"] and m["user_installed"]==[] and m["custom_feeds"]==[], m' < "$body"
+api GET "/api/devices/$device_id/firmware-inventory"
+json 'assert d["inventory"]["id"]!=int(sys.argv[1]), d' "$inventory_id" < "$body"
+echo "PASS: firmware inventory lists hand-installed and removed packages, strips feed credentials, and stores only changes"
+
 # Scheduled snapshots: backdating the newest snapshot makes the device due on the
 # next 15-second scheduler poll.
 api PUT /api/monitoring/settings '{"enabled":false,"interval_seconds":300,"snapshots_enabled":true,"snapshot_interval_seconds":900}'

@@ -22,6 +22,7 @@ const pages = [
   { label: "Monitoring", path: "/monitoring", h1: "Monitoring", has: ["Monitoring history"], absent: ["Device inventory"] },
   { label: "Access & security", path: "/access", h1: "Access & security", has: [], absent: ["Device inventory", "Monitoring history"] },
   { label: "Backups", path: "/backups", h1: "Backups", has: [], absent: ["Device inventory", "Monitoring history"] },
+  { label: "Firmware", path: "/firmware", h1: "Firmware", has: ["Firmware and packages"], absent: ["Device inventory", "Monitoring history"] },
 ];
 
 const browser = await chromium.launch({ executablePath: process.env.OPENMANAGE_UI_CHROMIUM || undefined });
@@ -53,7 +54,7 @@ try {
     await check(p);
   }
   await page.goBack();
-  await check(pages[5]);
+  await check(pages[pages.length - 2]);
   await page.goto(baseUrl + "/monitoring"); // deep link / reload must hit the SPA fallback
   await page.locator("aside nav a.active", { hasText: "Monitoring" }).waitFor();
   await check(pages[4]);
