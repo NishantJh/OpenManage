@@ -338,6 +338,13 @@ func (a *app) claimConfigChange(ctx context.Context, deviceID string, changeID i
 	if err == nil && upgrading {
 		return c, http.StatusConflict, openUpgradeMessage
 	}
+	var installing bool
+	if err == nil {
+		err = tx.QueryRow(ctx, `SELECT `+packageInstallRunningSQL, deviceID).Scan(&installing)
+	}
+	if err == nil && installing {
+		return c, http.StatusConflict, packageInstallBusyMessage
+	}
 	if err == nil {
 		err = scanConfigChange(tx.QueryRow(ctx, `UPDATE config_changes SET status='applying', applied_by=$3
 			WHERE id=$1 AND device_id=$2 AND status='previewed' RETURNING `+configChangeColumns, changeID, deviceID, userID), &c)

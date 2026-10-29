@@ -704,6 +704,7 @@ func (a *app) startFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(r.Context(), `SELECT CASE
 		WHEN EXISTS(SELECT 1 FROM device_restores WHERE device_id=$1 AND status='running') THEN 'a backup restore is running on this device'
 		WHEN EXISTS(SELECT 1 FROM config_changes WHERE device_id=$1 AND status='applying') THEN 'a configuration change is being applied to this device'
+		WHEN `+packageInstallRunningSQL+` THEN '`+packageInstallBusyMessage+`'
 		ELSE '' END`, deviceID).Scan(&busy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not start the upgrade")

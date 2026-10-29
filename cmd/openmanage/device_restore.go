@@ -312,6 +312,14 @@ func (a *app) restoreDeviceBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "a configuration change is being applied to this device; wait for it to finish")
 		return
 	}
+	var installing bool
+	if err == nil {
+		err = tx.QueryRow(r.Context(), `SELECT `+packageInstallRunningSQL, deviceID).Scan(&installing)
+	}
+	if err == nil && installing {
+		writeError(w, http.StatusConflict, packageInstallBusyMessage)
+		return
+	}
 	var upgrading bool
 	if err == nil {
 		err = tx.QueryRow(r.Context(), openUpgradeSQL, deviceID).Scan(&upgrading)
