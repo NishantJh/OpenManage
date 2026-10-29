@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PackageSearch, RefreshCw } from "lucide-react";
 import { apiJSON } from "../api";
-import type { Device, FirmwareInventory, FirmwareInventoryResult, FirmwareSettings, Role } from "../types";
+import type { Device, FirmwareInventory, FirmwareInventoryResult, FirmwareSettings, FirmwareStockDiff, Role } from "../types";
 import UpgradePlan from "./UpgradePlan";
 
 const space=(kb:number)=>kb<1024?kb+" KiB":kb<1024*1024?(kb/1024).toFixed(kb<10240?1:0)+" MiB":(kb/1024/1024).toFixed(1)+" GiB";
@@ -23,6 +23,11 @@ export default function DeviceFirmware({devices,role,onChanged}:{devices:Device[
  useEffect(()=>{current.current=deviceId;setInventory(null);setMessage(null);setBusy(false);setShowAll(false);void load()},[deviceId]);
  async function read(){const id=deviceId;setBusy(true);setMessage(null);try{const data=await apiJSON<FirmwareInventoryResult>("/api/devices/"+id+"/firmware-inventory","POST",undefined,"Could not read the device");if(current.current!==id)return;setInventory(data.inventory);setMessage({tone:"notice",text:data.first?"Inventory stored.":data.changed?"The device changed since the last read; the new inventory is stored.":"Nothing changed since the last read."});onChanged()}catch(e){if(current.current===id)setMessage({tone:"error",text:e instanceof Error?e.message:"Could not read the device"})}finally{if(current.current===id)setBusy(false)}}
  const m=inventory?.manifest;
+ // The comparison with the official image needs the build server; without it the lists below
+ // fall back to what the device's own image shows.
+ const [stock,setStock]=useState<FirmwareStockDiff|null>(null),[stockError,setStockError]=useState("");
+ useEffect(()=>{setStock(null);setStockError("");if(!inventory||!canRead||!settings?.build_server_enabled)return;const id=deviceId,invID=inventory.id;let live=true;apiJSON<FirmwareStockDiff>("/api/devices/"+id+"/firmware-stock-diff","GET",undefined,"Could not compare with the official image").then(d=>{if(live&&current.current===id&&d.inventory_id===invID)setStock(d)}).catch(e=>{if(live&&current.current===id)setStockError(e instanceof Error?e.message:"Could not compare with the official image")});return()=>{live=false}},[inventory?.id,deviceId,settings?.build_server_enabled,canRead]);
+ const added=new Set(stock?.added??[]);
  return <div className="device-firmware"><div className="section-head"><div><h2>Firmware and packages</h2><p>What each device runs today. Reading it changes nothing on the device.</p></div><div className="tools"><select aria-label="Device" className="secondary" value={deviceId} onChange={e=>setDeviceId(e.target.value)} disabled={!enrolled.length}>{enrolled.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select>{canRead&&<button className="primary" onClick={()=>void read()} disabled={busy||!deviceId}>{busy?"Reading…":<><RefreshCw size={15}/> Read from device</>}</button>}</div></div>
  {message&&<div className={message.tone+" backup-message"}>{message.text}</div>}
  {!enrolled.length?<div className="table-card"><p className="empty-line">Enroll a device to see its firmware.</p></div>:loading?<div className="table-card"><p className="empty-line">Loading…</p></div>:!m?<div className="table-card"><p className="empty-line"><PackageSearch size={15}/> No inventory yet.{canRead?" Read from device to see its release and packages.":""}</p></div>:<>
@@ -37,14 +42,21 @@ export default function DeviceFirmware({devices,role,onChanged}:{devices:Device[
   <p className="firmware-read">Read {new Date(inventory!.captured_at).toLocaleString()} · last matched {new Date(inventory!.last_verified_at).toLocaleString()}</p>
   {m.extroot&&<div className="error">This device keeps its packages on external storage (extroot). Firmware upgrades will not be offered for it.</div>}
   {!m.rom_known&&<div className="notice">This device has no read-only firmware image to compare with, so packages you added and defaults you removed cannot be told apart from the image.</div>}
+  {stock&&<p className="firmware-read">Compared with the official OpenWrt {stock.release} image for {stock.profile_title||stock.profile} ({stock.stock_count} default packages). Packages you installed and later removed do not appear.{stock.note?" "+stock.note:""}</p>}
+  {!stock&&canRead&&(stockError?<div className="notice">Could not compare with the official image: {stockError}</div>:!settings?.build_server_enabled&&<div className="notice">Turn on the build server in the upgrade plan below to compare this device with the official image. Until then these lists come from the device's own image copy and can include packages that were installed and removed separately.</div>)}
   <div className="firmware-grid">
-   <List title="Installed by you" items={m.user_installed} empty="None. Everything on the device came with the firmware image." note="kept on upgrade"/>
-   <List title="Removed from the image" items={m.removed_defaults} empty={m.rom_known?"None.":"Unknown on this device."} note="left out on upgrade"/>
+   {stock?<>
+    <List title="Added to the stock image" items={stock.added} empty="None. The device has only what the official image has." note="add these to a new image"/>
+    <List title="Removed from the stock image" items={stock.removed} empty="None." note="leave these out with a minus sign"/>
+   </>:<>
+    <List title="Installed by you" items={m.user_installed} empty="None. Everything on the device came with the firmware image." note="kept on upgrade"/>
+    <List title="Removed from the image" items={m.removed_defaults} empty={m.rom_known?"None.":"Unknown on this device."} note="left out on upgrade"/>
+   </>}
    <List title="Custom feeds" items={m.custom_feeds} empty="None." note="credentials hidden"/>
    <List title="Files kept on upgrade" items={m.keep_list} empty="Only the standard configuration files." note="/etc/sysupgrade.conf"/>
   </div>
   <UpgradePlan deviceId={deviceId} deviceName={device?.name??""} inventory={inventory!} role={role} settings={settings} onSettings={s=>{setSettings(s);onChanged()}}/>
-  <div className="table-card firmware-all"><div className="table-meta"><span>● &nbsp; All packages &nbsp; <b>{m.packages.length}</b></span><button className="secondary" onClick={()=>setShowAll(v=>!v)}>{showAll?"Hide":"Show"}</button></div>{showAll&&<div className="table-scroll"><table><thead><tr><th>PACKAGE</th><th>VERSION</th><th></th></tr></thead><tbody>{m.packages.map(p=><tr key={p.name}><td>{p.name}</td><td><code>{p.version||"—"}</code></td><td>{p.user_installed&&<span className="drift-tag">YOURS</span>}{p.hold&&<span className="drift-tag">HELD</span>}</td></tr>)}</tbody></table></div>}</div>
+  <div className="table-card firmware-all"><div className="table-meta"><span>● &nbsp; All packages &nbsp; <b>{m.packages.length}</b></span><button className="secondary" onClick={()=>setShowAll(v=>!v)}>{showAll?"Hide":"Show"}</button></div>{showAll&&<div className="table-scroll"><table><thead><tr><th>PACKAGE</th><th>VERSION</th><th></th></tr></thead><tbody>{m.packages.map(p=><tr key={p.name}><td>{p.name}</td><td><code>{p.version||"—"}</code></td><td>{added.has(p.name)&&<span className="drift-tag">ADDED</span>}{!stock&&p.user_installed&&<span className="drift-tag">YOURS</span>}{p.hold&&<span className="drift-tag">HELD</span>}</td></tr>)}</tbody></table></div>}</div>
  </>}
  </div>;
 }
