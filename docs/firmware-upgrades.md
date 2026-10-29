@@ -71,6 +71,10 @@ Preparing never flashes and never touches clients; its only device write is one 
 - **Outcomes:** `done`, `done_with_warnings`, `needs_attention`. The pinned backup stays pinned until a person acknowledges the result (`POST .../acknowledge`, admins and operators). A server restart while flashing or verifying resumes watching if the command may have been sent, and stops the job otherwise.
 - **Tested** in the container lab for the claim, the re-checks and the "never restarted" outcome; the post-reboot checks need a real restart and are tested in the VM step before the first real device.
 
+### Real restart test (OpenWrt VM)
+
+`scripts/openwrt-vm-flash-test.sh` (GitHub workflow "OpenWrt VM flash", run it by hand) boots an official OpenWrt x86-64 image in QEMU, enrolls it, prepares an upgrade to the next release and flashes it. A small stand-in for the ASU build server (`scripts/openwrt-vm/asu.py`) hands out the official image of the next release, whose checksum is first checked against the published `sha256sums`. After the VM restarts, the script requires the job to end as `done` with every check `ok`, a new boot id, the new release, the staged file gone, and the pinned backup released only on acknowledge. It starts on 24.10.3 and flashes 24.10.4 by default; both are inputs. It does not test a real ASU build or package changes, and it is not a hardware test: the first flash on real hardware is still done by hand on a spare device.
+
 ## Building the image
 
 | Option | Extra service | Third-party packages | Notes |
