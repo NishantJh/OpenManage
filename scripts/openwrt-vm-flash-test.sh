@@ -216,7 +216,7 @@ import gzip, io, sys, tarfile
 
 def tgz(entries):
     raw = io.BytesIO()
-    with tarfile.open(fileobj=raw, mode="w") as t:
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.USTAR_FORMAT) as t:
         for name, data, mode in entries:
             info = tarfile.TarInfo(name)
             info.size, info.mode, info.mtime = len(data), mode, 0
@@ -259,7 +259,8 @@ wait_install
 echo "---- install result ----"; json 'import pprint; pprint.pprint(d[0])' < "$body"
 json 'assert d[0]["status"]=="done" and all(c["status"]=="ok" for c in d[0]["checks"]), d[0]' < "$body" || fail "the package install did not pass every check"
 vm_ssh 'opkg list-installed om-test-pkg | grep -q "om-test-pkg - 1.0-r1"' || fail "the VM does not list om-test-pkg 1.0-r1"
-vm_ssh 'test -e /etc/om-test-pkg.installed && test -e /usr/share/om-test/hello' || fail "the package's files or postinst did not run"
+vm_ssh 'test -e /usr/share/om-test/hello' || { vm_ssh 'opkg files om-test-pkg; ls -la /usr/share/om-test /etc/om-test-pkg.installed 2>&1; cat /usr/lib/opkg/info/om-test-pkg.control /usr/lib/opkg/info/om-test-pkg.list 2>&1' >&2; fail "the package's data file was not installed"; }
+vm_ssh 'test -e /etc/om-test-pkg.installed' || { vm_ssh 'ls -la /usr/lib/opkg/info/ | grep om-test; cat /usr/lib/opkg/info/om-test-pkg.postinst 2>&1' >&2; fail "the package's postinst did not run"; }
 vm_ssh 'test ! -e /tmp/.om-pkg' || fail "the staged package file was left on the VM"
 echo "PASS: a confirmed package was installed from the app and verified on the VM"
 api POST "/api/devices/$device_id/package-installs" "{\"source_id\":$source_id,\"confirm_name\":\"vm-ap\",\"acknowledge_scripts\":true}"
