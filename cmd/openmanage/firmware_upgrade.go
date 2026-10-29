@@ -37,7 +37,8 @@ import (
 
 const (
 	upgradeDir             = "/tmp/.om-firmware"
-	upgradeImagePath       = upgradeDir + "/image.bin"
+	upgradeImageName       = "image.bin"
+	upgradeImagePath       = upgradeDir + "/" + upgradeImageName
 	upgradeImageLimit      = 64 << 20
 	upgradeRAMMargin       = 16 << 20
 	upgradeBuildLimit      = 15 * time.Minute
@@ -101,29 +102,32 @@ const lockDeviceSQL = `SELECT 1 FROM devices WHERE id=$1 FOR NO KEY UPDATE`
 const openUpgradeMessage = "a firmware upgrade is open on this device; cancel or finish it first"
 
 type firmwareUpgrade struct {
-	ID          int64           `json:"id"`
-	DeviceID    string          `json:"device_id"`
-	Version     string          `json:"version"`
-	Status      string          `json:"status"`
-	Step        string          `json:"step"`
-	Detail      string          `json:"detail"`
-	Plan        json.RawMessage `json:"plan"`
-	ImageName   string          `json:"image_name"`
-	ImageSHA256 string          `json:"image_sha256"`
-	ImageSize   int64           `json:"image_size"`
-	BackupID    *string         `json:"backup_id"`
-	CreatedAt   time.Time       `json:"created_at"`
-	ReadyAt     *time.Time      `json:"ready_at"`
-	ExpiresAt   *time.Time      `json:"expires_at"`
-	FinishedAt  *time.Time      `json:"finished_at"`
+	ID             int64           `json:"id"`
+	DeviceID       string          `json:"device_id"`
+	Version        string          `json:"version"`
+	Status         string          `json:"status"`
+	Step           string          `json:"step"`
+	Detail         string          `json:"detail"`
+	Plan           json.RawMessage `json:"plan"`
+	ImageName      string          `json:"image_name"`
+	ImageSHA256    string          `json:"image_sha256"`
+	ImageSize      int64           `json:"image_size"`
+	BackupID       *string         `json:"backup_id"`
+	CreatedAt      time.Time       `json:"created_at"`
+	ReadyAt        *time.Time      `json:"ready_at"`
+	ExpiresAt      *time.Time      `json:"expires_at"`
+	FinishedAt     *time.Time      `json:"finished_at"`
+	FlashSentAt    *time.Time      `json:"flash_sent_at"`
+	Result         json.RawMessage `json:"result"`
+	AcknowledgedAt *time.Time      `json:"acknowledged_at"`
 }
 
 const firmwareUpgradeColumns = `id, device_id::text, version, status, step, detail, plan, image_name, image_sha256, image_size,
-	backup_id::text, created_at, ready_at, expires_at, finished_at`
+	backup_id::text, created_at, ready_at, expires_at, finished_at, flash_sent_at, result, acknowledged_at`
 
 func scanFirmwareUpgrade(row pgx.Row, u *firmwareUpgrade) error {
 	return row.Scan(&u.ID, &u.DeviceID, &u.Version, &u.Status, &u.Step, &u.Detail, &u.Plan, &u.ImageName, &u.ImageSHA256,
-		&u.ImageSize, &u.BackupID, &u.CreatedAt, &u.ReadyAt, &u.ExpiresAt, &u.FinishedAt)
+		&u.ImageSize, &u.BackupID, &u.CreatedAt, &u.ReadyAt, &u.ExpiresAt, &u.FinishedAt, &u.FlashSentAt, &u.Result, &u.AcknowledgedAt)
 }
 
 // upgradePathProblem says why an upgrade from one release to another is not allowed in
@@ -840,27 +844,39 @@ func (a *app) cancelFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 // recoverFirmwareUpgrades runs once at startup, for jobs created before startedAt (a job
 // started through this process is not touched). A job that was preparing or ready when
 // the server stopped has no image in memory and no timer, so it is ended and the staged
-// file removed. Nothing was flashed by either state.
+// file removed; nothing was flashed by either state. A job that was flashing or
+// verifying resumes watching the device if the flash command may have been sent, and is
+// stopped otherwise.
 func (a *app) recoverFirmwareUpgrades(ctx context.Context, startedAt time.Time) error {
-	rows, err := a.db.Query(ctx, `SELECT id, status FROM firmware_upgrades WHERE status IN ('preparing','ready') AND created_at < $1`, startedAt)
+	rows, err := a.db.Query(ctx, `SELECT id, status, flash_sent_at IS NOT NULL FROM firmware_upgrades
+		WHERE status IN ('preparing','ready','flashing','verifying') AND created_at < $1`, startedAt)
 	if err != nil {
 		return err
 	}
 	type open struct {
 		id     int64
 		status string
+		sent   bool
 	}
 	var jobs []open
 	for rows.Next() {
 		var o open
-		if rows.Scan(&o.id, &o.status) == nil {
+		if rows.Scan(&o.id, &o.status, &o.sent) == nil {
 			jobs = append(jobs, o)
 		}
 	}
 	rows.Close()
 	for _, o := range jobs {
+		if o.sent {
+			go a.runVerify(o.id)
+			continue
+		}
+		reason := "the server restarted before this upgrade was flashed; prepare it again"
+		if o.status == "flashing" {
+			reason = "not flashed: the server restarted before the flash command was sent"
+		}
 		sctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		stopped, deviceID := a.markUpgradeStopped(sctx, o.id, o.status, "the server restarted before this upgrade was flashed; prepare it again", "")
+		stopped, deviceID := a.markUpgradeStopped(sctx, o.id, o.status, reason, "")
 		if stopped {
 			a.cleanupStaged(sctx, deviceID)
 		}

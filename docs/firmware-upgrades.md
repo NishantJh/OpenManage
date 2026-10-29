@@ -60,7 +60,16 @@ Preparing never flashes and never touches clients; its only device write is one 
 - **Ready:** the job stores the image name, size and hash, the inventory digest and the boot id; the image itself is kept in memory only during the job. A ready job expires after 30 minutes: the staged file is removed and the backup unpinned if the job pinned it. Cancel does the same. A server restart ends preparing and ready jobs the same way.
 - **What the hash proves:** images ASU builds to order are not in the release's signed `sha256sums`, so the hash shows the image is the one the build server says it built, and authenticity rests on HTTPS to the build server. Release signatures apply to stock images only.
 - API (admins and operators): `POST /api/devices/{id}/firmware-upgrades` with `{"version"}`, `GET` the same path, `POST /api/devices/{id}/firmware-upgrades/{job}/cancel`. Audited: `device.firmware_upgrade_prepare`, `_ready`, `_stopped`.
-- Not built yet: the flash, the confirmation screen and the post-reboot checks (next parts of step 3).
+- The flash and the post-reboot checks are described next; the screens for all of it are the next part of step 3.
+
+### Flashing and verifying (as built)
+
+- **Flash** (`POST /api/devices/{id}/firmware-upgrades/{job}/flash`) is admin only and needs `confirm_name` equal to the device name, and `acknowledge_warnings` when the plan has warnings. The server claims the device with a row lock, so a restore or config change cannot start at the same moment, and moves a still-ready, unexpired job to `flashing`.
+- **Re-checks on the live device** before anything is sent: same boot id as when the image was staged, same package and release digest, the staged image still has its hash, and `sysupgrade -T` still accepts it. Any failure ends the job as `stopped` with "not flashed", removes the staged file and unpins the backup.
+- **The one command** reads the expected hash from stdin, checks it on the device, then starts `sysupgrade image.bin` detached. It never carries `-n` or `-F`, so settings are always kept. `flash_sent_at` is recorded before the command is sent; after that the server only watches and never sends a second flash.
+- **Verification** polls every 5 seconds for up to 10 minutes. A different boot id counts as a restart. The same boot id three minutes after the command means the device never restarted: the job needs attention and the staged file is removed. After a restart, in order: pinned host key and OpenManage's key (a mismatch stops everything and is never re-pinned), the release equals the target and the board name is unchanged, the normal health check, every package the plan asked for is installed (a missing one is a warning), and a configuration snapshot compared with the one before (differences are a warning for review and are never rewritten).
+- **Outcomes:** `done`, `done_with_warnings`, `needs_attention`. The pinned backup stays pinned until a person acknowledges the result (`POST .../acknowledge`, admins and operators). A server restart while flashing or verifying resumes watching if the command may have been sent, and stops the job otherwise.
+- **Tested** in the container lab for the claim, the re-checks and the "never restarted" outcome; the post-reboot checks need a real restart and are tested in the VM step before the first real device.
 
 ## Building the image
 
