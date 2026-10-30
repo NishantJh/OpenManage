@@ -142,7 +142,8 @@ func TestStoreBootstrapEnrollsExistingDevice(t *testing.T) {
 	db := newEnrollmentTestDB(t)
 	deviceID, userID := seedDeviceAndUser(t, db)
 	a := &app{db: db}
-	d, err := a.storeBootstrap(context.Background(), userID, bootstrapRequest{DeviceID: deviceID, Name: "test-router", Address: "192.168.1.1", Role: "router", DHCPHost: true, Username: "root", ExpectedFingerprint: "SHA256:x"}, []byte("sealed"))
+	yes := true
+	d, err := a.storeBootstrap(context.Background(), userID, bootstrapRequest{DeviceID: deviceID, Name: "test-router", Address: "192.168.1.1", Role: "router", DHCPHost: &yes, Username: "root", ExpectedFingerprint: "SHA256:x"}, []byte("sealed"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,5 +163,21 @@ func TestStoreBootstrapEnrollsExistingDevice(t *testing.T) {
 	}
 	if _, _, fp, _ := credentialRow(t, db, deviceID); fp != "SHA256:x" {
 		t.Fatalf("fingerprint changed to %q", fp)
+	}
+}
+
+func TestStoreBootstrapKeepsDHCPHostWhenOmitted(t *testing.T) {
+	db := newEnrollmentTestDB(t)
+	deviceID, userID := seedDeviceAndUser(t, db)
+	if _, err := db.Exec(context.Background(), "UPDATE devices SET dhcp_host=TRUE WHERE id=$1", deviceID); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{db: db}
+	d, err := a.storeBootstrap(context.Background(), userID, bootstrapRequest{DeviceID: deviceID, Address: "192.168.1.1", Role: "router", Username: "root", ExpectedFingerprint: "SHA256:x"}, []byte("sealed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.DHCPHost {
+		t.Fatal("a request that omits dhcp_host must keep the stored value")
 	}
 }
