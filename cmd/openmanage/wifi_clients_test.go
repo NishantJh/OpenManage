@@ -186,3 +186,18 @@ func TestParsePreambleLeaseIPs(t *testing.T) {
 		t.Fatalf("lease addresses fill in, the neighbour table wins: %v", ips)
 	}
 }
+
+func TestParseStaticHosts(t *testing.T) {
+	out := "##leases\naa:bb:cc:11:22:33 old-name\n##hosts\n" +
+		"dhcp.lan=dhcp\ndhcp.@host[0]=host\ndhcp.@host[0].name='nas'\ndhcp.@host[0].mac='AA:BB:CC:11:22:33 de:ad:be:ef:00:01'\n" +
+		"dhcp.@domain[0]=domain\ndhcp.@domain[0].name='ignored'\ndhcp.@domain[0].mac='aa:aa:aa:aa:aa:aa'\n" +
+		"dhcp.@host[1]=host\ndhcp.@host[1].name='bad name!'\ndhcp.@host[1].mac='11:22:33:44:55:66'\n" +
+		"##neigh\n@@ hostapd.x\n{}"
+	got := parseStaticHosts(leaseSection(out))
+	if len(got) != 2 || got["aa:bb:cc:11:22:33"] != "nas" || got["de:ad:be:ef:00:01"] != "nas" {
+		t.Fatalf("static hosts = %v", got)
+	}
+	if leases, _ := parsePreamble(leaseSection(out)); len(leases) != 1 || leases["aa:bb:cc:11:22:33"] != "old-name" {
+		t.Fatalf("parsePreamble must leave host lines alone: %v", leases)
+	}
+}

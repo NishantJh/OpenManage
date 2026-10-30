@@ -51,6 +51,7 @@ var wifiClientsOperation = operation{
 	Timeout: healthCheckTimeout, OutputLimit: clientOutputLimit, Audit: auditBestEffort,
 	command: `echo "##leases"; awk 'length($4)>0 && length($4)<=60 && $4!="*" {print $2, $4}' /tmp/dhcp.leases 2>/dev/null | head -n 256; ` +
 		`echo "##leaseips"; awk 'NF>=3 {print $2, $3}' /tmp/dhcp.leases 2>/dev/null | head -n 256; ` +
+		`echo "##hosts"; uci -q show dhcp 2>/dev/null | grep -E '^dhcp[.][^.]+(=host|[.](name|mac)=)' | head -n 512; ` +
 		`echo "##neigh"; ip -4 neigh show 2>/dev/null | awk '$4=="lladdr" {print $5, $1}' | head -n 256; ` +
 		`for n in $(ubus list 'hostapd.*'); do echo "@@ $n"; ubus call "$n" get_clients; done`,
 }
@@ -66,6 +67,48 @@ type polledClient struct {
 
 var leaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$`)
 
+var uciHostLine = regexp.MustCompile(`^dhcp\.([A-Za-z0-9_@\[\]-]+)(?:=(host)|\.(name|mac)='([^']*)')$`)
+
+// parseStaticHosts reads the "##hosts" section: the router's configured static DHCP hosts
+// (uci "host" sections with a name and one or more MACs). dnsmasq answers DNS and sets lease
+// names from these, so they beat the name a client sent. Anything that is not a plain
+// hostname or MAC is dropped.
+func parseStaticHosts(preamble string) map[string]string {
+	isHost, names, macs := map[string]bool{}, map[string]string{}, map[string][]string{}
+	in := false
+	for _, line := range strings.Split(preamble, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "##") {
+			in = line == "##hosts"
+			continue
+		}
+		m := uciHostLine.FindStringSubmatch(line)
+		if !in || m == nil {
+			continue
+		}
+		switch {
+		case m[2] == "host":
+			isHost[m[1]] = true
+		case m[3] == "name" && leaseNamePattern.MatchString(m[4]):
+			names[m[1]] = m[4]
+		case m[3] == "mac":
+			macs[m[1]] = strings.Fields(m[4])
+		}
+	}
+	out := map[string]string{}
+	for section, name := range names {
+		if !isHost[section] {
+			continue
+		}
+		for _, raw := range macs[section] {
+			if mac, ok := normalizeMAC(raw); ok {
+				out[mac] = name
+			}
+		}
+	}
+	return out
+}
+
 // parsePreamble reads the "##leases", "##leaseips" and "##neigh" side tables the operation prints before
 // the first hostapd section. Both are "MAC value" lines. Hostnames come from the clients
 // themselves, so anything that is not a plain hostname is dropped; neighbour addresses
@@ -75,7 +118,7 @@ func parsePreamble(preamble string) (leases map[string]string, neigh map[string]
 	section := ""
 	for _, line := range strings.Split(preamble, "\n") {
 		switch line = strings.TrimSpace(line); line {
-		case "##leases", "##leaseips", "##neigh":
+		case "##leases", "##leaseips", "##hosts", "##neigh":
 			section = line
 			continue
 		}
@@ -322,6 +365,10 @@ func (a *app) pollWifiClients(parent context.Context, deviceID string) {
 	leases, neigh := parsePreamble(leaseSection(result.Output))
 	if !dhcpHost {
 		leases = nil // only the DHCP host's lease file is trusted for names
+	} else {
+		for mac, name := range parseStaticHosts(leaseSection(result.Output)) {
+			leases[mac] = name // configured names beat the name a client last sent
+		}
 	}
 	a.leaseNames.set(deviceID, leases)
 	clients := parseWifiClients(result.Output)
