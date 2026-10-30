@@ -18,12 +18,12 @@ export default function SoftwareSources({devices,role}:{devices:Device[];role:Ro
  const [updates,setUpdates]=useState<Record<number,PackageUpdateCheck>>({});
  const [deviceId,setDeviceId]=useState(""),[installs,setInstalls]=useState<PackageInstall[]>([]),[reinstalls,setReinstalls]=useState<PackageReinstall[]>([]);
  const [pick,setPick]=useState<PackageSource|null>(null),[typedName,setTypedName]=useState(""),[scriptsOk,setScriptsOk]=useState(false);
- const file=useRef<HTMLInputElement>(null),device=enrolled.find(d=>d.id===deviceId)??null,running=installs.some(i=>i.status==="running");
+ const file=useRef<HTMLInputElement>(null),current=useRef(""),device=enrolled.find(d=>d.id===deviceId)??null,running=installs.some(i=>i.status==="running");
  useEffect(()=>{if(!device&&enrolled.length)setDeviceId(enrolled[0].id)},[enrolled.map(d=>d.id).join()]);
  async function loadSources(){if(!canRead)return;try{setSources(await apiJSON<PackageSource[]>("/api/package-sources","GET",undefined,"Could not load package sources"))}catch(e){setError(msg(e,"Could not load package sources"))}}
  useEffect(()=>{void loadSources()},[canRead]);
- async function loadDevice(){if(!deviceId||!canRead)return;const id=deviceId;const [i,r]=await Promise.allSettled([apiJSON<PackageInstall[]>("/api/devices/"+id+"/package-installs","GET",undefined,"Could not load installs"),apiJSON<PackageReinstall[]>("/api/devices/"+id+"/package-reinstalls","GET",undefined,"Could not load the reinstall list")]);if(id!==deviceId)return;if(i.status==="fulfilled")setInstalls(i.value);if(r.status==="fulfilled")setReinstalls(r.value);const bad=[i,r].find(x=>x.status==="rejected");if(bad&&bad.status==="rejected")setError(msg(bad.reason,"Could not load this device's packages"))}
- useEffect(()=>{setInstalls([]);setReinstalls([]);setPick(null);setTypedName("");setScriptsOk(false);void loadDevice()},[deviceId]);
+ async function loadDevice(){if(!deviceId||!canRead)return;const id=deviceId;const [i,r]=await Promise.allSettled([apiJSON<PackageInstall[]>("/api/devices/"+id+"/package-installs","GET",undefined,"Could not load installs"),apiJSON<PackageReinstall[]>("/api/devices/"+id+"/package-reinstalls","GET",undefined,"Could not load the reinstall list")]);if(current.current!==id)return;if(i.status==="fulfilled")setInstalls(i.value);if(r.status==="fulfilled")setReinstalls(r.value);const bad=[i,r].find(x=>x.status==="rejected");if(bad&&bad.status==="rejected")setError(msg(bad.reason,"Could not load this device's packages"))}
+ useEffect(()=>{current.current=deviceId;setInstalls([]);setReinstalls([]);setPick(null);setTypedName("");setScriptsOk(false);void loadDevice()},[deviceId]);
  // A flash finishing elsewhere on the page changes the reinstall list, so it is read again every 15 seconds.
  useEffect(()=>{const t=setInterval(()=>void loadDevice(),running?3000:15000);return()=>clearInterval(t)},[running,deviceId]);
  async function run(fn:()=>Promise<void>,fail:string){setBusy(true);setError("");setNotice("");try{await fn()}catch(e){setError(msg(e,fail))}finally{setBusy(false)}}
