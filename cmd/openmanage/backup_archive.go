@@ -64,6 +64,8 @@ func inspectBackupArchive(data []byte) (archiveInfo, error) {
 	// /etc/rc.d/S* links for enabled services), but no later entry may be written
 	// through one, so restoring cannot be steered outside the path an entry names.
 	symlinks := map[string]bool{}
+	// A repeated path could let a later entry replace one that was already inspected.
+	seen := map[string]bool{}
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -79,6 +81,10 @@ func inspectBackupArchive(data []byte) (archiveInfo, error) {
 		if !ok {
 			return info, errBadArchive
 		}
+		if seen[name] {
+			return info, errBadArchive
+		}
+		seen[name] = true
 		for dir := path.Dir(name); dir != "."; dir = path.Dir(dir) {
 			if symlinks[dir] {
 				return info, errBadArchive
