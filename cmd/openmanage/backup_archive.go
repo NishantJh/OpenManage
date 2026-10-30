@@ -60,6 +60,10 @@ func inspectBackupArchive(data []byte) (archiveInfo, error) {
 	tr := tar.NewReader(budget)
 	digest := sha256.New()
 	total := 0
+	// symlinks holds archived symlink paths. sysupgrade -b includes them (for example
+	// /etc/rc.d/S* links for enabled services), but no later entry may be written
+	// through one, so restoring cannot be steered outside the path an entry names.
+	symlinks := map[string]bool{}
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -75,11 +79,23 @@ func inspectBackupArchive(data []byte) (archiveInfo, error) {
 		if !ok {
 			return info, errBadArchive
 		}
+		for dir := path.Dir(name); dir != "."; dir = path.Dir(dir) {
+			if symlinks[dir] {
+				return info, errBadArchive
+			}
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			continue
+		case tar.TypeSymlink:
+			if hdr.Linkname == "" || len(hdr.Linkname) > 512 || strings.ContainsRune(hdr.Linkname, 0) {
+				return info, errBadArchive
+			}
+			symlinks[name] = true
+			fmt.Fprintf(digest, "%s\x00l\x00%s\x00", name, hdr.Linkname)
+			continue
 		case tar.TypeReg:
-		default: // symlinks, hardlinks, devices, fifos
+		default: // hardlinks, devices, fifos
 			return info, errBadArchive
 		}
 		if hdr.Size < 0 || hdr.Size > archiveMaxEntrySize {

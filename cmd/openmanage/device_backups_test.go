@@ -106,6 +106,22 @@ func TestInspectBackupArchiveReadsHostKeyAndAuthorizedKeys(t *testing.T) {
 	}
 }
 
+func TestInspectBackupArchiveAcceptsServiceSymlinks(t *testing.T) {
+	a := buildArchive(t,
+		tarEntry{name: "etc/config/system", body: "x"},
+		tarEntry{name: "etc/rc.d/S95foo", typeflag: tar.TypeSymlink, link: "../init.d/foo"})
+	b := buildArchive(t,
+		tarEntry{name: "etc/config/system", body: "x"},
+		tarEntry{name: "etc/rc.d/S95foo", typeflag: tar.TypeSymlink, link: "../init.d/bar"})
+	ia, err := inspectBackupArchive(a)
+	if err != nil || ia.Files != 2 {
+		t.Fatalf("service symlink must be accepted: files=%d err=%v", ia.Files, err)
+	}
+	if ib, _ := inspectBackupArchive(b); ia.ContentDigest == ib.ContentDigest {
+		t.Fatal("a changed symlink target must change the digest")
+	}
+}
+
 func TestInspectBackupArchiveDigestIgnoresTimestamps(t *testing.T) {
 	a := buildArchive(t, tarEntry{name: "etc/config/system", body: "x", mtime: time.Unix(1000, 0)})
 	b := buildArchive(t, tarEntry{name: "etc/config/system", body: "x", mtime: time.Unix(2000, 0)})
@@ -130,16 +146,19 @@ func TestInspectBackupArchiveRejectsUnsafeInput(t *testing.T) {
 		many[i] = tarEntry{name: "etc/f" + strings.Repeat("x", i%5) + string(rune('a'+i%26)) + string(rune('a'+i/26%26)) + string(rune('a'+i/676)), body: "x"}
 	}
 	for name, archive := range map[string][]byte{
-		"empty":         nil,
-		"not gzip":      []byte("plain text"),
-		"no entries":    buildArchive(t),
-		"absolute":      buildArchive(t, tarEntry{name: "/etc/passwd", body: "x"}),
-		"parent":        buildArchive(t, tarEntry{name: "etc/../../x", body: "x"}),
-		"symlink":       buildArchive(t, tarEntry{name: "etc/l", typeflag: tar.TypeSymlink, link: "/etc/shadow"}),
-		"hardlink":      buildArchive(t, tarEntry{name: "etc/h", typeflag: tar.TypeLink, link: "etc/x"}),
-		"device":        buildArchive(t, tarEntry{name: "dev/x", typeflag: tar.TypeChar}),
-		"too many":      buildArchive(t, many...),
-		"entry too big": buildArchive(t, tarEntry{name: "etc/big", body: strings.Repeat("a", archiveMaxEntrySize+1)}),
+		"empty":      nil,
+		"not gzip":   []byte("plain text"),
+		"no entries": buildArchive(t),
+		"absolute":   buildArchive(t, tarEntry{name: "/etc/passwd", body: "x"}),
+		"parent":     buildArchive(t, tarEntry{name: "etc/../../x", body: "x"}),
+		"write through symlink": buildArchive(t,
+			tarEntry{name: "etc/l", typeflag: tar.TypeSymlink, link: "/etc"},
+			tarEntry{name: "etc/l/shadow", body: "x"}),
+		"empty symlink target": buildArchive(t, tarEntry{name: "etc/l", typeflag: tar.TypeSymlink}),
+		"hardlink":             buildArchive(t, tarEntry{name: "etc/h", typeflag: tar.TypeLink, link: "etc/x"}),
+		"device":               buildArchive(t, tarEntry{name: "dev/x", typeflag: tar.TypeChar}),
+		"too many":             buildArchive(t, many...),
+		"entry too big":        buildArchive(t, tarEntry{name: "etc/big", body: strings.Repeat("a", archiveMaxEntrySize+1)}),
 		"bomb": buildArchive(t,
 			tarEntry{name: "a", body: strings.Repeat("\x00", archiveMaxEntrySize)},
 			tarEntry{name: "b", body: strings.Repeat("\x00", archiveMaxEntrySize)},
