@@ -734,12 +734,7 @@ shadow_hash="$(docker exec "$router" sh -c "grep '^root:' /etc/shadow | cut -d: 
 # The router's own current host key, read on the router, is what the archive must hold.
 backup_host_fp="$(docker exec "$router" dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key | grep '^ssh-ed25519' | ssh-keygen -lf - | awk '{print $2}')"
 api POST "/api/devices/$device_id/backups"
-[[ "$status" == 200 ]] || {
-  cat "$body" >&2
-  echo "--- sysupgrade -b on the lab router:" >&2
-  docker exec "$router" sh -c 'umask 077; sysupgrade -b - >/dev/null; echo "exit=$?"; ls -l /sbin/sysupgrade; which tar' >&2 2>&1 || true
-  fail "first backup returned HTTP $status"
-}
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "first backup returned HTTP $status"; }
 first_backup="$(json 'b=d["backup"]; assert not d["unchanged"] and b["size_bytes"]>1000 and b["file_count"]>10 and not b["scheduled"] and not b["pinned"], d
 assert b["host_key_fingerprint"]==sys.argv[1], b
 assert b["release"].startswith("24.10") and b["hardware_id"], b
