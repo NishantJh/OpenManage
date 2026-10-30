@@ -67,7 +67,9 @@ type polledClient struct {
 
 var leaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$`)
 
-var uciHostLine = regexp.MustCompile(`^dhcp\.([A-Za-z0-9_@\[\]-]+)(?:=(host)|\.(name|mac)='([^']*)')$`)
+var uciHostLine = regexp.MustCompile(`^dhcp\.([A-Za-z0-9_@\[\]-]+)(?:=(host)|\.(name|mac)=((?:'[^']*'\s*)+))$`)
+
+var uciQuoted = regexp.MustCompile(`'([^']*)'`)
 
 // parseStaticHosts reads the "##hosts" section: the router's configured static DHCP hosts
 // (uci "host" sections with a name and one or more MACs). dnsmasq answers DNS and sets lease
@@ -89,10 +91,16 @@ func parseStaticHosts(preamble string) map[string]string {
 		switch {
 		case m[2] == "host":
 			isHost[m[1]] = true
-		case m[3] == "name" && leaseNamePattern.MatchString(m[4]):
-			names[m[1]] = m[4]
+		case m[3] == "name":
+			// A list value arrives as several quoted tokens; the first one names the host.
+			if v := uciQuoted.FindStringSubmatch(m[4]); v != nil && leaseNamePattern.MatchString(v[1]) {
+				names[m[1]] = v[1]
+			}
 		case m[3] == "mac":
-			macs[m[1]] = strings.Fields(m[4])
+			// "option mac 'a b'" is one token with spaces, "list mac" is one token per MAC.
+			for _, v := range uciQuoted.FindAllStringSubmatch(m[4], -1) {
+				macs[m[1]] = append(macs[m[1]], strings.Fields(v[1])...)
+			}
 		}
 	}
 	out := map[string]string{}
