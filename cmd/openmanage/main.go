@@ -206,6 +206,7 @@ func main() {
 	mux.HandleFunc("POST /api/devices/{id}/firmware-upgrades/{job}/acknowledge", a.acknowledgeFirmwareUpgrade)
 	mux.HandleFunc("GET /api/devices/{id}/package-installs", a.listPackageInstalls)
 	mux.HandleFunc("POST /api/devices/{id}/package-installs", a.installPackageSource)
+	mux.HandleFunc("GET /api/devices/{id}/package-reinstalls", a.getPackageReinstalls)
 	mux.HandleFunc("GET /api/firmware/settings", a.getFirmwareSettings)
 	mux.HandleFunc("PUT /api/firmware/settings", a.updateFirmwareSettings)
 	mux.HandleFunc("GET /api/firmware/releases", a.listFirmwareReleases)

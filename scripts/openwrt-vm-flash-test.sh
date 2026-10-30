@@ -159,58 +159,9 @@ expect 200 "firmware inventory"
 json 'm=d["inventory"]["manifest"]; assert m["release"]==sys.argv[1] and m["rom_known"] and m["package_manager"]=="opkg", m' "$old_version" < "$body"
 echo "PASS: the VM is enrolled and its inventory reads OpenWrt $old_version"
 
-api PUT /api/firmware/settings "{\"build_server_enabled\":true,\"build_server_url\":\"http://$gateway:$asu_port\"}"
-expect 200 "firmware settings"
-api GET "/api/devices/$device_id/firmware-plan?version=$new_version"
-expect 200 "upgrade plan"
-json 'p=d["plan"]; assert p["profile"]=="generic" and not p["blockers"], p' < "$body"
-
-wait_upgrade() { # [rounds]: waits until the newest job is neither preparing, flashing nor verifying; leaves the list in $body
-  for _ in $(seq 1 "${1:-60}"); do
-    api GET "/api/devices/$device_id/firmware-upgrades"
-    [[ "$status" == 200 ]] || { cat "$body" >&2; fail "listing firmware upgrades returned HTTP $status"; }
-    case "$(json 'print(d[0]["status"])' < "$body")" in preparing|flashing|verifying) ;; *) return 0 ;; esac
-    sleep 5
-  done
-  cat "$body" >&2; fail "the firmware upgrade did not settle"
-}
-
-api POST "/api/devices/$device_id/firmware-upgrades" "{\"version\":\"$new_version\"}"
-expect 202 "preparing the upgrade"
-upgrade_id="$(json 'print(d["id"])' < "$body")"
-wait_upgrade 120
-json 'u=d[0]; assert u["status"]=="ready" and u["backup_id"] and u["image_size"]>1000000, u' < "$body" || { cat "$body" >&2; fail "the upgrade did not become ready"; }
-[[ "$(pinned_backups)" == 1 ]] || fail "a ready upgrade must hold exactly one pinned backup"
-vm_ssh 'sysupgrade -T /tmp/.om-firmware/image.bin' || fail "the VM's own sysupgrade -T rejects the staged official image"
-echo "PASS: the official $new_version image is built, hash-checked, staged, and accepted by the VM's sysupgrade -T"
-
-# --- Flash --------------------------------------------------------------------------------
-boot_before="$(vm_ssh 'cat /proc/sys/kernel/random/boot_id')"
-api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"vm-ap","acknowledge_warnings":true}'
-expect 202 "starting the flash"
-echo "Flash sent; waiting for the VM to restart and OpenManage to verify it ..."
-wait_upgrade 240
-echo "---- result ----"; json 'import pprint; u=d[0]; pprint.pprint({k: u[k] for k in ("status","detail","result")})' < "$body"
-json 'u=d[0]; assert u["status"]=="done" and u["flash_sent_at"], u' < "$body" || fail "the upgraded VM did not pass every check"
-json 'u=d[0]; assert all(c["status"]=="ok" for c in u["result"]), u["result"]' < "$body"
-boot_after="$(vm_ssh 'cat /proc/sys/kernel/random/boot_id')"
-[[ "$boot_before" != "$boot_after" ]] || fail "the VM did not restart"
-[[ "$(vm_ssh '. /etc/openwrt_release; echo $DISTRIB_RELEASE')" == "$new_version" ]] || fail "the VM does not run OpenWrt $new_version"
-vm_ssh 'test ! -e /tmp/.om-firmware' || fail "the staged image survived the restart"
-echo "PASS: the VM restarted into OpenWrt $new_version and every post-reboot check passed"
-
-# --- After ---------------------------------------------------------------------------------
-[[ "$(pinned_backups)" == 1 ]] || fail "the backup must stay pinned until the result is acknowledged"
-api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/acknowledge"
-expect 200 "acknowledge"
-[[ "$(pinned_backups)" == 0 ]] || fail "acknowledging left the backup pinned"
-api POST "/api/devices/$device_id/firmware-inventory"
-expect 200 "firmware inventory after the upgrade"
-json 'assert d["inventory"]["manifest"]["release"]==sys.argv[1], d["inventory"]["manifest"]["release"]' "$new_version" < "$body"
-echo "PASS: the backup is released on acknowledge and the device reads as OpenWrt $new_version"
 # --- Package install ----------------------------------------------------------------------
 # A small third-party package, as a theme would be: registered, reviewed, confirmed and
-# installed from the app on the upgraded VM, then checked on the device.
+# installed from the app BEFORE the flash, so the upgrade has a third-party package to report on.
 python3 - "$work/om-test.ipk" <<'PY'
 import gzip, io, sys, tarfile
 
@@ -272,4 +223,68 @@ expect 202 "installing the same version again"
 wait_install
 json 'assert d[0]["status"]=="failed" and any(c["name"]=="already installed" and c["status"]=="failed" for c in d[0]["checks"]), d[0]' < "$body" || fail "installing the same version again must be refused by the pre-checks"
 echo "PASS: the same version is refused by the pre-checks"
+
+api PUT /api/firmware/settings "{\"build_server_enabled\":true,\"build_server_url\":\"http://$gateway:$asu_port\"}"
+expect 200 "firmware settings"
+api GET "/api/devices/$device_id/firmware-plan?version=$new_version"
+expect 200 "upgrade plan"
+json 'p=d["plan"]; assert p["profile"]=="generic" and not p["blockers"], p' < "$body"
+
+wait_upgrade() { # [rounds]: waits until the newest job is neither preparing, flashing nor verifying; leaves the list in $body
+  for _ in $(seq 1 "${1:-60}"); do
+    api GET "/api/devices/$device_id/firmware-upgrades"
+    [[ "$status" == 200 ]] || { cat "$body" >&2; fail "listing firmware upgrades returned HTTP $status"; }
+    case "$(json 'print(d[0]["status"])' < "$body")" in preparing|flashing|verifying) ;; *) return 0 ;; esac
+    sleep 5
+  done
+  cat "$body" >&2; fail "the firmware upgrade did not settle"
+}
+
+api POST "/api/devices/$device_id/firmware-upgrades" "{\"version\":\"$new_version\"}"
+expect 202 "preparing the upgrade"
+upgrade_id="$(json 'print(d["id"])' < "$body")"
+wait_upgrade 120
+json 'u=d[0]; assert u["status"]=="ready" and u["backup_id"] and u["image_size"]>1000000, u' < "$body" || { cat "$body" >&2; fail "the upgrade did not become ready"; }
+[[ "$(pinned_backups)" == 1 ]] || fail "a ready upgrade must hold exactly one pinned backup"
+vm_ssh 'sysupgrade -T /tmp/.om-firmware/image.bin' || fail "the VM's own sysupgrade -T rejects the staged official image"
+echo "PASS: the official $new_version image is built, hash-checked, staged, and accepted by the VM's sysupgrade -T"
+
+# --- Flash --------------------------------------------------------------------------------
+boot_before="$(vm_ssh 'cat /proc/sys/kernel/random/boot_id')"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/flash" '{"confirm_name":"vm-ap","acknowledge_warnings":true}'
+expect 202 "starting the flash"
+echo "Flash sent; waiting for the VM to restart and OpenManage to verify it ..."
+wait_upgrade 240
+echo "---- result ----"; json 'import pprint; u=d[0]; pprint.pprint({k: u[k] for k in ("status","detail","result")})' < "$body"
+# The package from outside the official feeds is not in the new image, so the upgrade ends
+# with exactly one warning, which names the confirmed source that could restore it.
+json 'u=d[0]; assert u["status"]=="done_with_warnings" and u["flash_sent_at"], u' < "$body" || fail "the upgraded VM did not finish with exactly the expected warning"
+json 'u=d[0]; w=[c for c in u["result"] if c["status"]!="ok"]; assert len(w)==1 and w[0]["name"]=="Third-party packages" and "om-test-pkg can be reinstalled from source" in w[0]["detail"] and "Nothing was reinstalled" in w[0]["detail"], u["result"]' < "$body" || fail "the post-reboot checks are not as expected"
+boot_after="$(vm_ssh 'cat /proc/sys/kernel/random/boot_id')"
+[[ "$boot_before" != "$boot_after" ]] || fail "the VM did not restart"
+[[ "$(vm_ssh '. /etc/openwrt_release; echo $DISTRIB_RELEASE')" == "$new_version" ]] || fail "the VM does not run OpenWrt $new_version"
+vm_ssh 'test ! -e /tmp/.om-firmware' || fail "the staged image survived the restart"
+echo "PASS: the VM restarted into OpenWrt $new_version and every post-reboot check passed"
+
+# --- After ---------------------------------------------------------------------------------
+[[ "$(pinned_backups)" == 1 ]] || fail "the backup must stay pinned until the result is acknowledged"
+api POST "/api/devices/$device_id/firmware-upgrades/$upgrade_id/acknowledge"
+expect 200 "acknowledge"
+[[ "$(pinned_backups)" == 0 ]] || fail "acknowledging left the backup pinned"
+api POST "/api/devices/$device_id/firmware-inventory"
+expect 200 "firmware inventory after the upgrade"
+json 'assert d["inventory"]["manifest"]["release"]==sys.argv[1], d["inventory"]["manifest"]["release"]' "$new_version" < "$body"
+echo "PASS: the backup is released on acknowledge and the device reads as OpenWrt $new_version"
+# --- Reinstall after the flash ---------------------------------------------------------------
+# Nothing was reinstalled by the flash; the app only reports, and an administrator installs.
+vm_ssh 'test ! -e /etc/om-test-pkg.installed' || fail "the flash must not have reinstalled the package by itself"
+api GET "/api/devices/$device_id/package-reinstalls"
+expect 200 "package reinstall candidates"
+json 'assert len(d)==1 and d[0]["name"]=="om-test-pkg" and d[0]["source_id"]==int(sys.argv[1]) and d[0]["version"]=="1.0-r1", d' "$source_id" < "$body" || fail "the reinstall candidates are not as expected"
+api POST "/api/devices/$device_id/package-installs" "{\"source_id\":$source_id,\"confirm_name\":\"vm-ap\",\"acknowledge_scripts\":true}"
+expect 202 "reinstalling the package"
+wait_install
+json 'assert d[0]["status"]=="done" and all(c["status"]=="ok" for c in d[0]["checks"]), d[0]' < "$body" || fail "the reinstall did not pass every check"
+vm_ssh 'opkg list-installed om-test-pkg | grep -q "om-test-pkg - 1.0-r1" && test -e /etc/om-test-pkg.installed' || fail "the package is not back on the VM"
+echo "PASS: after the flash the package was reported missing with its source, then reinstalled by an administrator"
 echo "All VM flash checks passed."
