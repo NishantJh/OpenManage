@@ -1,13 +1,15 @@
 # CI runners
 
-Trusted branch-push CI runs on self-hosted runners. The dedicated Ubuntu VM runner carries the labels `self-hosted, Linux, X64, openmanage-ci`. The Windows PC WSL2 runner remains available for the existing main-branch CI workflow until the CI migration is completed.
+The dedicated Ubuntu VM is the persistent runner for trusted main-branch CI, scheduled security analysis, dependency generation, and opt-in OpenWrt lab tests. Its labels are `self-hosted, Linux, X64, openmanage-ci`. The Windows PC WSL2 runner is no longer targeted by repository workflows.
 
 ## Security rules
 
-- This is a public repository. Never execute code from untrusted fork pull requests on a self-hosted runner. Do not use `pull_request_target` to check out or execute PR code. Self-hosted PR validation must be limited to trusted repository collaborators and must check the PR head repository and author association before checking out code.
+- This is a public repository. Pull-request validation, CodeQL, and dependency security checks for PRs remain on GitHub-hosted runners. A PR can modify its workflow files, so a conditional inside a `pull_request` workflow is not a sufficient security boundary for placing a public-repository PR on a self-hosted runner.
+- Self-hosted workflows execute only trusted code from `main`. Any `workflow_dispatch` job targeting this runner must reject refs other than `refs/heads/main`.
+- Do not use `pull_request_target` to check out or execute PR code.
 - Keep runner service accounts unprivileged. Do not grant blanket passwordless sudo, membership in the `sudo` group, or passwordless access to general-purpose `ip`, `iptables`, `sysctl`, `chmod`, or shell commands.
-- Keep the self-hosted runner dedicated to trusted OpenManage workflows. Do not run untrusted projects or arbitrary workloads on the same account.
-- Use workflow concurrency to avoid overlapping tests that share host ports, Docker resources, or the fixed QEMU TAP interface.
+- Keep the runner dedicated to trusted OpenManage workflows. Do not run untrusted projects or arbitrary workloads on the same account.
+- The runner executes one job at a time. GitHub queues additional jobs until it is free. OpenWrt lab and QEMU VM tests also share a concurrency group so their host networking resources cannot overlap.
 
 ## Ubuntu runner prerequisites
 
@@ -15,10 +17,49 @@ Install the non-secret system dependencies once, interactively as an administrat
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y qemu-system-x86 qemu-utils iproute2 iptables
+sudo apt-get install -y qemu-system-x86 qemu-utils iproute2 iptables eapoltest
 ```
 
-The Docker Engine and Compose plugin must already be installed, and the `runner` account must be able to use Docker without sudo. The VM flash test downloads official OpenWrt x86-64 images and requires outbound internet access.
+The Docker Engine and Compose plugin must already be installed, and the `runner` account must be able to use Docker without sudo. The VM flash test downloads official OpenWrt x86-64 images and requires outbound internet access. Chromium system libraries are required because the main-branch smoke test runs its browser navigation check.
+
+## Configure the runner as a persistent service
+
+The current registration was created as ephemeral. Replace that registration with a normal persistent registration; do not use the `--ephemeral` flag.
+
+1. Stop and uninstall the existing runner service if one was installed:
+
+   ```bash
+   sudo ./svc.sh stop
+   sudo ./svc.sh uninstall
+   ```
+
+   If no service was installed, skip these two commands.
+
+2. From the runner installation directory, remove the old registration as the runner account. Use a fresh removal token if GitHub requests one:
+
+   ```bash
+   ./config.sh remove
+   ```
+
+3. In GitHub, open **Settings → Actions → Runners → New self-hosted runner** and generate a fresh registration token. Configure the runner from its installation directory as the runner account:
+
+   ```bash
+   ./config.sh --url https://github.com/NishantJh/OpenManage --token YOUR_FRESH_TOKEN --labels openmanage-ci --unattended
+   ```
+
+   Do not add `--ephemeral`. The default runner name and labels `self-hosted`, `Linux`, and `X64` are retained; the command adds `openmanage-ci`.
+
+4. Install and start the service so it survives logout and host restart:
+
+   ```bash
+   sudo ./svc.sh install runner
+   sudo ./svc.sh start
+   sudo ./svc.sh status
+   ```
+
+5. Confirm the runner appears as **Idle** under GitHub **Settings → Actions → Runners**. It should remain online after completing a job instead of deregistering.
+
+Keep the runner software updated. Restrict repository access to this dedicated runner, and do not use it for untrusted repositories or workflows.
 
 ## Restricted privilege helper for the QEMU VM test
 
@@ -56,10 +97,9 @@ If the runner account is not literally named `runner`, change the fixed `RUNNER_
 
 The helper intentionally does not change `/dev/kvm` permissions. QEMU uses KVM only if the runner already has access; otherwise it falls back to TCG emulation. If KVM performance is needed, grant the runner account membership in the host's `kvm` group through normal host administration, then restart the runner service. Do not make `/dev/kvm` world-writable.
 
-## Ephemeral runner lifecycle
+## Runner behavior and workflow placement
 
-An ephemeral runner accepts one job and then deregisters. It does not automatically provision a replacement. If multiple workflows/jobs target the same single manually registered runner, re-register it before the next queued job can run. Prefer a consolidated workflow or a managed runner pool if several checks must run unattended.
-
-## Existing WSL2 runner
-
-The Windows PC WSL2 runner remains separately labelled `self-hosted, Linux, X64, WSL2`. Chromium system libraries are installed on the Ubuntu VM, but the WSL2 runner lacks them; browser tests should only be skipped on WSL2, not on the Ubuntu VM.
+- `.github/workflows/ci.yml`, trusted main-branch CodeQL/security scans, dependency-lockfile generation, and the opt-in OpenWrt lab/VM tests target `openmanage-ci`.
+- PR validation and PR-triggered CodeQL/security checks remain GitHub-hosted to avoid running potentially modified PR workflow definitions on a persistent runner.
+- The dependency-lockfile publish job and image publishing remain GitHub-hosted. They are narrowly scoped publication jobs; the lockfile publish job does not install dependencies or execute project build/test scripts.
+- The OpenWrt lab and QEMU VM workflows share a concurrency group. Do not remove that lock while both tests manipulate host networking.
