@@ -7,7 +7,9 @@ services:
     restart: unless-stopped
     environment:
       LISTEN_ADDR: ":8080"
-      DATABASE_URL: "postgres://openmanage:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/openmanage?sslmode=disable"
+      DATABASE_URL: "postgres://openmanage@db:5432/openmanage?sslmode=disable"
+      # Keep the password separate from the URI so reserved URL characters remain valid.
+      PGPASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
       OPENMANAGE_ADMIN_USERNAME: "${OPENMANAGE_ADMIN_USERNAME:-admin}"
       OPENMANAGE_ADMIN_PASSWORD: "${OPENMANAGE_ADMIN_PASSWORD:-}"
       OPENMANAGE_COOKIE_SECURE: "${OPENMANAGE_COOKIE_SECURE:-false}"
