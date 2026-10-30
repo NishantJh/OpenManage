@@ -443,6 +443,16 @@ for attempt in $(seq 1 100); do
   sleep 1
 done
 echo "PASS: the DHCP host's lease names a client, and its lease file was ignored until it was marked as the DHCP host"
+# A static host configured on the router beats the name the client last sent.
+docker exec "$router" sh -c "uci add dhcp host >/dev/null && uci set dhcp.@host[-1].name=lab-static && uci set dhcp.@host[-1].mac=$fake_mac && uci commit dhcp"
+for attempt in $(seq 1 100); do
+  api GET /api/wifi-clients
+  [[ "$(json 'print(d[0]["name"])' < "$body")" == lab-static ]] && break
+  [[ "$attempt" == 100 ]] && { cat "$body" >&2; fail "the router's static host name did not replace the lease name"; }
+  sleep 1
+done
+docker exec "$router" sh -c "uci delete dhcp.@host[-1] && uci commit dhcp"
+echo "PASS: a static host configured on the DHCP host names a client ahead of the name in its lease file"
 api PATCH "/api/wifi-clients/$client_id" '{"label":"lab phone"}'
 [[ "$status" == 204 ]] || fail "labelling a client returned HTTP $status"
 # The client leaves: the next poll (one interval later) records a disconnect.
