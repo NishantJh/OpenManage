@@ -37,3 +37,8 @@ export type FirmwarePlan={version:string;version_code:string;kernel:string;targe
 
 export type FirmwareUpgradeCheck={name:string;status:"ok"|"warning"|"failed";detail:string};
 export type FirmwareUpgrade={id:number;device_id:string;version:string;status:"preparing"|"ready"|"stopped"|"flashing"|"verifying"|"done"|"done_with_warnings"|"needs_attention";step:string;detail:string;plan:FirmwarePlan|null;image_name:string;image_sha256:string;image_size:number;backup_id:string|null;created_at:string;ready_at:string|null;expires_at:string|null;finished_at:string|null;flash_sent_at:string|null;result:FirmwareUpgradeCheck[]|null;acknowledged_at:string|null};
+export type PackageInfo={format:"ipk"|"apk";name:string;version:string;arch:string;description:string;depends:string[];scripts:{name:string;body:string}[];installed_size:number;unpacked_size?:number};
+export type PackageSource={id:number;name:string;version:string;arch:string;format:"ipk"|"apk";sha256:string;size:number;origin:string;status:"pending"|"confirmed";info:PackageInfo;created_at:string;confirmed_at:string|null};
+export type PackageUpdateCheck={status:"up_to_date"|"newer";tag:string;url?:string};
+export type PackageInstall={id:number;device_id:string;source_id:number|null;name:string;version:string;sha256:string;status:"running"|"done"|"failed";step:string;detail:string;checks:FirmwareUpgradeCheck[];created_at:string;finished_at:string|null};
+export type PackageReinstall={name:string;source_id:number|null;version?:string;format?:string;reason?:string};

@@ -198,6 +198,7 @@ func main() {
 	mux.HandleFunc("GET /api/package-sources", a.listPackageSources)
 	mux.HandleFunc("POST /api/package-sources", a.createPackageSource)
 	mux.HandleFunc("POST /api/package-sources/{id}/confirm", a.confirmPackageSource)
+	mux.HandleFunc("POST /api/package-sources/{id}/check-update", a.checkPackageSourceUpdate)
 	mux.HandleFunc("DELETE /api/package-sources/{id}", a.deletePackageSource)
 	mux.HandleFunc("GET /api/devices/{id}/firmware-upgrades", a.listFirmwareUpgrades)
 	mux.HandleFunc("POST /api/devices/{id}/firmware-upgrades", a.startFirmwareUpgrade)
