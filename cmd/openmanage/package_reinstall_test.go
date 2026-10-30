@@ -55,6 +55,9 @@ func TestReinstallCandidatesAndEndpoint(t *testing.T) {
 	add("luci-theme-fluent", "1.0", "ipk", "all", "confirmed", "b") // wrong format for an apk device
 	add("luci-theme-pending", "1", "apk", "noarch", "pending", "c")
 	add("luci-theme-old", "1", "ipk", "all", "confirmed", "d")
+	// Two wrong sources: the newer one is for another architecture, the older is an .ipk.
+	add("luci-theme-two", "1", "ipk", "all", "confirmed", "e")
+	add("luci-theme-two", "2", "apk", "mipsel_24kc", "confirmed", "f")
 
 	m := firmwareManifest{PackageManager: "apk", Arch: "x86_64", Packages: []firmwarePackage{{Name: "luci-theme-kept"}}}
 	got, err := a.reinstallCandidates(ctx, []string{"luci-theme-kept", "luci-theme-fluent", "luci-theme-pending", "luci-theme-old", "luci-theme-none"}, m)
@@ -71,6 +74,10 @@ func TestReinstallCandidatesAndEndpoint(t *testing.T) {
 		if c.SourceID != nil || c.Reason == "" {
 			t.Errorf("%s must have no source and a reason: %+v", c.Name, c)
 		}
+	}
+	two, err := a.reinstallCandidates(ctx, []string{"luci-theme-two"}, m)
+	if err != nil || len(two) != 1 || two[0].SourceID != nil || !strings.Contains(two[0].Reason, "mipsel_24kc") {
+		t.Errorf("the newest source's reason must be reported: %+v %v", two, err)
 	}
 	if !strings.Contains(got[2].Reason, "device now uses apk") {
 		t.Errorf("a wrong-format source says so: %q", got[2].Reason)

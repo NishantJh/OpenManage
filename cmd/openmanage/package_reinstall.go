@@ -57,6 +57,7 @@ func (a *app) reinstallCandidates(ctx context.Context, wanted []string, m firmwa
 		if err != nil {
 			return nil, err
 		}
+		first := true
 		for rows.Next() {
 			var id int64
 			var version, format, arch string
@@ -67,9 +68,11 @@ func (a *app) reinstallCandidates(ctx context.Context, wanted []string, m firmwa
 			if ok, why := sourceFits(format, arch, m); ok {
 				c.SourceID, c.Version, c.Format, c.Reason = &id, version, format, ""
 				break
-			} else {
+			} else if first {
+				// Sources are newest first; the newest one's problem is the one to report.
 				c.Reason = why
 			}
+			first = false
 		}
 		rows.Close()
 		out = append(out, c)
