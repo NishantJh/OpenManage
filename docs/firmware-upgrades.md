@@ -168,7 +168,10 @@ The packages the official feeds do not offer (the plan's "unavailable" list, typ
 
 **Nothing is reinstalled by the flash.** `GET /api/devices/{id}/package-reinstalls` lists the same candidates from the newest finished upgrade and the newest inventory; an administrator then installs each one with the install request above, typing the device name. Tested in the OpenWrt VM workflow: a package is installed from the app, the VM is flashed, the upgrade reports it missing with its source, the flash did not bring it back, and an administrator installs it again.
 
-Not built yet: the Software sources screen and the "Check for update" button.
+### Software sources screen and update check (as built)
+
+- **Screen:** the Firmware page has a Software sources section. Administrators add a package (upload or GitHub release link), read its description, dependencies and install scripts, and confirm by repeating the SHA-256. Operators see confirmed sources. Per device it shows installs, results, and the packages that need reinstalling after a flash, each with an Install button that opens the same typed-device-name confirmation.
+- **Check for update:** `POST /api/package-sources/{id}/check-update` (administrators; confirmed sources registered from a GitHub release link). It asks GitHub for the latest release tag (github.com only, same address checks as downloads), works out the matching file link by replacing the old tag in the file name, and returns `up_to_date` or `newer` with the link. It downloads and registers nothing; the administrator presses "Download for review" and the new file is a new pending source with the normal review and confirmation. It runs only when the button is pressed; there is no background check.
 
 ### The package set changes over time
 

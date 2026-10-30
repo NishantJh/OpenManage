@@ -70,6 +70,7 @@ Backups are `sysupgrade -b` archives, encrypted at rest and bound to the device.
 - `POST /api/devices/{id}/firmware-upgrades` — starts preparing an upgrade: it builds the image, checks its hash, takes and pins a backup, stages the image in `/tmp` on the device and runs `sysupgrade -T`. It returns at once and the job runs on. Nothing is flashed yet.
 - `GET /api/devices/{id}/firmware-upgrades` — the newest upgrade jobs for a device. Admin or operator.
 - `POST /api/devices/{id}/firmware-upgrades/{job}/cancel` — stops a job that is preparing or ready. Nothing has been flashed at either point.
+- `POST /api/package-sources/{id}/check-update` — asks GitHub whether a confirmed, GitHub-release package source has a newer release and returns `up_to_date` or `newer` with the link. Downloads and registers nothing. Admin.
 
 ## Wi-Fi users and RADIUS
 
