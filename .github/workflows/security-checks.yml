@@ -19,7 +19,9 @@ concurrency:
 
 jobs:
   go-vulnerability-scan:
-    runs-on: ubuntu-latest
+    # PRs stay on GitHub-hosted runners; trusted main/scheduled scans use Ubuntu self-hosted.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted", "Linux", "X64", "openmanage-ci"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -36,7 +38,8 @@ jobs:
           "$(go env GOPATH)/bin/govulncheck" ./...
 
   frontend-dependency-audit:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted", "Linux", "X64", "openmanage-ci"]') }}
     timeout-minutes: 15
     defaults:
       run:

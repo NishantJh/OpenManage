@@ -21,7 +21,7 @@ jobs:
   generate:
     # Run only for trusted main pushes. No repository write permission or persisted checkout credentials.
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, openmanage-ci]
     timeout-minutes: 20
     permissions:
       contents: read

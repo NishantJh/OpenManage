@@ -14,16 +14,16 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: openwrt-vm-flash-${{ github.ref }}
-  cancel-in-progress: true
+  # Share one lock with the OpenWrt lab workflow; both use host networking resources.
+  group: openmanage-self-hosted-lab
+  cancel-in-progress: false
 jobs:
   flash:
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64, openmanage-ci]
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
-      - name: Install QEMU
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-utils
       - name: Run the VM flash test
         env:
           OPENWRT_OLD_VERSION: ${{ inputs.old_version }}

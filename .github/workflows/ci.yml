@@ -11,9 +11,9 @@ concurrency:
 jobs:
   build:
     # workflow_dispatch can target arbitrary refs; never execute a non-main ref here.
-    # Pull-request code is validated on GitHub-hosted runners in pr-validation.yml.
+    # Only trusted main-branch code runs on the persistent self-hosted runner.
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64, WSL2]
+    runs-on: [self-hosted, Linux, X64, openmanage-ci]
     steps:
       - uses: actions/checkout@v7
       - name: Check Go formatting
@@ -42,9 +42,4 @@ jobs:
         run: docker build -t openmanage:ci .
 
       - name: Run disposable end-to-end smoke test
-        # The browser navigation check runs in pr-validation.yml on GitHub-hosted runners.
-        # This runner lacks Chromium system libraries (libnspr4); remove the skip after
-        # `sudo npx playwright install-deps chromium` has been run on it.
-        env:
-          OPENMANAGE_SKIP_UI_TEST: "1"
         run: bash scripts/smoke-test.sh

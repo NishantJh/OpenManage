@@ -22,7 +22,7 @@ Hardening (Sections 0 and 1) and the operations engine, read-only configuration,
 - SSH enrollment API verifies an independently verified SHA-256 host-key fingerprint and SSH public-key authentication before storing the private key encrypted with AES-256-GCM.
 - Enrollment is admin-only, limited to private IP literals on TCP/22, and requires OPENMANAGE_ENCRYPTION_KEY.
 - Enrollment does not install or rotate router-side authorized keys, run remote commands, or push configuration.
-- CI on trusted branch pushes runs frontend build, Go tests, and Docker image build on a self-hosted runner (WSL2 on the Windows PC or the Ubuntu VM; see [docs/ci-runners.md](docs/ci-runners.md)). Pull requests are validated on GitHub-hosted runners only; the repository is public, so untrusted fork code must never run on the self-hosted runner.
+- Trusted main-branch CI, scheduled CodeQL/security scans, dependency-lockfile generation, and opt-in OpenWrt lab/VM tests run on the persistent Ubuntu self-hosted runner labelled `openmanage-ci`. Pull-request validation and PR-triggered scans remain GitHub-hosted: because this is a public repository, PR authors can modify workflow definitions, so a job-level condition is not a sufficient boundary for a persistent self-hosted runner. See [docs/ci-runners.md](docs/ci-runners.md) for service setup and prerequisites.
 
 ## Roadmap
 
