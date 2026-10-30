@@ -14,6 +14,7 @@ for tool in docker curl python3 ssh-keygen ssh-keyscan qemu-system-x86_64 sudo g
   command -v "$tool" >/dev/null || { echo "ERROR: $tool is required" >&2; exit 2; }
 done
 docker compose version >/dev/null
+test -x /usr/local/sbin/openmanage-vm-net || { echo "ERROR: /usr/local/sbin/openmanage-vm-net is not installed" >&2; exit 2; }
 
 old_version="${OPENWRT_OLD_VERSION:-24.10.3}"
 new_version="${OPENWRT_NEW_VERSION:-24.10.4}"
@@ -46,10 +47,7 @@ cleanup() {
   [[ -n "$qemu_pid" ]] && kill "$qemu_pid" 2>/dev/null || true
   [[ -n "$asu_pid" ]] && kill "$asu_pid" 2>/dev/null || true
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-  sudo iptables -D FORWARD -i "$tap" -j ACCEPT 2>/dev/null || true
-  sudo iptables -D FORWARD -o "$tap" -j ACCEPT 2>/dev/null || true
-  sudo iptables -t nat -D POSTROUTING -o "$tap" -j MASQUERADE 2>/dev/null || true
-  sudo ip link del "$tap" 2>/dev/null || true
+  sudo /usr/local/sbin/openmanage-vm-net cleanup || true
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -72,19 +70,13 @@ gunzip -c "$old_gz" > "$disk" || [[ $? == 2 ]] # gzip warns about trailing zeros
 echo "PASS: both images match the published checksums"
 
 # --- Network and VM -----------------------------------------------------------------------
-sudo ip tuntap add dev "$tap" mode tap user "$(id -un)"
-sudo ip addr add "$host_ip/24" dev "$tap"
-sudo ip link set "$tap" up
-sudo sysctl -q -w net.ipv4.ip_forward=1
-# Docker drops forwarded traffic it does not know; let the app container reach the VM.
-sudo iptables -I FORWARD -i "$tap" -j ACCEPT
-sudo iptables -I FORWARD -o "$tap" -j ACCEPT
-sudo iptables -t nat -I POSTROUTING -o "$tap" -j MASQUERADE
+sudo /usr/local/sbin/openmanage-vm-net setup
 
+# Use KVM only when the runner account already has access. Never chmod /dev/kvm
+# world-writable from CI; TCG remains the safe, slower fallback.
 accel=(-machine accel=tcg -cpu max)
-if [[ -e /dev/kvm ]]; then
-  sudo chmod 666 /dev/kvm 2>/dev/null || true
-  [[ -w /dev/kvm ]] && accel=(-machine accel=kvm -cpu host)
+if [[ -w /dev/kvm ]]; then
+  accel=(-machine accel=kvm -cpu host)
 fi
 echo "Booting OpenWrt $old_version (${accel[*]}) ..."
 qemu-system-x86_64 "${accel[@]}" -m 1024 -smp 2 -display none \

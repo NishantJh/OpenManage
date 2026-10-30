@@ -1,21 +1,65 @@
 # CI runners
 
-Trusted branch-push CI (`.github/workflows/ci.yml`) runs on self-hosted runners. Two hosts carry the same labels (`self-hosted, Linux, X64, WSL2`), so whichever is online picks up the job:
+Trusted branch-push CI runs on self-hosted runners. The dedicated Ubuntu VM runner carries the labels `self-hosted, Linux, X64, openmanage-ci`. The Windows PC WSL2 runner remains available for the existing main-branch CI workflow until the CI migration is completed.
 
-- The Windows PC: WSL2 Ubuntu-24.04 runners using Docker Desktop. Docker Desktop must be running.
-- The Ubuntu VM (LAN 192.168.1.180): the runner host for all of Nishant's projects. The runner is a systemd service under the non-root user `runner`, with native Docker Engine. It also carries the extra label `vm`.
+## Security rules
 
-## Rules
+- This is a public repository. Never execute code from untrusted fork pull requests on a self-hosted runner. Do not use `pull_request_target` to check out or execute PR code. Self-hosted PR validation must be limited to trusted repository collaborators and must check the PR head repository and author association before checking out code.
+- Keep runner service accounts unprivileged. Do not grant blanket passwordless sudo, membership in the `sudo` group, or passwordless access to general-purpose `ip`, `iptables`, `sysctl`, `chmod`, or shell commands.
+- Keep the self-hosted runner dedicated to trusted OpenManage workflows. Do not run untrusted projects or arbitrary workloads on the same account.
+- Use workflow concurrency to avoid overlapping tests that share host ports, Docker resources, or the fixed QEMU TAP interface.
 
-- Self-hosted runners are trusted infrastructure on a public repo. Never add `pull_request` or `pull_request_target` jobs for them; pull requests run on GitHub-hosted runners (`pr-validation.yml`).
-- Gate self-hosted jobs to `refs/heads/main` so `workflow_dispatch` cannot run another ref there.
-- The VM is shared by several repos: use no fixed container names or host ports in workflows. Known gap: `scripts/smoke-test.sh` defaults to host port 18080 (override with `OPENMANAGE_SMOKE_PORT`), so two OpenManage jobs must not run at once on one host. A weekly `docker system prune` timer cleans the shared Docker daemon.
-- Only repos Nishant owns get a runner on the VM.
+## Ubuntu runner prerequisites
 
-## Adding a runner on the VM for another repo
+Install the non-secret system dependencies once, interactively as an administrator:
 
-1. Create a token at the repo's Settings > Actions > Runners > New self-hosted runner.
-2. On the VM as `nishant`: `add-runner OWNER/REPO self-hosted,Linux,X64,vm` and paste the token at the prompt. The token is never stored. The runner package is cached in `/opt/actions-runner-cache` (GitHub's download server is slow per connection).
-3. Each repo gets its own directory under `/home/runner/` and its own systemd unit `actions.runner.*`.
+```bash
+sudo apt-get update
+sudo apt-get install -y qemu-system-x86 qemu-utils iproute2 iptables
+```
 
-Chromium system libraries for Playwright are installed on the VM, but `ci.yml` still sets `OPENMANAGE_SKIP_UI_TEST=1` (the WSL2 runner lacks them), so the browser check does not run in main CI yet. The VM could run it once the skip is limited to the WSL2 runner.
+The Docker Engine and Compose plugin must already be installed, and the `runner` account must be able to use Docker without sudo. The VM flash test downloads official OpenWrt x86-64 images and requires outbound internet access.
+
+## Restricted privilege helper for the QEMU VM test
+
+The VM flash test needs one TAP interface, a temporary IPv4 forwarding setting, and three narrowly scoped firewall rules. It must not receive general root access. The repository helper `scripts/openmanage-vm-net-helper.sh` implements only two fixed operations: `setup` and `cleanup`. It hard-codes the reserved interface `om-vmtap`, host address `192.168.1.2/24`, and firewall rules; it accepts no caller-supplied command or network parameters. It saves and restores the prior `net.ipv4.ip_forward` value in `/run`.
+
+After the helper change is available on the trusted branch, install it from the repository checkout as an administrator:
+
+```bash
+sudo install -o root -g root -m 0755 \
+  scripts/openwrt-vm-net-helper.sh \
+  /usr/local/sbin/openmanage-vm-net
+```
+
+Create the exact-command sudoers rule. This grants the `runner` account permission to invoke only the helper's two fixed subcommands:
+
+```bash
+printf '%s\\n' \
+  'runner ALL=(root) NOPASSWD: /usr/local/sbin/openmanage-vm-net setup, /usr/local/sbin/openmanage-vm-net cleanup' \
+  | sudo tee /etc/sudoers.d/openmanage-vm-net >/dev/null
+sudo chown root:root /etc/sudoers.d/openmanage-vm-net
+sudo chmod 0440 /etc/sudoers.d/openmanage-vm-net
+sudo visudo -cf /etc/sudoers.d/openmanage-vm-net
+```
+
+Verify that the runner account is authorized without executing either network operation:
+
+```bash
+sudo -u runner sudo -n -l /usr/local/sbin/openmanage-vm-net setup
+sudo -u runner sudo -n -l /usr/local/sbin/openmanage-vm-net cleanup
+```
+
+Both commands must list the corresponding command as permitted without asking for a password. Do not test by running `setup` manually; the workflow owns setup and cleanup as a pair. The script installs an EXIT cleanup trap, and the helper also removes partial setup if a setup command fails.
+
+If the runner account is not literally named `runner`, change the fixed `RUNNER_USER` in the helper and the username in the sudoers rule to the actual service account before installing it. Keep the sudoers command paths and arguments exact.
+
+The helper intentionally does not change `/dev/kvm` permissions. QEMU uses KVM only if the runner already has access; otherwise it falls back to TCG emulation. If KVM performance is needed, grant the runner account membership in the host's `kvm` group through normal host administration, then restart the runner service. Do not make `/dev/kvm` world-writable.
+
+## Ephemeral runner lifecycle
+
+An ephemeral runner accepts one job and then deregisters. It does not automatically provision a replacement. If multiple workflows/jobs target the same single manually registered runner, re-register it before the next queued job can run. Prefer a consolidated workflow or a managed runner pool if several checks must run unattended.
+
+## Existing WSL2 runner
+
+The Windows PC WSL2 runner remains separately labelled `self-hosted, Linux, X64, WSL2`. Chromium system libraries are installed on the Ubuntu VM, but the WSL2 runner lacks them; browser tests should only be skipped on WSL2, not on the Ubuntu VM.
