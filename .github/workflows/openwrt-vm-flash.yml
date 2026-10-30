@@ -1,7 +1,7 @@
 name: OpenWrt VM flash
 # Opt-in: boots an official OpenWrt x86-64 image in QEMU, flashes the next release through
-# OpenManage's firmware upgrade and checks the device after it restarts. It runs on
-# the dedicated Ubuntu self-hosted runner and never touches real devices.
+# OpenManage's firmware upgrade and checks the device after it restarts. GitHub-hosted
+# only; it never runs on the self-hosted runner and never touches real devices.
 on:
   workflow_dispatch:
     inputs:

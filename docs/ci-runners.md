@@ -76,7 +76,7 @@ sudo install -o root -g root -m 0755 \
 Create the exact-command sudoers rule. This grants the `runner` account permission to invoke only the helper's two fixed subcommands:
 
 ```bash
-printf '%s\n' \
+printf '%s\\n' \
   'runner ALL=(root) NOPASSWD: /usr/local/sbin/openmanage-vm-net setup, /usr/local/sbin/openmanage-vm-net cleanup' \
   | sudo tee /etc/sudoers.d/openmanage-vm-net >/dev/null
 sudo chown root:root /etc/sudoers.d/openmanage-vm-net
