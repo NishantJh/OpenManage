@@ -162,7 +162,13 @@ Registering a package source installs nothing on any device yet; installing and 
 - **Audit:** `device.package_install` records the source, version and hash. The package manager's output is never stored: an install script runs as root and could print a secret, and operators can read install records.
 - **Tested** on a real OpenWrt VM in the opt-in "OpenWrt VM flash test" workflow, after the flash: register, review, confirm, install, check the files and the post-install script on the VM, and a second install of the same version refused.
 
-Not built yet: reinstalling sources after a flash as a reported check, the Software sources screen, and the "Check for update" button.
+### Reinstalling after a flash (as built)
+
+The packages the official feeds do not offer (the plan's "unavailable" list, typically third-party themes) are left out of the image on purpose. After the device restarts, the upgrade's checks add **Third-party packages**: for each of those packages the device does not have, the newest confirmed package source that fits the device (same name; `.ipk` for opkg or `.apk` for apk; architecture `all`/`noarch` or equal to the device's) is named, or the reason none fits (no source, wrong format after an opkg to apk switch, wrong architecture). Any missing package makes the upgrade end "done with warnings".
+
+**Nothing is reinstalled by the flash.** `GET /api/devices/{id}/package-reinstalls` lists the same candidates from the newest finished upgrade and the newest inventory; an administrator then installs each one with the install request above, typing the device name. Tested in the OpenWrt VM workflow: a package is installed from the app, the VM is flashed, the upgrade reports it missing with its source, the flash did not bring it back, and an administrator installs it again.
+
+Not built yet: the Software sources screen and the "Check for update" button.
 
 ### The package set changes over time
 

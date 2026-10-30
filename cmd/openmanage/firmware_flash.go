@@ -454,6 +454,16 @@ func (a *app) postFlashChecks(ctx context.Context, rec upgradeRecord) []upgradeC
 	} else {
 		checks = append(checks, upgradeCheck{"Packages", "ok", "every package the plan asked for is installed"})
 	}
+	// Packages the official feeds lack were left out of the image on purpose. Report which
+	// are missing and which confirmed sources could restore them; never install on its own.
+	if len(rec.Plan.Unavailable) > 0 {
+		candidates, err := a.reinstallCandidates(ctx, rec.Plan.Unavailable, m)
+		if err != nil {
+			checks = append(checks, upgradeCheck{"Third-party packages", "warning", "could not look up package sources"})
+		} else {
+			checks = append(checks, reinstallCheck(candidates))
+		}
+	}
 	// Release migrations change settings, so differences are for a person to review, not
 	// a failure and never rewritten.
 	snap, sfail := a.captureSnapshot(ctx, rec.DeviceID, "", false)
