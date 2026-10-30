@@ -504,6 +504,9 @@ type firmwarePlan struct {
 	RemovedDefaults []string        `json:"removed_defaults"`
 	Blockers        []string        `json:"blockers"`
 	Warnings        []string        `json:"warnings"`
+	// stock is the image's default package list for the device's profile; the stock
+	// diff reads it, the plan response does not carry it.
+	stock []string
 }
 
 // planPackages decides what a build request for the new release would carry: the
@@ -674,6 +677,7 @@ func firmwarePlanFor(ctx context.Context, serverURL string, m firmwareManifest, 
 	for name := range defaults {
 		available[name] = true
 	}
+	plan.stock = sortedKeys(defaults)
 	planPackages(m, defaults, available, branch.PackageChanges, revisionNumber(m.Revision), revisionNumber(profiles.VersionCode), &plan)
 
 	switch c := compareReleases(version, m.Release); {

@@ -191,6 +191,7 @@ func main() {
 	mux.HandleFunc("POST /api/devices/{id}/firmware-inventory", a.captureFirmwareInventory)
 	mux.HandleFunc("GET /api/devices/{id}/firmware-inventory", a.getFirmwareInventory)
 	mux.HandleFunc("GET /api/devices/{id}/firmware-plan", a.getFirmwarePlan)
+	mux.HandleFunc("GET /api/devices/{id}/firmware-stock-diff", a.getFirmwareStockDiff)
 	mux.HandleFunc("GET /api/package-sources", a.listPackageSources)
 	mux.HandleFunc("POST /api/package-sources", a.createPackageSource)
 	mux.HandleFunc("POST /api/package-sources/{id}/confirm", a.confirmPackageSource)

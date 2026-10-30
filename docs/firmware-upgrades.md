@@ -49,6 +49,15 @@ Decided with Nishant 2026-10-29: every release the build server offers is listed
 - **Blockers:** extroot, no board name, no image for the board or target, and going from apk back to an opkg release. **Warnings:** same release, downgrade, snapshot, release candidate, new branch, opkg to apk, packages missing from the feeds, and no `/rom` to compare with.
 - API: `GET`/`PUT /api/firmware/settings`, `GET /api/firmware/releases`, `GET /api/devices/{id}/firmware-plan?version=` (admins and operators). The plan uses the newest stored inventory.
 
+### Comparing a device with the stock image (as built)
+
+`GET /api/devices/{id}/firmware-stock-diff` (administrators and operators; needs the build server turned on) compares the device's newest inventory with the official image for the release it runs and its device profile. The stock list is the profile's default packages from upstream `profiles.json` (target defaults plus the profile's device packages, minus its `-name` entries), the same list ASU and the ImageBuilder start from.
+
+- **Added:** packages the owner installed (`user_installed`) that are not on the stock list.
+- **Removed:** stock-list packages the device does not have.
+- Packages installed and later uninstalled appear in neither list, and library dependencies are not listed as removed, because the stock list names only what an image build is asked for. A library installed under a dated name matches its plain stock name.
+- The Firmware page shows these two lists instead of "Installed by you" and "Removed from the image" when the build server is on, and tags added packages in the all-packages table. Without the build server it falls back to the device's own image copy (`/rom`), which can list packages that were installed and removed separately, and says so.
+
 ### Preparing an upgrade (as built)
 
 Step 3, part 1. Approved by Nishant 2026-10-29: confirmation is typing the device name (no password), settings are always kept (the flash command can never carry `-n` or `-F`), only the same release family or the next one the build server lists is allowed (never a downgrade or a snapshot), and the first flash test is an OpenWrt x86-64 VM before his spare TP-Link Archer AX23.
