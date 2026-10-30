@@ -28,7 +28,7 @@ After the helper change is available on the trusted branch, install it from the 
 
 ```bash
 sudo install -o root -g root -m 0755 \
-  scripts/openwrt-vm-net-helper.sh \
+  scripts/openmanage-vm-net-helper.sh \
   /usr/local/sbin/openmanage-vm-net
 ```
 
