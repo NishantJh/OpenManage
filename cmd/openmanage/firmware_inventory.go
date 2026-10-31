@@ -465,6 +465,14 @@ func (a *app) takeFirmwareInventory(ctx context.Context, deviceID, userID string
 	if err = tx.QueryRow(ctx, `SELECT id::text FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&lockedDeviceID); err != nil {
 		return out, storeFailed
 	}
+	var flashActive bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM firmware_rollout_devices
+		WHERE device_id_snapshot=$1 AND status='flashing')`, deviceID).Scan(&flashActive); err != nil {
+		return out, storeFailed
+	}
+	if flashActive {
+		return out, &captureFailure{status: http.StatusConflict, msg: "a staged campaign flash is active on this device"}
+	}
 	var prevID int64
 	var prevDigest string
 	err = tx.QueryRow(ctx, `SELECT id, digest FROM firmware_inventories WHERE device_id=$1
