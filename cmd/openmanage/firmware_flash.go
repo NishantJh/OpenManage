@@ -738,6 +738,22 @@ func (a *app) acknowledgeFirmwareUpgrade(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var lockedDevice string
+	if err = tx.QueryRow(r.Context(), `SELECT id::text FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&lockedDevice); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "device not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not lock the device")
+		return
+	}
+	var lockedUpgradeStatus string
+	if err = tx.QueryRow(r.Context(), `SELECT status FROM firmware_upgrades WHERE id=$1 AND device_id=$2 FOR UPDATE`, id, deviceID).Scan(&lockedUpgradeStatus); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "upgrade not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not lock the upgrade")
+		return
+	}
 	var rolloutStatus string
 	var currentBatch int
 	if rolloutID > 0 {
