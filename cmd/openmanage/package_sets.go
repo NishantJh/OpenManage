@@ -385,11 +385,15 @@ func (a *app) loadDevicePackageSet(ctx context.Context, deviceID string) (packag
 		COALESCE(r.created_by::text,''), r.created_at, r.based_on_revision,
 		COALESCE(s.package_name,''), COALESCE(s.tracking_mode,''), s.source_id,
 		COALESCE(s.source_version,'')
-		FROM device_package_set_revisions r
+		FROM (
+			SELECT id, revision, official_packages, removed_defaults, created_by, created_at, based_on_revision
+			FROM device_package_set_revisions
+			WHERE package_set_id=$1
+			ORDER BY revision DESC
+			LIMIT $2
+		) r
 		LEFT JOIN device_package_set_revision_sources s ON s.revision_id=r.id
-		WHERE r.package_set_id=$1
-		ORDER BY r.revision DESC, s.package_name
-		LIMIT $2`, setID, packageSetHistoryLimit*(packageSetMaxSources+1))
+		ORDER BY r.revision DESC, s.package_name`, setID, packageSetHistoryLimit)
 	if err != nil {
 		return out, err
 	}
