@@ -167,4 +167,32 @@ func TestAdvanceFirmwareRolloutRequiresAcknowledgedSuccessfulBatch(t *testing.T)
 	if status != "complete" || currentBatch != 1 {
 		t.Fatalf("after final batch: status=%q current_batch=%d", status, currentBatch)
 	}
+
+	var warnedRolloutID int64
+	if err := db.QueryRow(ctx, `INSERT INTO firmware_rollouts(version,status,canary_device_id,created_by)
+		VALUES('25.12.2','canary_running',$1,$2) RETURNING id`, deviceID, userID).Scan(&warnedRolloutID); err != nil {
+		t.Fatal(err)
+	}
+	var warnedUpgradeID int64
+	if err := db.QueryRow(ctx, `INSERT INTO firmware_upgrades(device_id,version,status,created_by,acknowledged_at,acknowledged_by)
+		VALUES($1,'25.12.2','done_with_warnings',$2,NOW(),$2) RETURNING id`, deviceID, userID).Scan(&warnedUpgradeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO firmware_rollout_devices(
+		rollout_id,device_id,device_id_snapshot,device_name,model,current_release,board_name,target,
+		inventory_id,inventory_digest,inventory_manifest,inventory_verified_at,desired_package_set_revision,
+		batch_number,position,status,upgrade_id)
+		VALUES($1,$2,$2,'warned-router','OpenWrt x86','24.10.4','generic','x86/64',
+		3,'warned-inventory','{}'::jsonb,NOW(),0,0,0,'done_with_warnings',$3)`,
+		warnedRolloutID, deviceID, warnedUpgradeID); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/firmware/rollouts/"+strconv.FormatInt(warnedRolloutID, 10)+"/advance", nil)
+	req.SetPathValue("rollout", strconv.FormatInt(warnedRolloutID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), userContextKey, authUser{ID: userID, Role: "admin"}))
+	rec := httptest.NewRecorder()
+	a.advanceFirmwareRollout(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("acknowledged done_with_warnings must not pass the rollout gate: %d %s", rec.Code, rec.Body)
+	}
 }
