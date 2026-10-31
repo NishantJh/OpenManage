@@ -30,7 +30,12 @@ func TestNormalizeFirmwareRolloutRequest(t *testing.T) {
 		{name: "empty batch", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{}}}, wantErr: true},
 		{name: "oversized batch", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first, second, "550e8400-e29b-41d4-a716-446655440003", "550e8400-e29b-41d4-a716-446655440004", "550e8400-e29b-41d4-a716-446655440005", "550e8400-e29b-41d4-a716-446655440006"}}}, wantErr: true},
 		{name: "too many batches", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {second}, {"550e8400-e29b-41d4-a716-446655440003"}, {"550e8400-e29b-41d4-a716-446655440004"}, {"550e8400-e29b-41d4-a716-446655440005"}}}, wantErr: true},
-		{name: "too many devices", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first, second, "550e8400-e29b-41d4-a716-446655440003", "550e8400-e29b-41d4-a716-446655440004", "550e8400-e29b-41d4-a716-446655440005"}, {"550e8400-e29b-41d4-a716-446655440006", "550e8400-e29b-41d4-a716-446655440007", "550e8400-e29b-41d4-a716-446655440008", "550e8400-e29b-41d4-a716-446655440009", "550e8400-e29b-41d4-a716-446655440010"}, {"550e8400-e29b-41d4-a716-446655440011", "550e8400-e29b-41d4-a716-446655440012", "550e8400-e29b-41d4-a716-446655440013", "550e8400-e29b-41d4-a716-446655440014"}}}, wantErr: true},
+		{name: "too many devices", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{
+			{"550e8400-e29b-41d4-a716-446655440100", "550e8400-e29b-41d4-a716-446655440101", "550e8400-e29b-41d4-a716-446655440102", "550e8400-e29b-41d4-a716-446655440103", "550e8400-e29b-41d4-a716-446655440104"},
+			{"550e8400-e29b-41d4-a716-446655440105", "550e8400-e29b-41d4-a716-446655440106", "550e8400-e29b-41d4-a716-446655440107", "550e8400-e29b-41d4-a716-446655440108", "550e8400-e29b-41d4-a716-446655440109"},
+			{"550e8400-e29b-41d4-a716-446655440110", "550e8400-e29b-41d4-a716-446655440111", "550e8400-e29b-41d4-a716-446655440112", "550e8400-e29b-41d4-a716-446655440113", "550e8400-e29b-41d4-a716-446655440114"},
+			{"550e8400-e29b-41d4-a716-446655440115", "550e8400-e29b-41d4-a716-446655440116", "550e8400-e29b-41d4-a716-446655440117", "550e8400-e29b-41d4-a716-446655440118", "550e8400-e29b-41d4-a716-446655440119"},
+		}}, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
