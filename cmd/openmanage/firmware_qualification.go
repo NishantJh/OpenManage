@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const firmwareHardwareQualificationBodyLimit = 16 << 10
@@ -139,9 +138,6 @@ func normalizeFirmwareHardwareQualification(in firmwareHardwareQualificationRequ
 	today := time.Now().UTC()
 	if testedOn.After(time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)) {
 		return in, errors.New("tested_on cannot be in the future")
-	}
-	if !in.PhysicalHardware && in.UpgradeOutcome == "passed" && in.RecoveryOutcome == "passed" {
-		// Virtual test records are allowed for traceability, but never count as qualification.
 	}
 	if in.UpgradeOutcome != "passed" && in.UpgradeOutcome != "failed" && in.UpgradeOutcome != "not_run" {
 		return in, errors.New("upgrade_outcome must be passed, failed, or not_run")
@@ -319,7 +315,7 @@ func findMatchingFirmwareHardwareQualification(ctx context.Context, q rolloutQue
 			AND physical_hardware=TRUE AND upgrade_outcome='passed' AND recovery_outcome='passed'
 			AND recovery_method<>'not_exercised'
 			AND tested_on BETWEEN CURRENT_DATE - $5::int AND CURRENT_DATE
-			AND upgrade_checks @> $6::text[]
+			AND evidence_reference<>'' AND upgrade_checks @> $6::text[]
 		ORDER BY tested_on DESC,id DESC LIMIT 1`,
 		member.BoardName, member.Model, member.CurrentRelease, targetRelease,
 		firmwareHardwareQualificationMaxAgeDays, requiredFirmwareUpgradeChecks), &out)
