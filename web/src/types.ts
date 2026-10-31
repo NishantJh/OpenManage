@@ -46,3 +46,9 @@ export type PackageReinstall={name:string;source_id:number|null;version?:string;
 export type DevicePackageSetSource={name:string;mode:"pinned"|"latest";source_id?:number;version?:string};
 export type DevicePackageSetRevision={revision:number;official_packages:string[];removed_defaults:string[];sources:DevicePackageSetSource[];created_by?:string;created_at:string;based_on_revision?:number|null};
 export type DevicePackageSet={device_id:string;current_revision:number;current?:DevicePackageSetRevision;revisions:DevicePackageSetRevision[]};
+
+export type FirmwareRolloutMember={device_id:string;device_name:string;model:string;current_release:string;board_name:string;target:string;inventory_id:number;inventory_digest:string;inventory_verified_at:string;desired_package_set_revision:number;batch_number:number;position:number;status:string;plan:FirmwarePlan|null;plan_digest:string;upgrade_id:number|null};
+export type FirmwareRollout={id:number;version:string;status:string;canary_device_id:string;created_by:string;created_at:string;updated_at:string;current_batch:number;max_concurrent_flashes:number;started_at:string|null;completed_at:string|null;pause_reason:string;devices:FirmwareRolloutMember[]};
+export type FirmwareHardwareQualification={id:number;board_name:string;model:string;source_release:string;target_release:string;tested_on:string;physical_hardware:boolean;upgrade_checks:string[];upgrade_outcome:string;recovery_method:string;recovery_outcome:string;evidence_reference:string;notes:string;created_by:string;created_at:string;qualifies:boolean};
+export type FirmwareRolloutQualificationGap={device_ids:string[];board_name:string;model:string;source_release:string;target_release:string};
+export type FirmwareRolloutQualificationStatus={rollout_id:number;qualified:boolean;required_hardware:number;matched:FirmwareHardwareQualification[];missing:FirmwareRolloutQualificationGap[]};
