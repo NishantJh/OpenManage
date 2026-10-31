@@ -212,9 +212,10 @@ func (a *app) previewFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type plannedMember struct {
-		member firmwareRolloutMember
-		plan   json.RawMessage
-		digest string
+		member   firmwareRolloutMember
+		plan     json.RawMessage
+		digest   string
+		blockers []string
 	}
 	planned := make([]plannedMember, len(rollout.Devices))
 	planErrors := make([]error, len(rollout.Devices))
@@ -249,7 +250,7 @@ func (a *app) previewFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 				planErrors[i] = err
 				return
 			}
-			planned[i] = plannedMember{member: member, plan: encoded, digest: digest}
+			planned[i] = plannedMember{member: member, plan: encoded, digest: digest, blockers: plan.Blockers}
 		}(i, member)
 	}
 	planWG.Wait()
@@ -265,16 +266,11 @@ func (a *app) previewFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		var plan firmwarePlan
-		if err := json.Unmarshal(item.plan, &plan); err != nil {
-			writeError(w, http.StatusInternalServerError, "could not read a computed rollout plan")
-			return
-		}
-		if len(plan.Blockers) > 0 {
+		if len(item.blockers) > 0 {
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error":    "rollout preview is blocked by one or more device plans",
 				"device":   item.member.DeviceName,
-				"blockers": plan.Blockers,
+				"blockers": item.blockers,
 			})
 			return
 		}
