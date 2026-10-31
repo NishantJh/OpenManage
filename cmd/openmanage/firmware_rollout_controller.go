@@ -73,6 +73,9 @@ func lockFirmwareRolloutDevices(ctx context.Context, tx pgx.Tx, rollout firmware
 
 func validateFirmwareRolloutPlans(rollout firmwareRollout) error {
 	for _, member := range rollout.Devices {
+		if member.Status != "queued" || member.UpgradeID != nil {
+			return errors.New("device " + member.DeviceName + ": rollout membership is not in its initial queued state")
+		}
 		plan, err := firmwareRolloutMemberPlan(member, rollout.Version)
 		if err != nil {
 			return errors.New("device " + member.DeviceName + ": " + err.Error())
@@ -263,7 +266,7 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "device is not part of this rollout")
 		return
 	}
-	if member.BatchNumber != rollout.CurrentBatch || member.Status != "queued" {
+	if member.BatchNumber != rollout.CurrentBatch || member.Status != "queued" || member.UpgradeID != nil {
 		writeError(w, http.StatusConflict, "the device is not queued in the currently released batch")
 		return
 	}
