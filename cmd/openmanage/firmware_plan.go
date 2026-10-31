@@ -504,6 +504,11 @@ type firmwarePlan struct {
 	RemovedDefaults []string        `json:"removed_defaults"`
 	Blockers        []string        `json:"blockers"`
 	Warnings        []string        `json:"warnings"`
+	DesiredSetRevision       int                `json:"desired_set_revision,omitempty"`
+	DesiredOfficialPackages  []string           `json:"desired_official_packages,omitempty"`
+	DesiredUnavailable       []string           `json:"desired_unavailable,omitempty"`
+	DesiredSources           []packageSetSource `json:"desired_sources,omitempty"`
+	available                map[string]bool
 	// stock is the image's default package list for the device's profile; the stock
 	// diff reads it, the plan response does not carry it.
 	stock []string
@@ -678,6 +683,7 @@ func firmwarePlanFor(ctx context.Context, serverURL string, m firmwareManifest, 
 		available[name] = true
 	}
 	plan.stock = sortedKeys(defaults)
+	plan.available = available
 	planPackages(m, defaults, available, branch.PackageChanges, revisionNumber(m.Revision), revisionNumber(profiles.VersionCode), &plan)
 
 	switch c := compareReleases(version, m.Release); {
@@ -746,7 +752,7 @@ func (a *app) getFirmwarePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not load the firmware inventory")
 		return
 	}
-	plan, err := firmwarePlanFor(ctx, serverURL, inv.Manifest, version)
+	plan, err := a.firmwarePlanForDevice(ctx, serverURL, deviceID, inv.Manifest, version)
 	if err != nil {
 		buildServerError(w, err)
 		return

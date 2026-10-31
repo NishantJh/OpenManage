@@ -117,3 +117,31 @@ func mustJSON(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+
+func TestDesiredPackageSourcesUseThePlanSnapshot(t *testing.T) {
+	db := newEnrollmentTestDB(t)
+	a := &app{db: db}
+	ctx := context.Background()
+	add := func(name, version, hash string) int64 {
+		var id int64
+		if err := db.QueryRow(ctx, `INSERT INTO package_sources (name, version, arch, format, sha256, size, file, info, status, confirmed_at)
+			VALUES ($1,$2,'noarch','apk',$3,1,'x','{}','confirmed',NOW()) RETURNING id`, name, version, strings.Repeat(hash, 64)).Scan(&id); err != nil { t.Fatal(err) }
+		return id
+	}
+	pinnedV1 := add("luci-theme-pinned", "1.0", "a")
+	_ = add("luci-theme-pinned", "2.0", "b")
+	latestV1 := add("luci-theme-latest", "2.0", "c")
+	plan := firmwarePlan{Warnings: []string{}}
+	resolved, err := a.resolveDesiredPackageSources(ctx, []packageSetSource{
+		{Name: "luci-theme-pinned", Mode: "pinned", SourceID: &pinnedV1, Version: "1.0"},
+		{Name: "luci-theme-latest", Mode: "latest"},
+	}, &plan)
+	if err != nil { t.Fatal(err) }
+	if len(resolved) != 2 || resolved[0].Version != "1.0" || resolved[1].SourceID == nil || *resolved[1].SourceID != latestV1 || resolved[1].Version != "2.0" { t.Fatalf("resolved source snapshot = %+v", resolved) }
+	_ = add("luci-theme-latest", "3.0", "d")
+	manifest := firmwareManifest{PackageManager: "apk", Arch: "x86_64"}
+	got, err := a.reinstallCandidatesWithDesired(ctx, []string{"luci-theme-pinned"}, resolved, manifest)
+	if err != nil { t.Fatal(err) }
+	if len(got) != 2 || got[0].SourceID == nil || *got[0].SourceID != pinnedV1 || got[0].Version != "1.0" || got[1].SourceID == nil || *got[1].SourceID != latestV1 || got[1].Version != "2.0" { t.Fatalf("reinstall candidates must retain selected source ids: %+v", got) }
+}
