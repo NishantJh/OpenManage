@@ -54,11 +54,16 @@ type firmwareRollout struct {
 	CanaryDeviceID string                  `json:"canary_device_id"`
 	CreatedBy      string                  `json:"created_by"`
 	CreatedAt      time.Time               `json:"created_at"`
-	UpdatedAt      time.Time               `json:"updated_at"`
-	Devices        []firmwareRolloutMember `json:"devices"`
+	UpdatedAt             time.Time               `json:"updated_at"`
+	CurrentBatch           int                     `json:"current_batch"`
+	MaxConcurrentFlashes   int                     `json:"max_concurrent_flashes"`
+	PauseReason            string                  `json:"pause_reason,omitempty"`
+	StartedAt              *time.Time              `json:"started_at,omitempty"`
+	CompletedAt            *time.Time              `json:"completed_at,omitempty"`
+	Devices                []firmwareRolloutMember `json:"devices"`
 }
 
-const firmwareRolloutColumns = `id, version, status, canary_device_id::text, COALESCE(created_by::text,''), created_at, updated_at`
+const firmwareRolloutColumns = `id, version, status, canary_device_id::text, COALESCE(created_by::text,''), created_at, updated_at, current_batch, max_concurrent_flashes, pause_reason, started_at, completed_at`
 
 func normalizeFirmwareRolloutRequest(in firmwareRolloutRequest) (firmwareRolloutRequest, error) {
 	in.Version = strings.TrimSpace(in.Version)
@@ -153,9 +158,9 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 
 	var out firmwareRollout
 	err = tx.QueryRow(r.Context(), `INSERT INTO firmware_rollouts(version,status,canary_device_id,created_by)
-		VALUES($1,'draft',$2,$3) RETURNING id,version,status,canary_device_id::text,COALESCE(created_by::text,''),created_at,updated_at`,
+		VALUES($1,'draft',$2,$3) RETURNING id,version,status,canary_device_id::text,COALESCE(created_by::text,''),created_at,updated_at,current_batch,max_concurrent_flashes,pause_reason,started_at,completed_at`,
 		in.Version, in.CanaryDeviceID, user.ID).Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID,
-		&out.CreatedBy, &out.CreatedAt, &out.UpdatedAt)
+		&out.CreatedBy, &out.CreatedAt, &out.UpdatedAt, &out.CurrentBatch, &out.MaxConcurrentFlashes, &out.PauseReason, &out.StartedAt, &out.CompletedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create the rollout draft")
 		return
