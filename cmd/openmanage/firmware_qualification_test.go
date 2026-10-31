@@ -14,7 +14,7 @@ func validFirmwareHardwareQualificationRequest() firmwareHardwareQualificationRe
 	return firmwareHardwareQualificationRequest{
 		BoardName: "generic", Model: "OpenWrt x86",
 		SourceRelease: "24.10.4", TargetRelease: "25.12.2",
-		TestedOn: time.Now().UTC().Format("2006-01-02"),
+		TestedOn:         time.Now().UTC().Format("2006-01-02"),
 		PhysicalHardware: true,
 		UpgradeChecks: []string{
 			"image_hash_verified", "pre_flash_backup_verified", "sysupgrade_test_passed",
@@ -49,12 +49,12 @@ func TestNormalizeFirmwareHardwareQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if firmwareHardwareQualificationQualifies(firmwareHardwareQualification{
-		PhysicalHardware: virtualRecord.PhysicalHardware,
-		UpgradeOutcome: virtualRecord.UpgradeOutcome,
-		RecoveryMethod: virtualRecord.RecoveryMethod,
-		RecoveryOutcome: virtualRecord.RecoveryOutcome,
-		TestedOn: virtualRecord.TestedOn,
-		UpgradeChecks: virtualRecord.UpgradeChecks,
+		PhysicalHardware:  virtualRecord.PhysicalHardware,
+		UpgradeOutcome:    virtualRecord.UpgradeOutcome,
+		RecoveryMethod:    virtualRecord.RecoveryMethod,
+		RecoveryOutcome:   virtualRecord.RecoveryOutcome,
+		TestedOn:          virtualRecord.TestedOn,
+		UpgradeChecks:     virtualRecord.UpgradeChecks,
 		EvidenceReference: virtualRecord.EvidenceReference,
 	}) {
 		t.Fatal("VM/container evidence must never qualify")
@@ -66,9 +66,13 @@ func TestNormalizeFirmwareHardwareQualification(t *testing.T) {
 	}{
 		{"same release", func(q *firmwareHardwareQualificationRequest) { q.TargetRelease = q.SourceRelease }},
 		{"snapshot target", func(q *firmwareHardwareQualificationRequest) { q.TargetRelease = "SNAPSHOT" }},
-		{"future date", func(q *firmwareHardwareQualificationRequest) { q.TestedOn = time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02") }},
+		{"future date", func(q *firmwareHardwareQualificationRequest) {
+			q.TestedOn = time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+		}},
 		{"unknown check", func(q *firmwareHardwareQualificationRequest) { q.UpgradeChecks = append(q.UpgradeChecks, "run_shell") }},
-		{"duplicate check", func(q *firmwareHardwareQualificationRequest) { q.UpgradeChecks = append(q.UpgradeChecks, q.UpgradeChecks[0]) }},
+		{"duplicate check", func(q *firmwareHardwareQualificationRequest) {
+			q.UpgradeChecks = append(q.UpgradeChecks, q.UpgradeChecks[0])
+		}},
 		{"unknown recovery method", func(q *firmwareHardwareQualificationRequest) { q.RecoveryMethod = "ssh" }},
 		{"missing evidence for success", func(q *firmwareHardwareQualificationRequest) { q.EvidenceReference = "" }},
 	}
