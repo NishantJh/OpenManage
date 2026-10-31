@@ -15,55 +15,23 @@ func TestNormalizeFirmwareRolloutRequest(t *testing.T) {
 	canary := "550e8400-e29b-41d4-a716-446655440000"
 	first := "550e8400-e29b-41d4-a716-446655440001"
 	second := "550e8400-e29b-41d4-a716-446655440002"
-	for name, tc := range map[string]struct {
+	cases := map[string]struct {
 		in      firmwareRolloutRequest
 		wantErr bool
 	}{
-		"valid": {
-			firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {second}}},
-			false,
-		},
-		"canary only": {
-			firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary},
-			false,
-		},
-		"snapshot": {
-			firmwareRolloutRequest{Version: "SNAPSHOT", CanaryDeviceID: canary},
-			true,
-		},
-		"release candidate": {
-			firmwareRolloutRequest{Version: "25.12.2-rc1", CanaryDeviceID: canary},
-			true,
-		},
-		"invalid canary": {
-			firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: "bad"},
-			true,
-		},
-		"duplicate across batches": {
-			firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {first}}},
-			true,
-		},
-		"canary duplicated in batch": {
-			firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{canary}}},
-			true,
-		},
-		"empty batch": {
-			firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{}}},
-			true,
-		},
-		"oversized batch": {
-			firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first, second, "550e8400-e29b-41d4-a716-446655440003", "550e8400-e29b-41d4-a716-446655440004", "550e8400-e29b-41d4-a716-446655440005", "550e8400-e29b-41d4-a716-446655440006"}}},
-			true,
-		},
-		"too many batches": {
-			firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {second}, {"550e8400-e29b-41d4-a716-446655440003"}, {"550e8400-e29b-41d4-a716-446655440004"}, {"550e8400-e29b-41d4-a716-446655440005"}}},
-			true,
-		},
-		"too many devices": {
-			firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first, second, "550e8400-e29b-41d4-a716-446655440003", "550e8400-e29b-41d4-a716-446655440004", "550e8400-e29b-41d4-a716-446655440005"}, {"550e8400-e29b-41d4-a716-446655440006", "550e8400-e29b-41d4-a716-446655440007", "550e8400-e29b-41d4-a716-446655440008", "550e8400-e29b-41d4-a716-446655440009", "550e8400-e29b-41d4-a716-446655440010"}, {"550e8400-e29b-41d4-a716-446655440011", "550e8400-e29b-41d4-a716-446655440012", "550e8400-e29b-41d4-a716-446655440013", "550e8400-e29b-41d4-a716-446655440014"}}},
-			true,
-		},
-	} {
+		"valid": {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {second}}}, false},
+		"canary only": {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary}, false},
+		"snapshot": {firmwareRolloutRequest{Version: "SNAPSHOT", CanaryDeviceID: canary}, true},
+		"release candidate": {firmwareRolloutRequest{Version: "25.12.2-rc1", CanaryDeviceID: canary}, true},
+		"invalid canary": {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: "bad"}, true},
+		"duplicate across batches": {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {first}}}, true},
+		"canary duplicated in batch": {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{canary}}}, true},
+		"empty batch": {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{}}}, true},
+		"oversized batch": {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first, second, "550e8400-e29b-41d4-a716-446655440003", "550e8400-e29b-41d4-a716-446655440004", "550e8400-e29b-41d4-a716-446655440005", "550e8400-e29b-41d4-a716-446655440006"}}}, true},
+		"too many batches": {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {second}, {"550e8400-e29b-41d4-a716-446655440003"}, {"550e8400-e29b-41d4-a716-446655440004"}, {"550e8400-e29b-41d4-a716-446655440005"}}}, true},
+		"too many devices": {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first, second, "550e8400-e29b-41d4-a716-446655440003", "550e8400-e29b-41d4-a716-446655440004", "550e8400-e29b-41d4-a716-446655440005"}, {"550e8400-e29b-41d4-a716-446655440006", "550e8400-e29b-41d4-a716-446655440007", "550e8400-e29b-41d4-a716-446655440008", "550e8400-e29b-41d4-a716-446655440009", "550e8400-e29b-41d4-a716-446655440010"}, {"550e8400-e29b-41d4-a716-446655440011", "550e8400-e29b-41d4-a716-446655440012", "550e8400-e29b-41d4-a716-446655440013", "550e8400-e29b-41d4-a716-446655440014"}}}, true},
+	}
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, err := normalizeFirmwareRolloutRequest(tc.in)
 			if (err != nil) != tc.wantErr {
@@ -75,7 +43,7 @@ func TestNormalizeFirmwareRolloutRequest(t *testing.T) {
 
 func TestCreateFirmwareRolloutRequiresAdminAndValidBody(t *testing.T) {
 	id := "550e8400-e29b-41d4-a716-446655440000"
-	for _, tc := range []struct {
+	cases := []struct {
 		role string
 		body string
 		want int
@@ -85,7 +53,8 @@ func TestCreateFirmwareRolloutRequiresAdminAndValidBody(t *testing.T) {
 		{"admin", `{"version":"SNAPSHOT","canary_device_id":"` + id + `"}`, http.StatusBadRequest},
 		{"admin", `{"version":"25.12.2","canary_device_id":"bad"}`, http.StatusBadRequest},
 		{"", `{}`, http.StatusUnauthorized},
-	} {
+	}
+	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodPost, "/api/firmware/rollouts", strings.NewReader(tc.body))
 		if tc.role != "" {
 			req = req.WithContext(context.WithValue(req.Context(), userContextKey, authUser{ID: "u", Role: tc.role}))
@@ -103,18 +72,13 @@ func TestFirmwareRolloutDraftSnapshotsInventoryAndPackageRevision(t *testing.T) 
 	a := &app{db: db}
 	ctx := context.Background()
 	deviceID, userID := seedDeviceAndUser(t, db)
-	manifest := firmwareManifest{
-		Release: "24.10.4", Revision: "r1", Target: "x86/64", Arch: "x86_64",
-		BoardName: "generic", Model: "OpenWrt x86", PackageManager: "opkg",
-		Packages: []firmwarePackage{}, UserInstalled: []string{}, RemovedDefaults: []string{},
-	}
+	manifest := firmwareManifest{Release: "24.10.4", Revision: "r1", Target: "x86/64", Arch: "x86_64", BoardName: "generic", Model: "OpenWrt x86", PackageManager: "opkg", Packages: []firmwarePackage{}, UserInstalled: []string{}, RemovedDefaults: []string{}}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var inventoryID int64
-	if err = db.QueryRow(ctx, `INSERT INTO firmware_inventories(device_id,digest,manifest)
-		VALUES($1,$2,$3) RETURNING id`, deviceID, strings.Repeat("a", 64), encoded).Scan(&inventoryID); err != nil {
+	if err = db.QueryRow(ctx, `INSERT INTO firmware_inventories(device_id,digest,manifest) VALUES($1,$2,$3) RETURNING id`, deviceID, strings.Repeat("a", 64), encoded).Scan(&inventoryID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(ctx, `INSERT INTO device_package_sets(device_id) VALUES($1)`, deviceID); err != nil {
@@ -124,8 +88,7 @@ func TestFirmwareRolloutDraftSnapshotsInventoryAndPackageRevision(t *testing.T) 
 		SELECT id,1,ARRAY['curl']::text[],'{}'::text[],$2 FROM device_package_sets WHERE device_id=$1`, deviceID, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(ctx, `UPDATE device_package_sets SET current_revision_id=(SELECT id FROM device_package_set_revisions
-		WHERE package_set_id=device_package_sets.id AND revision=1) WHERE device_id=$1`, deviceID); err != nil {
+	if _, err = db.Exec(ctx, `UPDATE device_package_sets SET current_revision_id=(SELECT id FROM device_package_set_revisions WHERE package_set_id=device_package_sets.id AND revision=1) WHERE device_id=$1`, deviceID); err != nil {
 		t.Fatal(err)
 	}
 	body := []byte(`{"version":"25.12.2","canary_device_id":"` + deviceID + `"}`)
@@ -182,7 +145,7 @@ func TestFirmwareRolloutDraftRequiresStoredInventory(t *testing.T) {
 	db := newEnrollmentTestDB(t)
 	a := &app{db: db}
 	deviceID, userID := seedDeviceAndUser(t, db)
-	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"version":"25.12.2","canary_device_id":"` + deviceID + `"}`))
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"version":"25.12.2","canary_device_id":"`+deviceID+`"}`))
 	req = req.WithContext(context.WithValue(req.Context(), userContextKey, authUser{ID: userID, Role: "admin"}))
 	rec := httptest.NewRecorder()
 	a.createFirmwareRollout(rec, req)
