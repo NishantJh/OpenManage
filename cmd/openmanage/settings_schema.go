@@ -21,7 +21,6 @@ const (
 	kindInt      settingKind = "int"
 	kindHostname settingKind = "hostname"
 	kindIPv4     settingKind = "ipv4"
-	kindCIDR     settingKind = "cidr"
 	kindList     settingKind = "list"
 	kindSecret   settingKind = "secret"
 )
@@ -127,15 +126,6 @@ func ipv4Field(key, label, config, section, option string, risk riskClass, help 
 		ip := net.ParseIP(v)
 		if ip == nil || ip.To4() == nil {
 			return label + " must be an IPv4 address"
-		}
-		return ""
-	})
-}
-
-func cidrField(key, label, config, section, option string, risk riskClass, help string) settingField {
-	return field(key, label, config, section, option, kindCIDR, risk, help, func(v string) string {
-		if _, _, err := net.ParseCIDR(v); err != nil {
-			return label + " must be an IPv4 network in CIDR form, e.g. 192.168.1.0/24"
 		}
 		return ""
 	})
