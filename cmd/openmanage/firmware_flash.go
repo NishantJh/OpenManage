@@ -214,6 +214,10 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 	var deviceName string
 	err = tx.QueryRow(r.Context(), `SELECT name FROM devices WHERE id=$1 FOR NO KEY UPDATE`, deviceID).Scan(&deviceName)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if rolloutID > 0 {
+			_ = tx.Rollback(r.Context())
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "campaign device was removed before flash", user.ID)
+		}
 		writeError(w, http.StatusNotFound, "device not found")
 		return
 	}
@@ -239,12 +243,26 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if status != "ready" || expired {
+		if rolloutID > 0 && expired {
+			_ = tx.Rollback(r.Context())
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "the staged image expired before flash confirmation", user.ID)
+		}
 		writeError(w, http.StatusConflict, "this upgrade is not ready, or its staged image has expired; prepare it again")
 		return
 	}
 	var plan firmwarePlan
 	if json.Unmarshal(planJSON, &plan) != nil {
+		if rolloutID > 0 {
+			_ = tx.Rollback(r.Context())
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "the staged job plan could not be decoded", user.ID)
+		}
 		writeError(w, http.StatusInternalServerError, "could not read the upgrade plan")
+		return
+	}
+	if rolloutID > 0 && len(plan.Warnings) > 0 {
+		_ = tx.Rollback(r.Context())
+		_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "campaign plans with warnings cannot be flashed", user.ID)
+		writeError(w, http.StatusConflict, "campaign plans with warnings cannot be flashed")
 		return
 	}
 	if len(plan.Warnings) > 0 && !in.AcknowledgeWarnings {
@@ -699,6 +717,10 @@ func (a *app) acknowledgeFirmwareUpgrade(w http.ResponseWriter, r *http.Request)
 		WHERE upgrade_id=$1 AND device_id_snapshot=$2`, id, deviceID).Scan(&rolloutID)
 	if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, "could not inspect rollout membership")
+		return
+	}
+	if rolloutID > 0 && user.Role != "admin" {
+		writeError(w, http.StatusForbidden, "only an administrator can acknowledge a campaign result")
 		return
 	}
 	tx, err := a.db.Begin(r.Context())
