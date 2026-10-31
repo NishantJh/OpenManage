@@ -24,6 +24,7 @@ func TestWriteHandlersRejectBadBodiesBeforeDatabase(t *testing.T) {
 		{name: "login", handler: (&app{}).login, method: http.MethodPost, path: "/api/auth/login", valid: `{"username":"admin","password":"pw"}`, limit: loginBodyLimit},
 		{name: "create device", handler: (&app{}).createDevice, method: http.MethodPost, path: "/api/devices", valid: `{"name":"router","address":"192.168.1.1"}`, limit: deviceBodyLimit},
 		{name: "monitoring settings", handler: (&app{}).updateMonitoringSettings, method: http.MethodPut, path: "/api/monitoring/settings", valid: `{"enabled":false,"interval_seconds":300}`, limit: monitoringBodyLimit},
+		{name: "settings batch", handler: (&app{}).previewConfigChangeBatch, method: http.MethodPost, path: "/api/devices/550e8400-e29b-41d4-a716-446655440000/config-change-batches", valid: `{"base_versions":{"system":"opaque"},"changes":[{"setting":"system.hostname","value":"router"}]}`, limit: configBatchBodyLimit},
 	}
 	for _, h := range handlers {
 		bodies := map[string]string{
@@ -36,6 +37,7 @@ func TestWriteHandlersRejectBadBodiesBeforeDatabase(t *testing.T) {
 		for label, body := range bodies {
 			t.Run(h.name+"/"+label, func(t *testing.T) {
 				req := httptest.NewRequest(h.method, h.path, strings.NewReader(body)).WithContext(admin)
+				req.SetPathValue("id", "550e8400-e29b-41d4-a716-446655440000")
 				rec := httptest.NewRecorder()
 				h.handler.ServeHTTP(rec, req)
 				if rec.Code != http.StatusBadRequest {

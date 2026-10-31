@@ -493,6 +493,33 @@ docker exec "$router" sh -c 'p="$(cat /tmp/ip-shim-path)"; if [ -e "$p.real" ]; 
 # Controlled configuration change: preview, apply with rpcd rollback armed, verify
 # over a fresh connection, confirm.
 router_hostname() { docker exec "$router" uci get system.@system[0].hostname; }
+router_ssid() { docker exec "$router" uci get wireless.@wifi-iface[0].ssid; }
+batch_wifi_key="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+docker exec -i "$router" sh -c 'cat > /etc/config/wireless' <<'WIFI'
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option band '2g'
+	option channel '1'
+
+config wifi-iface
+	option device 'radio0'
+	option mode 'ap'
+	option network 'lan'
+	option ssid 'Home'
+	option encryption 'psk2'
+	option key '$batch_wifi_key'
+WIFI
+docker exec "$router" uci commit wireless
+batch_versions() { json 'print(json.dumps({name:pkg["version"] for name,pkg in d["packages"].items()}))' < "$body"; }
+make_batch_body() { # complete version map, optional hostname, target SSID
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+changes = [{"setting": "wireless.@wifi-iface[0].ssid", "value": sys.argv[3], "unlock_existing": True}]
+if sys.argv[2]:
+    changes.insert(0, {"setting": "system.hostname", "value": sys.argv[2]})
+print(json.dumps({"base_versions": json.loads(sys.argv[1]), "changes": changes, "acknowledge_disruption": True}))
+PY
+}
 api GET /api/config-settings
 json 'assert any(x["key"]=="system.hostname" for x in d), d' < "$body"
 api POST "/api/devices/$device_id/config-changes" '{"setting":"system.hostname","value":"bad name"}'
@@ -556,8 +583,80 @@ json 'assert d["status"]=="rolled_back" and "previous configuration was restored
 sleep 1
 [[ "$(router_hostname)" == lab-outside ]] || fail "a failed verification did not roll the device back"
 echo "PASS: a change that fails verification is rolled back"
-applied_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action IN ('device.config_change.applied','device.config_change.failed','device.config_change.rolled_back')")"
-[[ "$applied_audit" == 4 ]] || fail "config change audit events: $applied_audit (expected 4)"
+
+# Batch settings: one preview snapshots every package token, explicitly unlocks
+# the existing SSID, and applies hostname + wireless SSID in one rpcd apply.
+api GET "/api/devices/$device_id/settings"
+versions="$(batch_versions)"
+api POST "/api/devices/$device_id/config-change-batches" "$(make_batch_body "$versions" lab-batch 'Lab Guest')"
+[[ "$status" == 201 ]] || { cat "$body" >&2; fail "settings batch preview returned HTTP $status"; }
+batch_id="$(json 'assert d["status"]=="previewed" and d["disruption_acknowledged"], d; c={x["setting"]:x for x in d["changes"]}; assert c["wireless.@wifi-iface[0].ssid"]["old_value"]=="Home" and c["wireless.@wifi-iface[0].ssid"]["unlock_existing"], c; print(d["id"])' < "$body")"
+! grep -q "$batch_wifi_key" "$body" || fail "settings batch preview exposed the Wi-Fi passphrase"
+[[ "$(router_ssid)" == Home && "$(router_hostname)" == lab-outside ]] || fail "settings batch preview changed the device"
+api POST "/api/devices/$device_id/config-change-batches/$batch_id/apply"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "settings batch apply returned HTTP $status"; }
+json 'assert d["status"]=="applied" and "fresh connection" in d["detail"], d' < "$body"
+[[ "$(router_ssid)" == "Lab Guest" && "$(router_hostname)" == lab-batch ]] || fail "settings batch values were not applied together"
+api POST "/api/devices/$device_id/config-change-batches/$batch_id/apply"
+[[ "$status" == 409 ]] || fail "a settings batch preview was applied twice (HTTP $status)"
+batch_secrets="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM config_changes WHERE batch_changes::text LIKE '%$batch_wifi_key%'")"
+[[ "$batch_secrets" == 0 ]] || fail "settings batch persisted a Wi-Fi passphrase"
+echo "PASS: a multi-setting UCI batch unlocks an existing SSID explicitly, applies once, verifies, and does not persist its passphrase"
+
+# Editing after page load makes preview fail; editing after preview makes apply fail.
+api GET "/api/devices/$device_id/settings"
+versions="$(batch_versions)"
+docker exec "$router" sh -c "uci set wireless.@wifi-iface[0].ssid=lab-luci-page && uci commit wireless"
+api POST "/api/devices/$device_id/config-change-batches" "$(make_batch_body "$versions" '' 'Lab stale page')"
+[[ "$status" == 409 ]] || fail "a batch preview from a stale settings page returned HTTP $status"
+[[ "$(router_ssid)" == lab-luci-page ]] || fail "stale-page preview changed the router"
+api GET "/api/devices/$device_id/settings"
+versions="$(batch_versions)"
+api POST "/api/devices/$device_id/config-change-batches" "$(make_batch_body "$versions" lab-not-applied 'Lab stale apply')"
+[[ "$status" == 201 ]] || { cat "$body" >&2; fail "fresh settings batch preview returned HTTP $status"; }
+stale_batch_id="$(json 'print(d["id"])' < "$body")"
+docker exec "$router" sh -c "uci set wireless.@wifi-iface[0].ssid=lab-luci-apply && uci commit wireless"
+api POST "/api/devices/$device_id/config-change-batches/$stale_batch_id/apply"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "stale batch apply returned HTTP $status"; }
+json 'assert d["status"]=="failed" and "changed after preview" in d["detail"], d' < "$body"
+[[ "$(router_ssid)" == lab-luci-apply && "$(router_hostname)" == lab-batch ]] || fail "stale batch apply changed the router"
+echo "PASS: settings batches reject stale page tokens and refuse to apply if UCI changes after preview"
+
+# A lab-only `uci export` shim corrupts read-back after UCI apply. The real rpcd
+# rollback must restore both old values when any member of a batch fails verification.
+api GET "/api/devices/$device_id/settings"
+versions="$(batch_versions)"
+api POST "/api/devices/$device_id/config-change-batches" "$(make_batch_body "$versions" lab-should-rollback 'Lab Rollback')"
+[[ "$status" == 201 ]] || { cat "$body" >&2; fail "rollback batch preview returned HTTP $status"; }
+rollback_batch_id="$(json 'print(d["id"])' < "$body")"
+uci_bin="$(docker exec "$router" sh -c 'command -v uci')"
+docker exec -i "$router" sh -c 'mv /bin/ubus /bin/ubus.real && cat > /bin/ubus && chmod +x /bin/ubus' <<'UBUS'
+#!/bin/sh
+if [ "$1 $2 $3" = "call uci apply" ]; then
+  /bin/ubus.real "$@"
+  result=$?
+  [ "$result" = 0 ] && touch /tmp/om-batch-applied
+  exit "$result"
+fi
+exec /bin/ubus.real "$@"
+UBUS
+docker exec -i "$router" sh -c "mv '$uci_bin' '$uci_bin.real' && cat > '$uci_bin' && chmod +x '$uci_bin'" <<'UCI'
+#!/bin/sh
+if [ "$1" = export ] && [ -f /tmp/om-batch-applied ]; then
+  "$0.real" "$@" | sed "s/option ssid 'Lab Rollback'/option ssid 'tampered'/"
+else
+  exec "$0.real" "$@"
+fi
+UCI
+api POST "/api/devices/$device_id/config-change-batches/$rollback_batch_id/apply"
+docker exec "$router" sh -c "mv /bin/ubus.real /bin/ubus && mv '$uci_bin.real' '$uci_bin' && rm -f /tmp/om-batch-applied"
+[[ "$status" == 200 ]] || { cat "$body" >&2; fail "rollback batch apply returned HTTP $status"; }
+json 'assert d["status"]=="rolled_back" and "previous configuration was restored" in d["detail"], d' < "$body"
+[[ "$(router_ssid)" == lab-luci-apply && "$(router_hostname)" == lab-batch ]] || fail "failed batch verification did not restore every old UCI value"
+echo "PASS: a failed batch read-back rolls back all selected UCI settings"
+
+applied_audit="$(compose exec -T db psql -U openmanage -d openmanage -tAc "SELECT count(*) FROM audit_events WHERE action IN ('device.config_change.applied','device.config_change.failed','device.config_change.rolled_back','device.config_batch.applied','device.config_batch.failed','device.config_batch.rolled_back')")"
+[[ "$applied_audit" == 7 ]] || fail "config change audit events: $applied_audit (expected 7)"
 
 # A spare address in the same private subnet has no SSH listener.
 unreachable_ip="$(python3 -c 'import ipaddress,sys; n=ipaddress.ip_interface(sys.argv[1]+"/16").network; print(n.broadcast_address-2)' "$router_ip")"

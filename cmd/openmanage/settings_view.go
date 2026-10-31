@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -115,14 +116,7 @@ func groupSettings(cfg uciConfig, key []byte) map[string]settingsPackage {
 	pkgs := map[string]settingsPackage{}
 	for pkg, sections := range types {
 		sp := settingsPackage{}
-		var lines []string
-		for section, opts := range options[pkg] {
-			for opt, val := range opts {
-				lines = append(lines, section+"."+opt+"="+val)
-			}
-		}
-		sort.Strings(lines)
-		sp.Version = keyedDigest(key, "openmanage:settings-version:v1", strings.Join(lines, "\n"))
+		sp.Version = packageSettingsVersion(cfg, pkg, key)
 		names := make([]string, 0, len(sections))
 		for name := range sections {
 			names = append(names, name)
@@ -150,4 +144,31 @@ func groupSettings(cfg uciConfig, key []byte) map[string]settingsPackage {
 		pkgs[pkg] = sp
 	}
 	return pkgs
+}
+
+// packageSettingsVersion covers every exported path in a UCI package, including
+// section types and empty sections. Length-prefixing prevents values containing
+// delimiters or newlines from making distinct configurations hash identically.
+func packageSettingsVersion(cfg uciConfig, pkg string, key []byte) string {
+	prefix := pkg + "."
+	paths := make([]string, 0)
+	for path := range cfg {
+		if strings.HasPrefix(path, prefix) {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	var canonical strings.Builder
+	canonical.WriteString(strconv.Itoa(len(paths)))
+	canonical.WriteByte(':')
+	for _, path := range paths {
+		value := cfg[path]
+		canonical.WriteString(strconv.Itoa(len(path)))
+		canonical.WriteByte(':')
+		canonical.WriteString(path)
+		canonical.WriteString(strconv.Itoa(len(value)))
+		canonical.WriteByte(':')
+		canonical.WriteString(value)
+	}
+	return keyedDigest(key, "openmanage:settings-version:v2", canonical.String())
 }

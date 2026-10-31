@@ -20,6 +20,24 @@
 .settings-field small{display:block;margin-top:4px;color:#7e8595;font-size:9px;line-height:1.5}
 .settings-field output{display:block;margin-top:8px;color:#d2caff;font:11px ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere;white-space:pre-wrap}
 .settings-field output.secret-value,.settings-section dd.secret-value{color:#858b9b;font-style:italic}
+.settings-editor-control{display:grid;gap:7px;margin-top:8px}
+.settings-editor-control>small{color:#747b8b;font-size:9px}
+.settings-editor-control>small output{display:inline;color:#b9bdd0;font:inherit;overflow-wrap:anywhere}
+.settings-editor-control input,.settings-editor-control select{width:100%;min-width:0}
+.settings-field-unlock{display:flex;align-items:flex-start;gap:7px;color:#e3c58b;font-size:9px;line-height:1.5}
+.settings-field-unlock input{width:auto;margin:1px 0 0;accent-color:#b69cff}
+.settings-batch-editor{display:grid;gap:12px;margin:0 0 14px;padding:14px;border:1px solid #34394a;border-radius:9px;background:#131723}
+.settings-batch-editor>b,.settings-batch-editor>div>b{color:#d9dce6;font-size:11px}
+.settings-batch-editor p{margin:5px 0 0;color:#858b9b;font-size:10px;line-height:1.6}
+.settings-risk-ack{display:flex;align-items:flex-start;gap:8px;color:#e3c58b;font-size:10px;line-height:1.5}
+.settings-risk-ack input{margin:1px 0 0;accent-color:#b69cff}
+.settings-batch-preview{align-items:flex-start}
+.settings-batch-diff{display:grid;gap:6px;margin:10px 0}
+.settings-batch-diff>div,.settings-history-item{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;color:#bfc4d2;font-size:10px}
+.settings-batch-diff>div>b,.settings-history-item>b{min-width:120px;color:#d8d3ff}
+.settings-batch-history{margin:14px 0}
+.settings-batch-history td small{display:block;margin-top:4px;color:#888e9d}
+.settings-history-item+.settings-history-item{margin-top:5px}
 .settings-package{margin-bottom:12px}
 .settings-section{padding:10px 14px;border-top:1px solid #242936}
 .settings-section-title{display:flex;align-items:center;gap:8px;margin-bottom:5px;color:#d3d6df;font-size:10px}

@@ -118,7 +118,11 @@ const configChangeColumns = `id, device_id::text, setting, old_value, new_value,
 func scanConfigChange(row pgx.Row, c *configChangeRecord) error {
 	err := row.Scan(&c.ID, &c.DeviceID, &c.Setting, &c.OldValue, &c.NewValue, &c.Status, &c.Detail, &c.CreatedAt, &c.FinishedAt)
 	if err == nil {
-		c.Label = writableSettings[c.Setting].Label
+		if c.Setting == configBatchSetting {
+			c.Label = "Settings batch"
+		} else {
+			c.Label = writableSettings[c.Setting].Label
+		}
 		c.ExpiresAt = c.CreatedAt.Add(changePreviewTTL)
 	}
 	return err
