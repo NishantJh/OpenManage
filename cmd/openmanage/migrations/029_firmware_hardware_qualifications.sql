@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS firmware_hardware_qualifications (
     recovery_outcome TEXT NOT NULL CHECK (recovery_outcome IN ('passed','failed','not_run')),
     evidence_reference TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
-    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_by UUID REFERENCES users(id) ON DELETE RESTRICT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (source_release <> target_release)
 );
