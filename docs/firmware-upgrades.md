@@ -356,3 +356,35 @@ Write operations audit transactionally (a Section 2 rule). A job state machine i
 The Firmware page exposes the per-device desired package set. Administrators can edit official package additions, firmware-default removals, and custom package-source references. Custom sources must already be confirmed in Software sources; each entry can pin an exact registered source id/version or follow the latest confirmed source for that package name. The UI displays the current revision and the latest 50 immutable revisions. Restoring a revision creates a new revision based on the selected historical revision; it does not rewrite history.
 
 These controls change desired metadata only. Saving or restoring does not contact a device, install or remove packages, or alter an existing firmware plan. The selected revision is incorporated when a new firmware plan is prepared (Step 5b). Custom packages remain manual post-flash installs; no automatic reinstall is enabled. Operators and readonly users can inspect revision history; only administrators can edit or restore. Package-source selection is available to administrators and operators, while readonly users see recorded source references without registry details.
+
+
+
+## Step 6 — staged firmware rollout (planned; no fleet execution enabled)
+
+Step 6 builds campaign coordination around the existing single-device firmware job. It does not replace that job or weaken its checks.
+
+### 6a. Campaign drafts and immutable membership
+
+An administrator selects the target release, exactly one canary device, and ordered batch membership. Draft creation snapshots each device's identity, latest stored inventory id/digest, and desired-package-set revision. It is metadata-only: no device contact, build-server request, package operation, or flash. A draft is not executable.
+
+### 6b. Server-computed plan preview
+
+The server computes and persists each member's plan from the draft's stored inventory and desired-package-set revision, then records a digest of the complete plan. It rejects missing/stale inventory, changed device identity or desired-set revision, unsupported release paths, and any plan blocker. A preview is immutable; a changed device, inventory, desired set, or target release requires a new draft.
+
+### 6c. Physical-hardware qualification
+
+Before a campaign may flash, an administrator must record a successful single-device upgrade and recovery drill on supported physical hardware. Record board/model, source and target release, date, checks, recovery path exercised, and outcome. The qualification must match the campaign's supported hardware. VM and container tests remain useful CI evidence but never satisfy this gate.
+
+### 6d. Canary and batches
+
+The canary is the only device eligible for the first flash. Its existing firmware job must reach `done`, all verification checks must be successful, and the result must be acknowledged before the next batch is released. Warnings are not a passing gate. Subsequent batches are released in order, with a small concurrency limit (initial maximum two). Every device still requires an individual administrator flash confirmation and warning acknowledgement through the existing endpoint.
+
+Any `needs_attention`, `done_with_warnings`, timeout, unreachable device, stale plan, failed verification, audit failure, or ambiguous flash state pauses progression. No automatic retry is permitted after the flash command may have been sent. Recovery is operator-led; single-partition devices may need failsafe, reset, serial, or TFTP recovery.
+
+### 6e. UI, audit and verification
+
+The UI reports campaign, canary, batch, and per-device states and the exact reason a campaign is paused. Pause/cancel operations are audited and cannot imply that an already-sent flash was cancelled. Campaign state and device membership survive app restarts. Tests cover duplicate requests, concurrent device confirmations, stale inventory/package-set snapshots, partial failure, app restart during each state, audit failures, and enforcement of the physical-hardware gate.
+
+### Explicit non-goals
+
+No unattended fleet-wide flash, no single campaign action that silently approves all devices, no forced sysupgrade flags, no downgrade/snapshot/release skipping, no automatic package install/removal or reinstall, no retry after an ambiguous flash, and no claim of automatic rollback on single-partition hardware. The rollout controller must reuse the existing single-device prepare/flash/verify/acknowledge flow.
