@@ -58,7 +58,7 @@ try {
   await check(pages[pages.length - 2]);
   await page.goto(baseUrl + "/monitoring"); // deep link / reload must hit the SPA fallback
   await page.locator("aside nav a.active", { hasText: "Monitoring" }).waitFor();
-  await check(pages[4]);
+  await check(pages.find(p => p.path === "/monitoring"));
   // Phone width hides the sidebar; the page switcher must still reach every page.
   await page.setViewportSize({ width: 390, height: 800 });
   assert.ok(!(await page.locator("aside.sidebar").isVisible()), "sidebar hidden on mobile");
