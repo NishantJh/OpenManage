@@ -78,7 +78,7 @@ export default function FirmwareRollouts({devices,role,onChanged}:{devices:Devic
   useEffect(()=>{
     const gap=qualification?.missing[gapIndex];
     if(!gap)return;
-    setQualificationDraft(d=>({...d,board_name:gap.board_name,model:gap.model,source_release:gap.source_release,target_release:gap.target_release}));
+    setQualificationDraft(d=>({...d,board_name:gap.board_name,model:gap.model,source_release:gap.source_release,target_release:gap.target_release,physical_hardware:false,upgrade_checks:[],upgrade_outcome:"passed",recovery_method:"failsafe",recovery_outcome:"passed",evidence_reference:"",notes:""}));
   },[qualification?.missing,gapIndex]);
 
   function updateDraft<K extends keyof QualificationDraft>(key:K,value:QualificationDraft[K]){setQualificationDraft(d=>({...d,[key]:value}))}
