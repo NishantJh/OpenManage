@@ -651,11 +651,15 @@ func (a *app) pauseFirmwareRolloutForUpgrade(ctx context.Context, upgradeID int6
 	}
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
-		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus)
 		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollouts SET status='paused',pause_reason=$2,updated_at=NOW() WHERE id=$1 AND status NOT IN ('complete','cancelled')`, rolloutID, reason)
+		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus)
 		return
 	}
 	defer tx.Rollback(ctx)
+	var lockedID int64
+	if err = tx.QueryRow(ctx, `SELECT id FROM firmware_rollouts WHERE id=$1 FOR UPDATE`, rolloutID).Scan(&lockedID); err != nil {
+		return
+	}
 	if _, err = tx.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus); err != nil {
 		return
 	}
@@ -666,14 +670,14 @@ func (a *app) pauseFirmwareRolloutForUpgrade(ctx context.Context, upgradeID int6
 		"upgrade_id": upgradeID, "member_status": memberStatus, "reason": reason,
 	}); err != nil {
 		_ = tx.Rollback(ctx)
-		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus)
 		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollouts SET status='paused',pause_reason=$2,updated_at=NOW() WHERE id=$1 AND status NOT IN ('complete','cancelled')`, rolloutID, "audit failure: "+reason)
+		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus)
 		return
 	}
 	if err = tx.Commit(ctx); err != nil {
 		_ = tx.Rollback(ctx)
-		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus)
 		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollouts SET status='paused',pause_reason=$2,updated_at=NOW() WHERE id=$1 AND status NOT IN ('complete','cancelled')`, rolloutID, reason)
+		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus)
 	}
 }
 
@@ -689,6 +693,10 @@ func (a *app) setFirmwareRolloutDeviceStatus(ctx context.Context, upgradeID int6
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var lockedID int64
+	if err = tx.QueryRow(ctx, `SELECT id FROM firmware_rollouts WHERE id=$1 FOR UPDATE`, rolloutID).Scan(&lockedID); err != nil {
+		return err
+	}
 	if _, err = tx.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus); err != nil {
 		return err
 	}
