@@ -261,11 +261,11 @@ type releaseInfo struct {
 }
 
 type releaseVersion struct {
-	parts    [3]int
+	parts            [3]int
 	rc               int // release-candidate number
 	releaseCandidate bool
 	snapshot         bool
-	branchSn bool // "24.10-SNAPSHOT"
+	branchSn         bool // "24.10-SNAPSHOT"
 }
 
 func parseReleaseVersion(v string) (releaseVersion, bool) {
