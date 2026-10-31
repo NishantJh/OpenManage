@@ -48,13 +48,13 @@ type firmwareRolloutMember struct {
 }
 
 type firmwareRollout struct {
-	ID             int64                  `json:"id"`
-	Version        string                 `json:"version"`
-	Status         string                 `json:"status"`
-	CanaryDeviceID string                 `json:"canary_device_id"`
-	CreatedBy      string                 `json:"created_by"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
+	ID             int64                   `json:"id"`
+	Version        string                  `json:"version"`
+	Status         string                  `json:"status"`
+	CanaryDeviceID string                  `json:"canary_device_id"`
+	CreatedBy      string                  `json:"created_by"`
+	CreatedAt      time.Time               `json:"created_at"`
+	UpdatedAt      time.Time               `json:"updated_at"`
 	Devices        []firmwareRolloutMember `json:"devices"`
 }
 
