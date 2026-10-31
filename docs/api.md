@@ -43,9 +43,9 @@ All routes are under `/api`. Every route except `GET /api/healthz` and `POST /ap
 - `GET /api/devices/{id}/config-snapshots/{snapshot}/changes` — lists UCI paths added, removed or changed since the previous snapshot. Values of secret-looking options (keys, passwords, secrets, tokens) are redacted, and the raw configuration is never returned. Admin.
 - `POST /api/devices/{id}/config-snapshots/{snapshot}/acknowledge` — marks drift up to and including this snapshot as reviewed, so the device no longer reports `config_drift`. Admin.
 
-## Read-only device settings
+## Per-device settings
 
-- `GET /api/config-schema` — returns the LuCI-like settings menu and curated field metadata used by the device settings view. Any signed-in role.
+- `GET /api/config-schema` — returns the LuCI-like settings menu and curated field metadata used by the device settings view. The `editable` flag is true only for administrators and fields allowed by the current controlled-change policy. Any signed-in role.
 - `GET /api/devices/{id}/settings` — reads the live UCI export from an enrolled device over its pinned SSH connection and returns package/section/option data. Values of secret-looking options are omitted and marked `secret`; raw export text is never returned or stored by this endpoint. Each package includes a keyed HMAC `version` token for stale-view detection. Any signed-in role. The request contacts the selected device but makes no configuration changes.
 
 ## Controlled changes
@@ -54,6 +54,13 @@ All routes are under `/api`. Every route except `GET /api/healthz` and `POST /ap
 - `POST /api/devices/{id}/config-changes` — previews a change from JSON `setting` and `value`. Reads the current value and changes nothing. A preview is valid for 10 minutes. Admin.
 - `POST /api/devices/{id}/config-changes/{change}/apply` — applies a preview through rpcd with `uci apply` rollback armed, verifies the new value over a fresh SSH connection, then confirms. The result's `status` is `applied`, `rolled_back` (verification failed; the old value is restored) or `failed` (nothing was applied, for example because the value changed since the preview or another apply is pending). Admin.
 - `GET /api/devices/{id}/config-changes` — the last 50 changes for a device. Admin.
+- `POST /api/devices/{id}/config-change-batches` — previews 1–12 curated non-secret settings across at most four UCI sections. The JSON body contains `base_versions` (the complete package-to-version map from the loaded settings response), `changes` (unique `{setting,value,unlock_existing?}` objects), and `acknowledge_disruption`. Existing SSIDs require `unlock_existing: true` for that field; this is recorded in audit metadata. The server rejects a stale page, unavailable setting, invalid value, secret/management field, or a disruptive change without explicit acknowledgement. Preview is metadata-only on the device and expires after 10 minutes.
+- `POST /api/devices/{id}/config-change-batches/{change}/apply` — takes an encrypted baseline configuration snapshot, stages every UCI value in one rpcd session, applies once with the 60-second rollback armed, verifies all changed values over a fresh SSH connection, then confirms. A mismatch or reconnect/confirmation failure triggers rollback; an ambiguous outcome is not automatically retried. Admin.
+- `GET /api/devices/{id}/config-change-batches` — latest 50 batch previews and outcomes, including only curated non-secret before/after values. Admin.
+
+Passphrases and other secret fields are not writable through batches because change history and audit storage are not yet encrypted for secret values. Management-access fields and raw UCI edits also remain locked. The batch columns are additive, so older app versions ignore them; downgrading does not delete preview rows, though an older UI will show batch entries without their item details and cannot apply them. Dropping the new columns during a manual schema rollback would delete batch details and previews.
+
+The disposable OpenWrt container lab can verify UCI batching and rpcd rollback behavior, but it has no radio; it does not qualify real Wi-Fi client reconnection or physical AP behavior. Keep disruptive edits explicitly acknowledged and treat representative-device qualification as an operational prerequisite before broad rollout.
 
 ## Device backups and restore
 

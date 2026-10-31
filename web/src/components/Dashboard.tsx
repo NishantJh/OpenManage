@@ -74,7 +74,7 @@ export default function Dashboard({username,role,onLogout}:{username:string;role
  {page==="monitoring"&&monitorMessage&&<div className="notice">{monitorMessage}<button onClick={()=>setMonitorMessage("")}>Dismiss</button></div>}
  {page==="monitoring"&&<MonitoringHistory monitorHistory={monitorHistory} onRefresh={()=>void loadMonitoring()}/>}
   {page==="devices"&&<DeviceTable devices={devices} filtered={filtered} loading={loading} query={query} role={role} healthBusy={healthBusy} onHealthCheck={d=>void runHealthCheck(d)} onEnroll={d=>{if(d.has_key){openEnrollment(d);return}setNotice("");setWizardDevice(d);setShowWizard(true)}} onRemove={d=>void remove(d)} onAdd={()=>{setWizardDevice(null);setShowWizard(true)}} onConfig={d=>{setNotice("");setConfigDevice(d)}}/>}
-  {page==="settings"&&<DeviceSettings devices={devices}/>}
+  {page==="settings"&&<DeviceSettings devices={devices} role={role}/>}
  {page==="access"&&role==="admin"&&<UsersSection currentUsername={username} onChanged={()=>void loadAudit()}/>}
  {page==="configuration"&&role==="admin"&&<WifiSection devices={devices} onChanged={()=>void loadAudit()}/>}
  {page==="floorplan"&&<FloorPlan devices={devices} role={role as Role} onChanged={()=>void loadAudit()}/>}

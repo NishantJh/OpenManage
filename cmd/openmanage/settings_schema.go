@@ -38,18 +38,20 @@ const (
 )
 
 type settingField struct {
-	Key     string      `json:"key"`
-	Label   string      `json:"label"`
-	Kind    settingKind `json:"kind"`
-	Options []string    `json:"options,omitempty"`
-	Min     *int        `json:"min,omitempty"`
-	Max     *int        `json:"max,omitempty"`
-	Secret  bool        `json:"secret"`
-	Risk    riskClass   `json:"risk"`
-	Help    string      `json:"help"`
-	Config  string      `json:"config"`
-	Section string      `json:"section"`
-	Option  string      `json:"option"`
+	Key            string      `json:"key"`
+	Label          string      `json:"label"`
+	Kind           settingKind `json:"kind"`
+	Editable       bool        `json:"editable"`
+	Options        []string    `json:"options,omitempty"`
+	Min            *int        `json:"min,omitempty"`
+	Max            *int        `json:"max,omitempty"`
+	Secret         bool        `json:"secret"`
+	UnlockRequired bool        `json:"unlock_required"`
+	Risk           riskClass   `json:"risk"`
+	Help           string      `json:"help"`
+	Config         string      `json:"config"`
+	Section        string      `json:"section"`
+	Option         string      `json:"option"`
 	// validate returns a problem, or "" when the value is acceptable. It is not
 	// serialized; the browser only sees the metadata above.
 	validate func(string) string
@@ -91,10 +93,34 @@ func stringField(key, label, config, section, option string, risk riskClass, hel
 	})
 }
 
+func ssidField(key, label, config, section, option string, risk riskClass, help string) settingField {
+	f := field(key, label, config, section, option, kindString, risk, help, func(v string) string {
+		if len(v) < 1 || len(v) > 32 || strings.IndexFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+			return "SSID must be 1-32 bytes and cannot contain control characters"
+		}
+		return ""
+	})
+	f.UnlockRequired = true
+	return f
+}
+
+func channelField(key, label, config, section, option string, risk riskClass, help string) settingField {
+	return field(key, label, config, section, option, kindString, risk, help, func(v string) string {
+		if v == "auto" {
+			return ""
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 233 || strconv.Itoa(n) != v {
+			return "channel must be 'auto' or a number from 1 to 233"
+		}
+		return ""
+	})
+}
+
 func intField(key, label, config, section, option string, min, max int, risk riskClass, help string) settingField {
 	f := field(key, label, config, section, option, kindInt, risk, help, func(v string) string {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < min || n > max {
+		if err != nil || n < min || n > max || strconv.Itoa(n) != v {
 			return label + " must be a whole number between " + strconv.Itoa(min) + " and " + strconv.Itoa(max)
 		}
 		return ""
@@ -186,10 +212,10 @@ var settingsPages = []settingsPage{
 	{
 		Key: "interfaces", Label: "Interfaces", Group: "Network", Packages: []string{"network"},
 		Fields: []settingField{
-			enumField("network.lan.proto", "LAN protocol", "network", "lan", "proto", riskDisruptive, "How the LAN interface gets its address.", "static", "dhcp", "pppoe"),
-			ipv4Field("network.lan.ipaddr", "LAN IPv4 address", "network", "lan", "ipaddr", riskDisruptive, "Static IPv4 address of the LAN interface."),
-			ipv4Field("network.lan.netmask", "LAN netmask", "network", "lan", "netmask", riskDisruptive, "Netmask of the LAN interface."),
-			ipv4Field("network.lan.gateway", "LAN gateway", "network", "lan", "gateway", riskDisruptive, "Default gateway for the LAN interface."),
+			enumField("network.lan.proto", "LAN protocol", "network", "lan", "proto", riskManagement, "How the LAN interface gets its address.", "static", "dhcp", "pppoe"),
+			ipv4Field("network.lan.ipaddr", "LAN IPv4 address", "network", "lan", "ipaddr", riskManagement, "Static IPv4 address of the LAN interface."),
+			ipv4Field("network.lan.netmask", "LAN netmask", "network", "lan", "netmask", riskManagement, "Netmask of the LAN interface."),
+			ipv4Field("network.lan.gateway", "LAN gateway", "network", "lan", "gateway", riskManagement, "Default gateway for the LAN interface."),
 			listField("network.lan.dns", "LAN DNS servers", "network", "lan", "dns", riskDisruptive, "One IPv4 address per line.", func(v string) string {
 				ip := net.ParseIP(v)
 				if ip == nil || ip.To4() == nil {
@@ -197,16 +223,16 @@ var settingsPages = []settingsPage{
 				}
 				return ""
 			}),
-			enumField("network.wan.proto", "WAN protocol", "network", "wan", "proto", riskDisruptive, "How the WAN interface gets its address.", "static", "dhcp", "pppoe"),
+			enumField("network.wan.proto", "WAN protocol", "network", "wan", "proto", riskManagement, "How the WAN interface gets its address.", "static", "dhcp", "pppoe"),
 		},
 	},
 	{
 		Key: "wireless", Label: "Wireless", Group: "Network", Packages: []string{"wireless"},
 		Fields: []settingField{
-			stringField("wireless.radio0.channel", "Channel", "wireless", "radio0", "channel", riskDisruptive, "Radio channel, or 'auto'."),
+			channelField("wireless.radio0.channel", "Channel", "wireless", "radio0", "channel", riskDisruptive, "Radio channel, or 'auto'."),
 			enumField("wireless.radio0.htmode", "HT mode", "wireless", "radio0", "htmode", riskDisruptive, "802.11 mode of the radio.", "HT20", "HT40", "VHT20", "VHT40", "VHT80", "HE20", "HE40", "HE80"),
 			enumField("wireless.radio0.band", "Band", "wireless", "radio0", "band", riskDisruptive, "Frequency band of the radio.", "2g", "5g", "6g"),
-			stringField("wireless.@wifi-iface[0].ssid", "SSID", "wireless", "@wifi-iface[0]", "ssid", riskDisruptive, "Network name broadcast by this interface."),
+			ssidField("wireless.@wifi-iface[0].ssid", "SSID", "wireless", "@wifi-iface[0]", "ssid", riskDisruptive, "Network name broadcast by this interface."),
 			enumField("wireless.@wifi-iface[0].encryption", "Encryption", "wireless", "@wifi-iface[0]", "encryption", riskDisruptive, "Wireless security mode.", "none", "psk2", "psk2+ccmp", "sae", "sae-mixed", "wpa2", "wpa3"),
 			secretField("wireless.@wifi-iface[0].key", "Passphrase", "wireless", "@wifi-iface[0]", "key", riskDisruptive, "8-63 characters. Shown once and never logged."),
 			boolField("wireless.@wifi-iface[0].disabled", "Interface enabled", "wireless", "@wifi-iface[0]", "disabled", riskDisruptive, "0 enables the interface, 1 disables it."),
@@ -225,11 +251,11 @@ var settingsPages = []settingsPage{
 	{
 		Key: "firewall", Label: "Firewall", Group: "Network", Packages: []string{"firewall"},
 		Fields: []settingField{
-			enumField("firewall.@zone[0].input", "LAN zone input", "firewall", "@zone[0]", "input", riskDisruptive, "Default policy for traffic entering the LAN zone.", "ACCEPT", "REJECT", "DROP"),
-			enumField("firewall.@zone[0].output", "LAN zone output", "firewall", "@zone[0]", "output", riskDisruptive, "Default policy for traffic leaving the LAN zone.", "ACCEPT", "REJECT", "DROP"),
+			enumField("firewall.@zone[0].input", "LAN zone input", "firewall", "@zone[0]", "input", riskManagement, "Default policy for traffic entering the LAN zone.", "ACCEPT", "REJECT", "DROP"),
+			enumField("firewall.@zone[0].output", "LAN zone output", "firewall", "@zone[0]", "output", riskManagement, "Default policy for traffic leaving the LAN zone.", "ACCEPT", "REJECT", "DROP"),
 			enumField("firewall.@zone[0].forward", "LAN zone forward", "firewall", "@zone[0]", "forward", riskDisruptive, "Default policy for traffic forwarded through the LAN zone.", "ACCEPT", "REJECT", "DROP"),
-			enumField("firewall.@zone[1].input", "WAN zone input", "firewall", "@zone[1]", "input", riskDisruptive, "Default policy for traffic entering the WAN zone.", "ACCEPT", "REJECT", "DROP"),
-			enumField("firewall.@zone[1].output", "WAN zone output", "firewall", "@zone[1]", "output", riskDisruptive, "Default policy for traffic leaving the WAN zone.", "ACCEPT", "REJECT", "DROP"),
+			enumField("firewall.@zone[1].input", "WAN zone input", "firewall", "@zone[1]", "input", riskManagement, "Default policy for traffic entering the WAN zone.", "ACCEPT", "REJECT", "DROP"),
+			enumField("firewall.@zone[1].output", "WAN zone output", "firewall", "@zone[1]", "output", riskManagement, "Default policy for traffic leaving the WAN zone.", "ACCEPT", "REJECT", "DROP"),
 			enumField("firewall.@zone[1].forward", "WAN zone forward", "firewall", "@zone[1]", "forward", riskDisruptive, "Default policy for traffic forwarded through the WAN zone.", "ACCEPT", "REJECT", "DROP"),
 		},
 	},
@@ -249,5 +275,40 @@ func (a *app) getConfigSchema(w http.ResponseWriter, r *http.Request) {
 	if !requireAnyRole(w, r, "admin", "operator", "readonly") {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"pages": settingsPages})
+	user := r.Context().Value(userContextKey).(authUser)
+	pages := make([]settingsPage, len(settingsPages))
+	for i, page := range settingsPages {
+		pages[i] = page
+		pages[i].Fields = append([]settingField(nil), page.Fields...)
+		for j := range pages[i].Fields {
+			pages[i].Fields[j].Editable = user.Role == "admin" && batchEditableField(pages[i].Fields[j])
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pages": pages})
+}
+
+// batchEditableField is deliberately narrower than the read-only schema. Secret
+// fields stay locked pending encrypted changeset storage, while management-path
+// fields need a separate typed-confirmation and reachability workflow.
+func batchEditableField(f settingField) bool {
+	if f.validate == nil || f.Secret || f.Risk == riskManagement || secretOption.MatchString(f.Option) || secretOption.MatchString(f.Key) {
+		return false
+	}
+	switch f.Kind {
+	case kindString, kindEnum, kindBool, kindInt, kindHostname, kindIPv4:
+		return true
+	default:
+		return false
+	}
+}
+
+func settingsField(key string) (settingField, bool) {
+	for _, page := range settingsPages {
+		for _, f := range page.Fields {
+			if f.Key == key {
+				return f, true
+			}
+		}
+	}
+	return settingField{}, false
 }

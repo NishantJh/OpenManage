@@ -11,7 +11,7 @@ The Go app serves the React/TypeScript build and JSON API. PostgreSQL stores dev
 - cmd/openmanage/main.go: HTTP routes, authentication/session middleware, inventory API, audit API, common helpers.
 - cmd/openmanage/enrollment.go: SSH enrollment, host-key pinning, private-key encryption.
 - cmd/openmanage/operations.go: typed device-operation engine (timeouts, output limits, audit policy) used by health checks and monitoring.
-- cmd/openmanage/config_snapshots.go, config_changes.go, uci.go: encrypted `uci export` snapshots, drift diff, and the hostname write with rollback.
+- cmd/openmanage/config_snapshots.go, config_changes.go, config_change_batch.go, uci.go: encrypted `uci export` snapshots, drift diff, and single-setting/batched curated UCI writes with timed rollback.
 - cmd/openmanage/users.go: user management and password/session handling. monitoring.go and scheduled_snapshots.go: background work.
 - cmd/openmanage/radius.go, eap.go, radius_cert.go, radius_profile.go, network_users.go: built-in RADIUS listener, EAP-TTLS, certificate, Apple profile, and Wi-Fi users.
 - cmd/openmanage/*_test.go: Go tests.

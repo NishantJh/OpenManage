@@ -18,8 +18,9 @@ import (
 // Every SSH action against a device goes through this file. An operation is a named,
 // server-owned definition; callers pick operations by name and never supply command
 // text. Health checks and monitoring use the read-only operations below. Write
-// operations run only through runWrite, from the controlled change workflow in
-// config_changes.go, which audits transactionally and arranges a timed rollback.
+// operations run only through runWrite, from the controlled change workflows in
+// config_changes.go and config_change_batch.go, which audit transactionally and
+// arrange a timed rollback.
 // Their parameters travel on stdin as one JSON line, never inside the command.
 
 type operationClass string

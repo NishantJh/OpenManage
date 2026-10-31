@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSettingsSchemaWellFormed(t *testing.T) {
 	seen := map[string]bool{}
@@ -21,6 +24,9 @@ func TestSettingsSchemaWellFormed(t *testing.T) {
 			}
 			if f.Secret && f.Kind != kindSecret {
 				t.Fatalf("page %q field %q is marked secret but is not a secret kind", page.Key, f.Key)
+			}
+			if f.UnlockRequired && f.Key != "wireless.@wifi-iface[0].ssid" {
+				t.Fatalf("page %q field %q unexpectedly requires unlock", page.Key, f.Key)
 			}
 		}
 	}
@@ -50,6 +56,13 @@ func TestSettingsFieldValidators(t *testing.T) {
 		{"dropbear.port", "ssh", false},
 		{"wireless.@wifi-iface[0].key", "correct-horse-battery", true},
 		{"wireless.@wifi-iface[0].key", "short", false},
+		{"wireless.radio0.channel", "auto", true},
+		{"wireless.radio0.channel", "233", true},
+		{"wireless.radio0.channel", "+2", false},
+		{"wireless.radio0.channel", "234", false},
+		{"wireless.@wifi-iface[0].ssid", "OpenManage guest", true},
+		{"wireless.@wifi-iface[0].ssid", strings.Repeat("x", 33), false},
+		{"wireless.@wifi-iface[0].ssid", "guest\nnetwork", false},
 		{"wireless.@wifi-iface[0].disabled", "0", true},
 		{"wireless.@wifi-iface[0].disabled", "yes", false},
 		{"dhcp.lan.start", "100", true},

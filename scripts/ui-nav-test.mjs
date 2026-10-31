@@ -68,8 +68,64 @@ try {
     assert.equal(new URL(page.url()).pathname, p.path, `mobile ${p.label}: URL`);
   }
   console.log("PASS: mobile page switcher reaches every page");
-  // Floor plan rooms: sizes in feet, rename from the map, canvas follows the rooms (nothing is saved).
+  // Settings editor: secret fields stay hidden, disruptive changes require explicit
+  // acknowledgement, and preview/apply send only the edited curated field.
   await page.setViewportSize({ width: 1280, height: 900 });
+  const settingsDeviceId = "550e8400-e29b-41d4-a716-446655440000";
+  const settingsDevice = { id: settingsDeviceId, name: "Editor AP", address: "192.0.2.10", model: "test-model", firmware: "test-release", status: "online", last_seen_at: new Date().toISOString(), enrollable: false, config_drift: false, role: "access_point", dhcp_host: false, has_key: true };
+  const settingsPages = { pages: [
+    { key: "overview", label: "Overview", group: "Status", packages: ["system"], fields: [] },
+    { key: "wireless", label: "Wireless", group: "Network", packages: ["wireless"], fields: [
+      { key: "wireless.@wifi-iface[0].ssid", label: "SSID", kind: "string", editable: true, unlock_required: true, secret: false, risk: "disruptive", help: "Network name", config: "wireless", section: "@wifi-iface[0]", option: "ssid" },
+      { key: "wireless.@wifi-iface[0].key", label: "Passphrase", kind: "secret", editable: false, secret: true, risk: "disruptive", help: "Shown once", config: "wireless", section: "@wifi-iface[0]", option: "key" },
+    ] },
+  ] };
+  const settingsJson = body => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  let ssidValue = "old-network", settingsVersion = "version-one", previewRequest;
+  const settingsResponse = () => ({ device_id: settingsDeviceId, captured_at: new Date().toISOString(), packages: { wireless: { version: settingsVersion, sections: [
+    { name: "radio0", type: "wifi-device", options: [] },
+    { name: "@wifi-iface[0]", type: "wifi-iface", options: [
+      { name: "ssid", value: ssidValue, secret: false }, { name: "key", secret: true },
+    ] },
+  ] } } });
+  const batchRecord = (status, id = 41) => ({ id, device_id: settingsDeviceId, setting: "settings.batch", label: "Settings batch", old_value: "", new_value: "", status, detail: "", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600000).toISOString(), finished_at: null, disruption_acknowledged: true, changes: [{ setting: "wireless.@wifi-iface[0].ssid", label: "SSID", old_value: "old-network", new_value: "new-network" }] });
+  await page.route("**/api/devices", r => r.fulfill(settingsJson([settingsDevice])));
+  await page.route("**/api/config-schema", r => r.fulfill(settingsJson(settingsPages)));
+  await page.route(`**/api/devices/${settingsDeviceId}/settings`, r => r.fulfill(settingsJson(settingsResponse())));
+  await page.route(`**/api/devices/${settingsDeviceId}/config-change-batches`, async r => {
+    if (r.request().method() === "POST") {
+      previewRequest = r.request().postDataJSON();
+      return r.fulfill(settingsJson(batchRecord("previewed")));
+    }
+    return r.fulfill(settingsJson([]));
+  });
+  await page.route(`**/api/devices/${settingsDeviceId}/config-change-batches/*/apply`, async r => {
+    ssidValue = "new-network";
+    settingsVersion = "version-two";
+    return r.fulfill(settingsJson(batchRecord("applied")));
+  });
+  await page.goto(baseUrl + "/settings/" + settingsDeviceId);
+  await page.getByRole("button", { name: "Wireless", exact: true }).click();
+  const ssidInput = page.getByRole("textbox", { name: "SSID", exact: true });
+  assert.ok(await ssidInput.isDisabled(), "existing SSID stays locked until explicit unlock");
+  await page.getByLabel("Unlock this existing SSID to edit it").check();
+  await page.getByRole("textbox", { name: "SSID", exact: true }).fill("new-network");
+  const previewButton = page.getByRole("button", { name: /Preview 1 change/ });
+  assert.ok(await previewButton.isDisabled(), "disruptive edit requires an explicit acknowledgement");
+  await page.getByLabel(/I understand these changes/).check();
+  await previewButton.click();
+  await page.getByText("Settings preview · 1 change").waitFor();
+  assert.deepEqual(previewRequest.changes, [{ setting: "wireless.@wifi-iface[0].ssid", value: "new-network", unlock_existing: true }]);
+  assert.equal(previewRequest.acknowledge_disruption, true);
+  assert.equal(previewRequest.base_versions.wireless, "version-one");
+  assert.ok(!(await page.locator("body").innerText()).includes("secret-fixture"), "secret values must not appear in the settings UI");
+  await page.getByRole("button", { name: "Apply with rollback" }).click();
+  await page.getByText("Settings were applied, verified over a fresh connection, and confirmed.").waitFor();
+  await page.getByRole("textbox", { name: "SSID", exact: true }).waitFor();
+  assert.equal(await page.getByRole("textbox", { name: "SSID", exact: true }).inputValue(), "new-network");
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  console.log("PASS: settings batch preview, disruption acknowledgement, secret redaction and apply flow");
+  // Floor plan rooms: sizes in feet, rename from the map, canvas follows the rooms (nothing is saved).
   await page.goto(baseUrl + "/floor-plan");
   await page.locator("h1", { hasText: "Floor plan" }).waitFor();
   const box = async () => (await page.locator("svg.fp-svg").getAttribute("viewBox")).split(" ").map(Number);
