@@ -70,7 +70,7 @@ const firmwareRolloutColumns = `id, version, status, canary_device_id::text, COA
 func normalizeFirmwareRolloutRequest(in firmwareRolloutRequest) (firmwareRolloutRequest, error) {
 	in.Version = strings.TrimSpace(in.Version)
 	rv, ok := parseReleaseVersion(in.Version)
-	if !ok || rv.snapshot || rv.branchSn || rv.rc > 0 {
+	if !ok || rv.snapshot || rv.branchSn || strings.Contains(in.Version, "-rc") || rv.rc > 0 {
 		return in, errors.New("choose a final, stable OpenWrt release")
 	}
 	in.CanaryDeviceID = strings.ToLower(strings.TrimSpace(in.CanaryDeviceID))

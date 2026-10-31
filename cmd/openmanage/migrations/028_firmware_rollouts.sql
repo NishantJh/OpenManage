@@ -49,3 +49,47 @@ CREATE UNIQUE INDEX IF NOT EXISTS firmware_rollout_one_canary_idx
     ON firmware_rollout_devices (rollout_id) WHERE batch_number = 0;
 CREATE INDEX IF NOT EXISTS firmware_rollout_devices_device_idx
     ON firmware_rollout_devices (device_id_snapshot, created_at DESC);
+
+-- Campaign target/canary and per-device membership snapshots are immutable.
+-- A preview plan may be populated once, but never replaced after persistence.
+CREATE OR REPLACE FUNCTION guard_firmware_rollout_immutability()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'firmware_rollouts' THEN
+        IF NEW.version IS DISTINCT FROM OLD.version
+           OR NEW.canary_device_id IS DISTINCT FROM OLD.canary_device_id THEN
+            RAISE EXCEPTION 'firmware rollout target and canary are immutable';
+        END IF;
+    ELSIF TG_TABLE_NAME = 'firmware_rollout_devices' THEN
+        IF ROW(NEW.rollout_id, NEW.device_id_snapshot, NEW.device_name, NEW.model,
+               NEW.current_release, NEW.board_name, NEW.target, NEW.inventory_id,
+               NEW.inventory_digest, NEW.inventory_manifest, NEW.inventory_verified_at,
+               NEW.desired_package_set_revision, NEW.batch_number, NEW.position)
+           IS DISTINCT FROM
+           ROW(OLD.rollout_id, OLD.device_id_snapshot, OLD.device_name, OLD.model,
+               OLD.current_release, OLD.board_name, OLD.target, OLD.inventory_id,
+               OLD.inventory_digest, OLD.inventory_manifest, OLD.inventory_verified_at,
+               OLD.desired_package_set_revision, OLD.batch_number, OLD.position) THEN
+            RAISE EXCEPTION 'firmware rollout membership snapshots are immutable';
+        END IF;
+        IF OLD.plan IS NOT NULL OR OLD.plan_digest <> '' THEN
+            IF NEW.plan IS DISTINCT FROM OLD.plan OR NEW.plan_digest IS DISTINCT FROM OLD.plan_digest THEN
+                RAISE EXCEPTION 'firmware rollout preview plans are immutable';
+            END IF;
+        ELSIF (NEW.plan IS NULL) <> (NEW.plan_digest = '') THEN
+            RAISE EXCEPTION 'firmware rollout plan and digest must be persisted together';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS firmware_rollouts_immutable_target ON firmware_rollouts;
+CREATE TRIGGER firmware_rollouts_immutable_target
+    BEFORE UPDATE ON firmware_rollouts
+    FOR EACH ROW EXECUTE FUNCTION guard_firmware_rollout_immutability();
+
+DROP TRIGGER IF EXISTS firmware_rollout_devices_immutable_snapshot ON firmware_rollout_devices;
+CREATE TRIGGER firmware_rollout_devices_immutable_snapshot
+    BEFORE UPDATE ON firmware_rollout_devices
+    FOR EACH ROW EXECUTE FUNCTION guard_firmware_rollout_immutability();

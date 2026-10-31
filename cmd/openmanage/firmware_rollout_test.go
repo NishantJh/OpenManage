@@ -24,6 +24,7 @@ func TestNormalizeFirmwareRolloutRequest(t *testing.T) {
 		{name: "canary only", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary}},
 		{name: "snapshot", in: firmwareRolloutRequest{Version: "SNAPSHOT", CanaryDeviceID: canary}, wantErr: true},
 		{name: "release candidate", in: firmwareRolloutRequest{Version: "25.12.2-rc1", CanaryDeviceID: canary}, wantErr: true},
+		{name: "zero-numbered release candidate", in: firmwareRolloutRequest{Version: "25.12.2-rc0", CanaryDeviceID: canary}, wantErr: true},
 		{name: "invalid canary", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: "bad"}, wantErr: true},
 		{name: "duplicate across batches", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {first}}}, wantErr: true},
 		{name: "canary duplicated in batch", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{canary}}}, wantErr: true},
@@ -116,6 +117,19 @@ func TestFirmwareRolloutDraftSnapshotsInventoryAndPackageRevision(t *testing.T) 
 	if member.InventoryID != inventoryID || member.InventoryDigest != strings.Repeat("a", 64) || member.DesiredPackageSetRevision != 1 ||
 		member.CurrentRelease != "24.10.4" || member.BoardName != "generic" || member.BatchNumber != 0 || member.Status != "queued" {
 		t.Fatalf("member snapshot=%+v", member)
+	}
+
+	if _, err = db.Exec(ctx, `UPDATE firmware_rollout_devices SET inventory_digest=$2 WHERE rollout_id=$1`, got.ID, strings.Repeat("b", 64)); err == nil {
+		t.Fatal("rollout inventory snapshots must reject mutation")
+	}
+	if _, err = db.Exec(ctx, `UPDATE firmware_rollouts SET version='25.12.3' WHERE id=$1`, got.ID); err == nil {
+		t.Fatal("rollout target release must reject mutation")
+	}
+	if _, err = db.Exec(ctx, `UPDATE firmware_rollout_devices SET plan='{}'::jsonb,plan_digest=$2 WHERE rollout_id=$1`, got.ID, strings.Repeat("a", 64)); err != nil {
+		t.Fatalf("first preview plan write should be allowed: %v", err)
+	}
+	if _, err = db.Exec(ctx, `UPDATE firmware_rollout_devices SET plan='{"changed":true}'::jsonb,plan_digest=$2 WHERE rollout_id=$1`, got.ID, strings.Repeat("b", 64)); err == nil {
+		t.Fatal("persisted rollout preview plans must reject replacement")
 	}
 	var upgrades, audits int
 	if err = db.QueryRow(ctx, `SELECT count(*) FROM firmware_upgrades WHERE device_id=$1`, deviceID).Scan(&upgrades); err != nil {

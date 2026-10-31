@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -59,6 +60,40 @@ func packageRemoveOperation(manager, name string) (operation, bool) {
 	default:
 		return operation{}, false
 	}
+}
+
+// packageDependentsOperation lists what depends on a package. Only apk needs it: opkg
+// remove already refuses a package other packages depend on, and says so.
+func packageDependentsOperation(manager, name string) (operation, bool) {
+	if manager != "apk" || !validPackageName(name) {
+		return operation{}, false
+	}
+	return readOperation("package_dependents_apk", "Find dependent packages",
+		"apk info -r "+name+" </dev/null 2>/dev/null"), true
+}
+
+// installedDependents keeps only the installed packages that apk info -r names. A line
+// counts when it is exactly "<name>-<version>" of an installed package, so nothing else
+// the device prints can reach the job record.
+func installedDependents(output, name string, installed []firmwarePackage) []string {
+	byLine := make(map[string]string, len(installed))
+	for _, p := range installed {
+		if p.Name != name && p.Version != "" {
+			byLine[p.Name+"-"+p.Version] = p.Name
+		}
+	}
+	found := map[string]bool{}
+	for _, line := range strings.Split(output, "\n") {
+		if dep, ok := byLine[strings.TrimSpace(line)]; ok {
+			found[dep] = true
+		}
+	}
+	out := make([]string, 0, len(found))
+	for dep := range found {
+		out = append(out, dep)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type packageRemoval struct {
@@ -303,6 +338,18 @@ func (a *app) runPackageRemoval(id int64) {
 		fail("the package manager or package name is not supported", checks)
 		return
 	}
+	if depOp, ok := packageDependentsOperation(manifest.PackageManager, name); ok {
+		res := session.run(depOp)
+		if res.Status != "ok" {
+			checks = append(checks, upgradeCheck{Name: "dependent packages", Status: "warning", Detail: "could not list the packages that depend on " + name + "; the package manager will keep it if another package needs it"})
+		} else if deps := installedDependents(res.Output, name, manifest.Packages); len(deps) > 0 {
+			checks = append(checks, upgradeCheck{Name: "dependent packages", Status: "failed", Detail: name + " is needed by " + strings.Join(deps, ", ") + ". Remove those first, or keep " + name + "."})
+			fail("not removed: other installed packages depend on it", checks)
+			return
+		} else {
+			checks = append(checks, upgradeCheck{Name: "dependent packages", Status: "ok", Detail: "no installed package depends on " + name})
+		}
+	}
 	a.setPackageRemovalStep(ctx, id, "removing "+name)
 	res := session.runWriteRaw(op, nil)
 	if res.Status != "ok" {
@@ -321,6 +368,11 @@ func (a *app) runPackageRemoval(id int64) {
 				break
 			}
 		}
+	}
+	if present && after.Status == "ok" && err == nil {
+		checks = append(checks, upgradeCheck{Name: "removed package", Status: "failed", Detail: name + " is still installed; the package manager kept it, usually because another package needs it"})
+		fail("the package manager kept the package installed; check which packages still depend on it", checks)
+		return
 	}
 	if present || after.Status != "ok" || err != nil {
 		checks = append(checks, upgradeCheck{Name: "removed package", Status: "failed", Detail: "the device inventory did not verify that " + name + " is absent"})
