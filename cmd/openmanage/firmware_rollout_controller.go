@@ -585,15 +585,14 @@ func (a *app) cancelFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "a completed or cancelled rollout cannot be cancelled again")
 		return
 	}
-	var active int
-	if err = tx.QueryRow(ctx, `SELECT count(*) FROM firmware_rollout_devices rd
-		JOIN firmware_upgrades u ON u.id=rd.upgrade_id
-		WHERE rd.rollout_id=$1 AND (u.status IN ('preparing','ready','flashing','verifying') OR u.flash_sent_at IS NOT NULL)`, id).Scan(&active); err != nil {
+	var startedJobs int
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM firmware_rollout_devices
+		WHERE rollout_id=$1 AND upgrade_id IS NOT NULL`, id).Scan(&startedJobs); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not inspect rollout jobs")
 		return
 	}
-	if active > 0 {
-		writeError(w, http.StatusConflict, "cancel is allowed only before any device job starts; pause the rollout while jobs are active")
+	if startedJobs > 0 {
+		writeError(w, http.StatusConflict, "cancel is allowed only before any device job starts; pause the rollout after preparation begins")
 		return
 	}
 	user := r.Context().Value(userContextKey).(authUser)
