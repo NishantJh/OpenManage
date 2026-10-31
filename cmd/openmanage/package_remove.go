@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -18,8 +17,6 @@ const (
 	packageRemoveListLimit = 20
 	packageRemoveTimeout   = 5 * time.Minute
 )
-
-var packageNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+_.-]{0,127}$`)
 
 var protectedPackageNames = map[string]struct{}{
 	"apk": {}, "opkg": {}, "dropbear": {}, "openssh-server": {},
@@ -38,7 +35,12 @@ func protectedPackage(name string) bool {
 	if _, ok := protectedPackageNames[name]; ok {
 		return true
 	}
-	return strings.HasPrefix(name, "kernel-") || strings.HasPrefix(name, "kmod-")
+	for _, prefix := range []string{"kernel-", "kmod-", "wpad", "hostapd", "firewall", "nftables", "iptables", "openssh", "dropbear", "netifd", "procd", "busybox", "base-files", "libc", "musl", "ubus", "uci", "dnsmasq", "odhcpd", "uhttpd", "rpcd", "luci-base", "openmanage"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // packageRemoveOperation constructs one of two fixed commands only after the package
