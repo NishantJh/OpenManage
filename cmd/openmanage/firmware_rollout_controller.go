@@ -655,6 +655,7 @@ func (a *app) pauseFirmwareRolloutForUpgrade(ctx context.Context, upgradeID int6
 		return
 	}
 	if err = tx.Commit(ctx); err != nil {
+		_ = tx.Rollback(ctx)
 		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus)
 		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollouts SET status='paused',pause_reason=$2,updated_at=NOW() WHERE id=$1 AND status NOT IN ('complete','cancelled')`, rolloutID, reason)
 	}
