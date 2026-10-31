@@ -332,22 +332,30 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 	}
 	var locked string
 	if err = tx.QueryRow(ctx, `SELECT id::text FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&locked); err != nil {
+		_ = tx.Rollback(ctx)
+		_ = a.pauseFirmwareRollout(ctx, rolloutID, "selected device was removed during preparation", user.ID)
 		writeError(w, http.StatusConflict, "device no longer exists")
 		return
 	}
 	current, err = firmwareRolloutMemberCurrent(ctx, tx, member)
 	if err != nil || !current {
+		_ = tx.Rollback(ctx)
+		_ = a.pauseFirmwareRollout(ctx, rolloutID, "device, inventory, or desired package-set revision changed during preparation", user.ID)
 		writeError(w, http.StatusConflict, "device, inventory, or desired package-set revision changed; create a new rollout draft")
 		return
 	}
 	qualification, err := findMatchingFirmwareHardwareQualification(ctx, tx, member, rollout.Version)
 	if err != nil {
+		_ = tx.Rollback(ctx)
+		_ = a.pauseFirmwareRollout(ctx, rolloutID, "physical hardware qualification expired during preparation", user.ID)
 		writeError(w, http.StatusConflict, "current physical hardware qualification is required")
 		return
 	}
 	var linked bool
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM firmware_rollout_qualifications
 		WHERE rollout_id=$1 AND qualification_id=$2)`, rolloutID, qualification.ID).Scan(&linked); err != nil || !linked {
+		_ = tx.Rollback(ctx)
+		_ = a.pauseFirmwareRollout(ctx, rolloutID, "campaign qualification evidence link is missing", user.ID)
 		writeError(w, http.StatusConflict, "hardware qualification was not recorded for this campaign")
 		return
 	}
