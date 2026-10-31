@@ -66,6 +66,7 @@ func TestNormalizeFirmwareHardwareQualification(t *testing.T) {
 	}{
 		{"same release", func(q *firmwareHardwareQualificationRequest) { q.TargetRelease = q.SourceRelease }},
 		{"snapshot target", func(q *firmwareHardwareQualificationRequest) { q.TargetRelease = "SNAPSHOT" }},
+		{"zero-numbered release candidate", func(q *firmwareHardwareQualificationRequest) { q.TargetRelease = "25.12.2-rc0" }},
 		{"future date", func(q *firmwareHardwareQualificationRequest) {
 			q.TestedOn = time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
 		}},
