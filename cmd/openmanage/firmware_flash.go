@@ -201,11 +201,11 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var rolloutStatus string
+	var rolloutStatus, canaryDeviceID string
 	var currentBatch, maxConcurrent int
 	if rolloutID > 0 {
-		err = tx.QueryRow(r.Context(), `SELECT status,current_batch,max_concurrent_flashes FROM firmware_rollouts WHERE id=$1 FOR UPDATE`,
-			rolloutID).Scan(&rolloutStatus, &currentBatch, &maxConcurrent)
+		err = tx.QueryRow(r.Context(), `SELECT status,current_batch,max_concurrent_flashes,canary_device_id::text FROM firmware_rollouts WHERE id=$1 FOR UPDATE`,
+			rolloutID).Scan(&rolloutStatus, &currentBatch, &maxConcurrent, &canaryDeviceID)
 		if err != nil {
 			writeError(w, http.StatusConflict, "rollout is no longer available for flashing")
 			return
@@ -225,11 +225,11 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "type the device name exactly to confirm the flash")
 		return
 	}
-	var status string
+	var status, upgradeVersion string
 	var planJSON []byte
 	var expired bool
-	err = tx.QueryRow(r.Context(), `SELECT status, plan, COALESCE(expires_at < NOW(), TRUE) FROM firmware_upgrades
-		WHERE id=$1 AND device_id=$2 FOR UPDATE`, id, deviceID).Scan(&status, &planJSON, &expired)
+	err = tx.QueryRow(r.Context(), `SELECT status, plan, COALESCE(expires_at < NOW(), TRUE),version FROM firmware_upgrades
+		WHERE id=$1 AND device_id=$2 FOR UPDATE`, id, deviceID).Scan(&status, &planJSON, &expired, &upgradeVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "upgrade not found")
 		return
@@ -263,14 +263,14 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 			&rolloutMember.Plan, &rolloutMember.PlanDigest)
 		if err != nil || rolloutMember.DeviceID != deviceID || memberStatus != "ready" ||
 			rolloutMember.BatchNumber != currentBatch ||
-			(currentBatch == 0 && (rolloutStatus != "canary_running" || deviceID == "")) ||
+			(currentBatch == 0 && (rolloutStatus != "canary_running" || deviceID != canaryDeviceID)) ||
 			(currentBatch > 0 && rolloutStatus != "batch_running") {
 			_ = tx.Rollback(r.Context())
 			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "campaign device was not ready in the active batch", user.ID)
 			writeError(w, http.StatusConflict, "campaign device is not ready in the active batch")
 			return
 		}
-		rolloutPlan, planErr := firmwareRolloutMemberPlan(rolloutMember, upVersionForPlan(planJSON))
+		rolloutPlan, planErr := firmwareRolloutMemberPlan(rolloutMember, upgradeVersion)
 		if planErr != nil {
 			_ = tx.Rollback(r.Context())
 			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "stale rollout plan: "+planErr.Error(), user.ID)
@@ -355,6 +355,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if rolloutID > 0 {
+			_ = tx.Rollback(r.Context())
 			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "audit or persistence failure while starting a campaign flash", user.ID)
 		}
 		writeError(w, http.StatusInternalServerError, "could not start the flash")
