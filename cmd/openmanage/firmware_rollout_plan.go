@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -215,37 +216,68 @@ func (a *app) previewFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		plan   json.RawMessage
 		digest string
 	}
-	planned := make([]plannedMember, 0, len(rollout.Devices))
-	for _, member := range rollout.Devices {
-		plan, err := a.firmwarePlanForRolloutMember(ctx, serverURL, rollout, member)
-		if err != nil {
+	planned := make([]plannedMember, len(rollout.Devices))
+	planErrors := make([]error, len(rollout.Devices))
+	// Bound build-server fan-out while avoiding serial per-device network latency.
+	// Results are written by index so response/error selection remains deterministic.
+	const rolloutPlanConcurrency = 4
+	semaphore := make(chan struct{}, rolloutPlanConcurrency)
+	var planWG sync.WaitGroup
+	for i, member := range rollout.Devices {
+		planWG.Add(1)
+		go func(i int, member firmwareRolloutMember) {
+			defer planWG.Done()
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				planErrors[i] = ctx.Err()
+				return
+			}
+			defer func() { <-semaphore }()
+			plan, err := a.firmwarePlanForRolloutMember(ctx, serverURL, rollout, member)
+			if err != nil {
+				planErrors[i] = err
+				return
+			}
+			encoded, err := json.Marshal(plan)
+			if err != nil {
+				planErrors[i] = err
+				return
+			}
+			digest, err := firmwareRolloutPlanDigest(member, rollout.Version, plan)
+			if err != nil {
+				planErrors[i] = err
+				return
+			}
+			planned[i] = plannedMember{member: member, plan: encoded, digest: digest}
+		}(i, member)
+	}
+	planWG.Wait()
+	for i, item := range planned {
+		if err := planErrors[i]; err != nil {
 			var pathErr firmwareRolloutUnsupportedPathError
 			if errors.As(err, &pathErr) {
 				writeError(w, http.StatusConflict, pathErr.Error())
+			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				writeError(w, http.StatusGatewayTimeout, "rollout preview exceeded the request time limit; no plans were saved")
 			} else {
 				buildServerError(w, err)
 			}
 			return
 		}
+		var plan firmwarePlan
+		if err := json.Unmarshal(item.plan, &plan); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not read a computed rollout plan")
+			return
+		}
 		if len(plan.Blockers) > 0 {
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error":    "rollout preview is blocked by one or more device plans",
-				"device":   member.DeviceName,
+				"device":   item.member.DeviceName,
 				"blockers": plan.Blockers,
 			})
 			return
 		}
-		encoded, err := json.Marshal(plan)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not encode a rollout plan")
-			return
-		}
-		digest, err := firmwareRolloutPlanDigest(member, rollout.Version, plan)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not calculate a rollout plan digest")
-			return
-		}
-		planned = append(planned, plannedMember{member: member, plan: encoded, digest: digest})
 	}
 
 	ids := make([]string, 0, len(planned))
