@@ -54,6 +54,6 @@ CI prepares embedded frontend assets before running Go tests and building the Do
 ## Documentation discipline
 
 - Use plan.md as the roadmap and update it when milestones change.
-- Step 6 rollout work is stacked in PR order #140 → #141 → #142 → #143 → #144 (draft/snapshots, immutable previews, hardware qualification, canary controller, UI). Do not merge a dependent PR ahead of its base; Claude owns merge and final audit. Check exact-head PR Validation, Security Checks, and CodeQL results before handoff, and keep the roadmap/handover current.
+- Step 6 rollout work is stacked in PR order #140 → #141 → #142 → #143. Do not merge a dependent PR ahead of its base; Claude owns merge and final audit. Check exact-head PR Validation, Security Checks, and CodeQL results before handoff, and keep the roadmap/handover current.
 - Keep architecture and operational documentation concise and close to the code it describes.
 - Do not duplicate large source excerpts in documentation; explain interfaces, invariants, commands, and failure modes.
