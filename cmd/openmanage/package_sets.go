@@ -13,46 +13,46 @@ import (
 )
 
 const (
-	packageSetBodyLimit = 32 << 10
-	packageSetMaxItems = 512
-	packageSetMaxSources = 100
+	packageSetBodyLimit    = 32 << 10
+	packageSetMaxItems     = 512
+	packageSetMaxSources   = 100
 	packageSetHistoryLimit = 50
 )
 
 type packageSetSourceInput struct {
-	Name string `json:"name"`
-	Mode string `json:"mode"`
+	Name     string `json:"name"`
+	Mode     string `json:"mode"`
 	SourceID *int64 `json:"source_id,omitempty"`
 }
 
 type packageSetRequest struct {
-	OfficialPackages []string `json:"official_packages"`
-	RemovedDefaults []string `json:"removed_defaults"`
-	Sources []packageSetSourceInput `json:"sources"`
+	OfficialPackages []string                `json:"official_packages"`
+	RemovedDefaults  []string                `json:"removed_defaults"`
+	Sources          []packageSetSourceInput `json:"sources"`
 }
 
 type packageSetSource struct {
-	Name string `json:"name"`
-	Mode string `json:"mode"`
+	Name     string `json:"name"`
+	Mode     string `json:"mode"`
 	SourceID *int64 `json:"source_id,omitempty"`
-	Version string `json:"version,omitempty"`
+	Version  string `json:"version,omitempty"`
 }
 
 type packageSetRevision struct {
-	Revision int `json:"revision"`
-	OfficialPackages []string `json:"official_packages"`
-	RemovedDefaults []string `json:"removed_defaults"`
-	Sources []packageSetSource `json:"sources"`
-	CreatedBy string `json:"created_by,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	BasedOnRevision *int `json:"based_on_revision,omitempty"`
+	Revision         int                `json:"revision"`
+	OfficialPackages []string           `json:"official_packages"`
+	RemovedDefaults  []string           `json:"removed_defaults"`
+	Sources          []packageSetSource `json:"sources"`
+	CreatedBy        string             `json:"created_by,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	BasedOnRevision  *int               `json:"based_on_revision,omitempty"`
 }
 
 type packageSetResponse struct {
-	DeviceID string `json:"device_id"`
-	CurrentRevision int `json:"current_revision"`
-	Current *packageSetRevision `json:"current,omitempty"`
-	Revisions []packageSetRevision `json:"revisions"`
+	DeviceID        string               `json:"device_id"`
+	CurrentRevision int                  `json:"current_revision"`
+	Current         *packageSetRevision  `json:"current,omitempty"`
+	Revisions       []packageSetRevision `json:"revisions"`
 }
 
 func normalizePackageSetNames(values []string) ([]string, error) {
@@ -75,18 +75,28 @@ func normalizePackageSetNames(values []string) ([]string, error) {
 func normalizePackageSetRequest(in packageSetRequest) (packageSetRequest, error) {
 	var err error
 	in.OfficialPackages, err = normalizePackageSetNames(in.OfficialPackages)
-	if err != nil { return in, err }
+	if err != nil {
+		return in, err
+	}
 	in.RemovedDefaults, err = normalizePackageSetNames(in.RemovedDefaults)
-	if err != nil { return in, err }
+	if err != nil {
+		return in, err
+	}
 	if len(in.Sources) > packageSetMaxSources {
 		return in, errors.New("too many package sources")
 	}
 	official := make(map[string]bool, len(in.OfficialPackages))
-	for _, name := range in.OfficialPackages { official[name] = true }
+	for _, name := range in.OfficialPackages {
+		official[name] = true
+	}
 	removed := make(map[string]bool, len(in.RemovedDefaults))
-	for _, name := range in.RemovedDefaults { removed[name] = true }
+	for _, name := range in.RemovedDefaults {
+		removed[name] = true
+	}
 	for name := range official {
-		if removed[name] { return in, errors.New("a package cannot be both added and removed") }
+		if removed[name] {
+			return in, errors.New("a package cannot be both added and removed")
+		}
 	}
 	seen := map[string]bool{}
 	for i := range in.Sources {
@@ -109,9 +119,15 @@ func normalizePackageSetRequest(in packageSetRequest) (packageSetRequest, error)
 		}
 	}
 	sort.Slice(in.Sources, func(i, j int) bool { return in.Sources[i].Name < in.Sources[j].Name })
-	if in.OfficialPackages == nil { in.OfficialPackages = []string{} }
-	if in.RemovedDefaults == nil { in.RemovedDefaults = []string{} }
-	if in.Sources == nil { in.Sources = []packageSetSourceInput{} }
+	if in.OfficialPackages == nil {
+		in.OfficialPackages = []string{}
+	}
+	if in.RemovedDefaults == nil {
+		in.RemovedDefaults = []string{}
+	}
+	if in.Sources == nil {
+		in.Sources = []packageSetSourceInput{}
+	}
 	return in, nil
 }
 
@@ -121,7 +137,9 @@ func (a *app) getDevicePackageSet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid device ID")
 		return
 	}
-	if !requireAnyRole(w, r, readOnlyRoles...) { return }
+	if !requireAnyRole(w, r, readOnlyRoles...) {
+		return
+	}
 	var exists bool
 	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM devices WHERE id=$1)`, deviceID).Scan(&exists); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load the package set")
@@ -145,7 +163,9 @@ func (a *app) putDevicePackageSet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid device ID")
 		return
 	}
-	if !requireAnyRole(w, r, "admin") { return }
+	if !requireAnyRole(w, r, "admin") {
+		return
+	}
 	var in packageSetRequest
 	if err := decodeJSONBody(w, r, packageSetBodyLimit, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid package set")
@@ -193,11 +213,18 @@ func appendPackageSetRevision(ctx context.Context, tx pgx.Tx, deviceID, userID s
 		return err
 	}
 	var setID int64
-	err := tx.QueryRow(ctx, `SELECT id FROM device_package_sets WHERE device_id=$1 FOR UPDATE`, deviceID).Scan(&setID)
+	var currentRevision *int
+	err := tx.QueryRow(ctx, `SELECT s.id, r.revision FROM device_package_sets s
+		LEFT JOIN device_package_set_revisions r ON r.id=s.current_revision_id
+		WHERE s.device_id=$1 FOR UPDATE OF s`, deviceID).Scan(&setID, &currentRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `INSERT INTO device_package_sets (device_id) VALUES ($1) RETURNING id`, deviceID).Scan(&setID)
+	} else if err == nil && basedOn == nil && currentRevision != nil {
+		basedOn = currentRevision
 	}
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	var revision int
 	if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(revision),0)+1 FROM device_package_set_revisions WHERE package_set_id=$1`, setID).Scan(&revision); err != nil {
 		return err
@@ -207,7 +234,9 @@ func appendPackageSetRevision(ctx context.Context, tx pgx.Tx, deviceID, userID s
 		(package_set_id, revision, official_packages, removed_defaults, created_by, based_on_revision)
 		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
 		setID, revision, in.OfficialPackages, in.RemovedDefaults, userID, basedOn).Scan(&revisionID)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	sourceAudit := make([]map[string]any, 0, len(in.Sources))
 	for _, source := range in.Sources {
 		var sourceID any
@@ -215,22 +244,32 @@ func appendPackageSetRevision(ctx context.Context, tx pgx.Tx, deviceID, userID s
 		switch source.Mode {
 		case "pinned":
 			if err = tx.QueryRow(ctx, `SELECT version FROM package_sources WHERE id=$1 AND name=$2 AND status='confirmed' FOR KEY SHARE`, *source.SourceID, source.Name).Scan(&version); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) { return errors.New("invalid package set: a pinned source must name a confirmed package source") }
+				if errors.Is(err, pgx.ErrNoRows) {
+					return errors.New("invalid package set: a pinned source must name a confirmed package source")
+				}
 				return err
 			}
 			sourceID = *source.SourceID
 		case "latest":
-			if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('device_package_set_source:' || $1))`, source.Name); err != nil { return err }
+			if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('device_package_set_source:' || $1))`, source.Name); err != nil {
+				return err
+			}
 			var found bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM package_sources WHERE name=$1 AND status='confirmed')`, source.Name).Scan(&found); err != nil { return err }
-			if !found { return errors.New("invalid package set: a latest source needs at least one confirmed package source") }
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM package_sources WHERE name=$1 AND status='confirmed')`, source.Name).Scan(&found); err != nil {
+				return err
+			}
+			if !found {
+				return errors.New("invalid package set: a latest source needs at least one confirmed package source")
+			}
 		default:
 			return errors.New("invalid package set: package source mode must be pinned or latest")
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO device_package_set_revision_sources
 			(revision_id, package_name, tracking_mode, source_id, source_version)
 			VALUES ($1,$2,$3,$4,$5)`, revisionID, source.Name, source.Mode, sourceID, version)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		sourceAudit = append(sourceAudit, map[string]any{"name": source.Name, "mode": source.Mode, "version": version})
 	}
 	if _, err = tx.Exec(ctx, `UPDATE device_package_sets SET current_revision_id=$2, updated_at=NOW() WHERE id=$1`, setID, revisionID); err != nil {
@@ -247,7 +286,9 @@ func (a *app) restoreDevicePackageSetRevision(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid device or revision")
 		return
 	}
-	if !requireAnyRole(w, r, "admin") { return }
+	if !requireAnyRole(w, r, "admin") {
+		return
+	}
 	user := r.Context().Value(userContextKey).(authUser)
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
@@ -287,7 +328,9 @@ func (a *app) restoreDevicePackageSetRevision(w http.ResponseWriter, r *http.Req
 	in.Sources = []packageSetSourceInput{}
 	for rows.Next() {
 		var source packageSetSourceInput
-		if err = rows.Scan(&source.Name, &source.Mode, &source.SourceID); err != nil { break }
+		if err = rows.Scan(&source.Name, &source.Mode, &source.SourceID); err != nil {
+			break
+		}
 		in.Sources = append(in.Sources, source)
 	}
 	rows.Close()
@@ -326,29 +369,47 @@ func (a *app) loadDevicePackageSet(ctx context.Context, deviceID string) (packag
 	var setID int64
 	var currentID *int64
 	err := a.db.QueryRow(ctx, `SELECT id, current_revision_id FROM device_package_sets WHERE device_id=$1`, deviceID).Scan(&setID, &currentID)
-	if errors.Is(err, pgx.ErrNoRows) { return out, nil }
-	if err != nil { return out, err }
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return out, err
+	}
 	rows, err := a.db.Query(ctx, `SELECT id, revision, official_packages, removed_defaults, COALESCE(created_by::text,''), created_at, based_on_revision
 		FROM device_package_set_revisions WHERE package_set_id=$1 ORDER BY revision DESC LIMIT $2`, setID, packageSetHistoryLimit)
-	if err != nil { return out, err }
+	if err != nil {
+		return out, err
+	}
 	defer rows.Close()
 	for rows.Next() {
 		var revisionID int64
 		var rev packageSetRevision
-		if err = rows.Scan(&revisionID, &rev.Revision, &rev.OfficialPackages, &rev.RemovedDefaults, &rev.CreatedBy, &rev.CreatedAt, &rev.BasedOnRevision); err != nil { return out, err }
-		if rev.OfficialPackages == nil { rev.OfficialPackages = []string{} }
-		if rev.RemovedDefaults == nil { rev.RemovedDefaults = []string{} }
+		if err = rows.Scan(&revisionID, &rev.Revision, &rev.OfficialPackages, &rev.RemovedDefaults, &rev.CreatedBy, &rev.CreatedAt, &rev.BasedOnRevision); err != nil {
+			return out, err
+		}
+		if rev.OfficialPackages == nil {
+			rev.OfficialPackages = []string{}
+		}
+		if rev.RemovedDefaults == nil {
+			rev.RemovedDefaults = []string{}
+		}
 		rev.Sources = []packageSetSource{}
 		sources, qerr := a.db.Query(ctx, `SELECT package_name, tracking_mode, source_id, source_version
 			FROM device_package_set_revision_sources WHERE revision_id=$1 ORDER BY package_name`, revisionID)
-		if qerr != nil { return out, qerr }
+		if qerr != nil {
+			return out, qerr
+		}
 		for sources.Next() {
 			var source packageSetSource
-			if qerr = sources.Scan(&source.Name, &source.Mode, &source.SourceID, &source.Version); qerr != nil { break }
+			if qerr = sources.Scan(&source.Name, &source.Mode, &source.SourceID, &source.Version); qerr != nil {
+				break
+			}
 			rev.Sources = append(rev.Sources, source)
 		}
 		sources.Close()
-		if qerr != nil { return out, qerr }
+		if qerr != nil {
+			return out, qerr
+		}
 		out.Revisions = append(out.Revisions, rev)
 		if currentID != nil && revisionID == *currentID {
 			copy := rev
@@ -356,6 +417,8 @@ func (a *app) loadDevicePackageSet(ctx context.Context, deviceID string) (packag
 			out.CurrentRevision = rev.Revision
 		}
 	}
-	if err = rows.Err(); err != nil { return out, err }
+	if err = rows.Err(); err != nil {
+		return out, err
+	}
 	return out, nil
 }

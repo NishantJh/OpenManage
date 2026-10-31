@@ -474,6 +474,16 @@ func (a *app) deletePackageSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete the package source")
 		return
 	}
+	var pinned bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM device_package_set_revision_sources WHERE source_id=$1)`, id).Scan(&pinned)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete the package source")
+		return
+	}
+	if pinned {
+		writeError(w, http.StatusConflict, "this package source is pinned by a desired package set revision")
+		return
+	}
 	var needed bool
 	err = tx.QueryRow(r.Context(), `SELECT EXISTS (
 		SELECT 1 FROM device_package_set_revision_sources refs
