@@ -492,10 +492,14 @@ func (a *app) advanceFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err != nil {
+		_ = tx.Rollback(ctx)
+		_ = a.pauseFirmwareRollout(ctx, id, "audit or persistence failure while advancing a batch", user.ID)
 		writeError(w, http.StatusInternalServerError, "could not audit rollout advancement")
 		return
 	}
 	if err = tx.Commit(ctx); err != nil {
+		_ = tx.Rollback(ctx)
+		_ = a.pauseFirmwareRollout(ctx, id, "commit failure while advancing a batch", user.ID)
 		writeError(w, http.StatusInternalServerError, "could not advance the rollout")
 		return
 	}
@@ -641,7 +645,13 @@ func (a *app) pauseFirmwareRollout(ctx context.Context, rolloutID int64, reason,
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		_ = tx.Rollback(ctx)
+		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollouts SET status='paused',pause_reason=$2,updated_at=NOW()
+			WHERE id=$1 AND status NOT IN ('complete','cancelled')`, rolloutID, "commit failure while pausing: "+reason)
+		return err
+	}
+	return nil
 }
 
 func (a *app) pauseFirmwareRolloutForUpgrade(ctx context.Context, upgradeID int64, memberStatus, reason string) {
