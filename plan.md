@@ -111,18 +111,33 @@ Exit criteria: changes are reviewable, staged, auditable, and have a tested reco
 
 Exit criteria: maintenance and credential lifecycle operations have tested failure recovery and cannot silently lock out management access.
 
-### 5. Firmware upgrades and fleet rollout
+### 5. Firmware upgrades and staged fleet rollout — single-device path built; staged rollout planned
 
-Treat firmware upgrades as a separate high-risk operation type, not as a routine shell command.
+The single-device firmware path is implemented: inventory, plan, image preparation and validation, encrypted/pinned config backup, explicit administrator flash confirmation, reboot verification, and acknowledgement. The VM flash workflow validates a real reboot in QEMU, but this is **not physical-hardware qualification**.
 
-- Check exact device model/target, current version, supported upgrade path, image format, available storage, and required configuration backup before offering an upgrade.
-- Verify image provenance and integrity using trusted metadata/checksums; reject unknown or incompatible images.
-- Require explicit per-device confirmation, a staged canary rollout, concurrency limits, progress/status reporting, and post-reboot health verification.
-- Document that SSH cannot guarantee recovery from a failed flash. A failed upgrade may require device failsafe, physical reset, or serial access; do not claim automatic rollback unless that hardware/upgrade path actually supports it.
-- Do not begin fleet-wide firmware writes until single-device upgrade and recovery scenarios have been tested on supported hardware.
+Fleet rollout is a separate, gated workflow. Do not enable fleet/batch flashing until a single-device upgrade **and recovery scenario** have been exercised successfully on supported physical hardware and an administrator has recorded the qualification evidence in OpenManage. A container or QEMU VM test does not satisfy this prerequisite.
 
-Exit criteria: supported upgrade paths are validated, staged, observable, and have honest recovery guidance for failures outside the control plane's reach.
+- [x] Read-only inventory and upgrade planning, including model/target, release path, packages, and blockers.
+- [x] Single-device prepare, stage, hash-check, backup, and `sysupgrade -T`.
+- [x] Single-device explicit flash, post-reboot verification, backup acknowledgement, and restart recovery.
+- [x] QEMU VM real-restart workflow. Physical-hardware upgrade and recovery qualification remains an operator prerequisite.
+- [ ] **6a — Rollout campaign definition and immutable preview.** Admin selects target devices, one canary, ordered batches, and a release. Snapshot device identity, inventory/plan digest, and desired-package-set revision. Preview only; no device contact or write.
+- [ ] **6b — Physical-hardware qualification gate.** Admin records the tested board/model, source and target releases, date, successful upgrade checks, recovery method exercised, and recovery outcome. Require a current matching qualification before any campaign can flash. Qualification is an explicit human attestation backed by the recorded test evidence, not an inference from VM CI.
+- [ ] **6c — Canary-gated rollout controller.** Start with the one canary. Require the existing per-device typed flash confirmation. Do not advance unless the canary finishes as `done` with all verification checks successful and is acknowledged. Any warning, failure, timeout, lost device, or ambiguous state pauses the campaign. Then expose the next ordered batch; each device still requires its own explicit flash confirmation. Default maximum concurrent flashes: 2, configurable downward only in the first release.
+- [ ] **6d — Rollout UI, audit, recovery and integration tests.** Show campaign, canary, batch, per-device state, progress and stop reason. Provide explicit pause/cancel controls and operator recovery guidance. Exercise partial failure, concurrent confirmations, app restart, duplicate requests, stale plans, and audit failures.
 
+Safety invariants:
+- Reuse the existing single-device firmware-upgrade job and checks; a rollout must never create a second flashing implementation or bypass per-device name confirmation, warning acknowledgement, backup pinning, image validation, or post-reboot checks.
+- Snapshot membership and plan inputs at campaign creation. Revalidate device identity, inventory digest, desired-package-set revision, release path, and plan before preparing/flashing; stale entries require a fresh preview.
+- Only one open firmware job per device. Campaign-level concurrency must also respect the existing image-memory limit and never exceed the configured flash limit.
+- No automatic retry after `flash_sent_at` is set. Never send a second flash command to resolve an ambiguous result.
+- Stop progression on anything other than a fully successful canary/batch result. `done_with_warnings` is not a success gate.
+- No automatic package installation/removal or post-flash custom-package reinstall. No generic shell, forced sysupgrade flags, downgrade, snapshot, or release-family skipping.
+- A campaign is not a fleet-wide approval to flash silently: every device flash remains an explicit administrator action with its own confirmation.
+- Failed flashes may require failsafe, physical reset, serial, or TFTP recovery. Never claim automatic rollback on single-partition hardware.
+
+Exit criteria: hardware qualification is recorded; a canary must pass all checks before any batch is released; batches are bounded and individually confirmed; every state survives process restart; any failure halts further flashing; and CI plus the documented physical-hardware drill pass.
+ 
 ### 6. Monitoring and later integrations
 
 - [x] Add opt-in server-side monitoring in the existing Go process, persisted settings and per-device check history in PostgreSQL, bounded three-worker batches, PostgreSQL advisory-lock coordination, and 30-day history retention.
