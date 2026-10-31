@@ -197,15 +197,15 @@ PR #132 adds a per-device desired package set with immutable, numbered revisions
 
 ### The package set changes over time
 
-There is no fixed list of third-party packages anywhere in the code. What should be on a device is data:
+The desired package set is per device; there is no device-group model or inheritance yet. It contains official packages to add, firmware defaults to remove, and custom package sources. Every edit creates an immutable, audited revision. Restoring history creates another revision rather than rewriting an earlier one.
 
-- **Desired package set** per device, optionally inherited from a **group set** (for example "all access points") with per-device additions and removals on top. A set holds: official packages to add, default packages to remove, and package sources (release files or uploads) to install.
-- **Versioned and audited.** Each change (add, remove, swap a source for a newer version) is a new revision with who and when. Rolling back means selecting an earlier revision.
-- **Applied on the next flash by default.** The upgrade plan always compares the desired set with what the device reports installed and shows the diff (to add, to remove, to update). Nothing is changed on a device just because a set was edited.
-- **Optional "apply now"** outside a flash, through the same typed operations (`package_install`, and a matching `package_remove`, both write class, source id or package name from the registered set only). This is for adding a theme to a running device without a firmware upgrade.
-- **Drift:** the existing drift view also reports where a device's installed packages differ from its desired set, for example a package someone added by hand. The admin can adopt it into the set (after attaching a source) or leave it as a warning.
-- **Source updates are explicit.** Registering a newer file for a package creates a new source version; sets can pin a version or follow "latest registered". Either way the upgrade plan shows the version change before anything is installed.
-- **Unused sources** can be removed once no set refers to them; stored files are deleted with them.
+Editing the set changes desired metadata only. The selected revision is incorporated into a newly prepared firmware plan. It does not change a running device, an existing plan, or start a package operation. Official additions are included only when present in the target release feeds; default removals apply only to stock defaults in the target release.
+
+Custom sources must be registered and confirmed first. A set can pin an exact source id/version or follow the latest confirmed source for that package name; the firmware plan snapshots the resolved source id/version. A newer source is not silently substituted into an already prepared plan. Unused sources can be deleted only when no pinned or latest-tracking revision still depends on them.
+
+Package install and package removal are separate, explicitly administrator-started operations. They are not an implicit “apply now” action on desired-set edits, and they do not automatically rewrite the desired set. Automatic post-flash reinstall is not supported: the post-flash report identifies candidate sources, and an administrator starts the typed install flow manually.
+
+Drift reporting against the desired package set is deferred. The current UI provides the desired-set editor and revision history, while the firmware plan is the point at which desired state is compared with the target release.
 
 ### What an upgrade keeps and adds
 

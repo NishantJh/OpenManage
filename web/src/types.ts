@@ -44,5 +44,5 @@ export type PackageInstall={id:number;device_id:string;source_id:number|null;nam
 export type PackageReinstall={name:string;source_id:number|null;version?:string;format?:string;reason?:string};
 
 export type DevicePackageSetSource={name:string;mode:"pinned"|"latest";source_id?:number;version?:string};
-export type DevicePackageSetRevision={revision:number;official_packages:string[];removed_defaults:string[];sources:DevicePackageSetSource[];created_by:string;created_at:string;based_on_revision:number|null};
+export type DevicePackageSetRevision={revision:number;official_packages:string[];removed_defaults:string[];sources:DevicePackageSetSource[];created_by?:string;created_at:string;based_on_revision?:number|null};
 export type DevicePackageSet={device_id:string;current_revision:number;current?:DevicePackageSetRevision;revisions:DevicePackageSetRevision[]};
