@@ -58,7 +58,7 @@ type firmwareRollout struct {
 	Devices        []firmwareRolloutMember `json:"devices"`
 }
 
-const firmwareRolloutColumns = `id, version, status, canary_device_id::text, created_by::text, created_at, updated_at`
+const firmwareRolloutColumns = `id, version, status, canary_device_id::text, COALESCE(created_by::text,''), created_at, updated_at`
 
 func normalizeFirmwareRolloutRequest(in firmwareRolloutRequest) (firmwareRolloutRequest, error) {
 	in.Version = strings.TrimSpace(in.Version)
