@@ -15,24 +15,30 @@ func TestNormalizeFirmwareRolloutRequest(t *testing.T) {
 	canary := "550e8400-e29b-41d4-a716-446655440000"
 	first := "550e8400-e29b-41d4-a716-446655440001"
 	second := "550e8400-e29b-41d4-a716-446655440002"
-	cases := map[string]struct {
+	tests := []struct {
+		name    string
 		in      firmwareRolloutRequest
 		wantErr bool
 	}{
-		"valid":                       {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {second}}}, false},
-		"canary only":                 {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary}, false},
-		"snapshot":                    {firmwareRolloutRequest{Version: "SNAPSHOT", CanaryDeviceID: canary}, true},
-		"release candidate":           {firmwareRolloutRequest{Version: "25.12.2-rc1", CanaryDeviceID: canary}, true},
-		"invalid canary":              {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: "bad"}, true},
-		"duplicate across batches":    {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {first}}}, true},
-		"canary duplicated in batch":  {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{canary}}}, true},
-		"empty batch":                 {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{}}}, true},
-		"oversized batch":             {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first, second, "550e8400-e29b-41d4-a716-446655440003", "550e8400-e29b-41d4-a716-446655440004", "550e8400-e29b-41d4-a716-446655440005", "550e8400-e29b-41d4-a716-446655440006"}}}, true},
-		"too many batches":            {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {second}, {"550e8400-e29b-41d4-a716-446655440003"}, {"550e8400-e29b-41d4-a716-446655440004"}, {"550e8400-e29b-41d4-a716-446655440005"}}}, true},
-		"too many devices":            {firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first, second, "550e8400-e29b-41d4-a716-446655440003", "550e8400-e29b-41d4-a716-446655440004", "550e8400-e29b-41d4-a716-446655440005"}, {"550e8400-e29b-41d4-a716-446655440006", "550e8400-e29b-41d4-a716-446655440007", "550e8400-e29b-41d4-a716-446655440008", "550e8400-e29b-41d4-a716-446655440009", "550e8400-e29b-41d4-a716-446655440010"}, {"550e8400-e29b-41d4-a716-446655440011", "550e8400-e29b-41d4-a716-446655440012", "550e8400-e29b-41d4-a716-446655440013", "550e8400-e29b-41d4-a716-446655440014"}}}, true},
+		{name: "valid", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {second}}}},
+		{name: "canary only", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary}},
+		{name: "snapshot", in: firmwareRolloutRequest{Version: "SNAPSHOT", CanaryDeviceID: canary}, wantErr: true},
+		{name: "release candidate", in: firmwareRolloutRequest{Version: "25.12.2-rc1", CanaryDeviceID: canary}, wantErr: true},
+		{name: "invalid canary", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: "bad"}, wantErr: true},
+		{name: "duplicate across batches", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {first}}}, wantErr: true},
+		{name: "canary duplicated in batch", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{canary}}}, wantErr: true},
+		{name: "empty batch", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{}}}, wantErr: true},
+		{name: "oversized batch", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first, second, "550e8400-e29b-41d4-a716-446655440003", "550e8400-e29b-41d4-a716-446655440004", "550e8400-e29b-41d4-a716-446655440005", "550e8400-e29b-41d4-a716-446655440006"}}}, wantErr: true},
+		{name: "too many batches", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {second}, {"550e8400-e29b-41d4-a716-446655440003"}, {"550e8400-e29b-41d4-a716-446655440004"}, {"550e8400-e29b-41d4-a716-446655440005"}}}, wantErr: true},
+		{name: "too many devices", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{
+			{"550e8400-e29b-41d4-a716-446655440100", "550e8400-e29b-41d4-a716-446655440101", "550e8400-e29b-41d4-a716-446655440102", "550e8400-e29b-41d4-a716-446655440103", "550e8400-e29b-41d4-a716-446655440104"},
+			{"550e8400-e29b-41d4-a716-446655440105", "550e8400-e29b-41d4-a716-446655440106", "550e8400-e29b-41d4-a716-446655440107", "550e8400-e29b-41d4-a716-446655440108", "550e8400-e29b-41d4-a716-446655440109"},
+			{"550e8400-e29b-41d4-a716-446655440110", "550e8400-e29b-41d4-a716-446655440111", "550e8400-e29b-41d4-a716-446655440112", "550e8400-e29b-41d4-a716-446655440113", "550e8400-e29b-41d4-a716-446655440114"},
+			{"550e8400-e29b-41d4-a716-446655440115", "550e8400-e29b-41d4-a716-446655440116", "550e8400-e29b-41d4-a716-446655440117", "550e8400-e29b-41d4-a716-446655440118", "550e8400-e29b-41d4-a716-446655440119"},
+		}}, wantErr: true},
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			_, err := normalizeFirmwareRolloutRequest(tc.in)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error=%v wantErr=%v", err, tc.wantErr)
@@ -43,18 +49,18 @@ func TestNormalizeFirmwareRolloutRequest(t *testing.T) {
 
 func TestCreateFirmwareRolloutRequiresAdminAndValidBody(t *testing.T) {
 	id := "550e8400-e29b-41d4-a716-446655440000"
-	cases := []struct {
+	tests := []struct {
 		role string
 		body string
 		want int
 	}{
-		{"operator", `{"version":"25.12.2","canary_device_id":"` + id + `"}`, http.StatusForbidden},
-		{"readonly", `{"version":"25.12.2","canary_device_id":"` + id + `"}`, http.StatusForbidden},
-		{"admin", `{"version":"SNAPSHOT","canary_device_id":"` + id + `"}`, http.StatusBadRequest},
-		{"admin", `{"version":"25.12.2","canary_device_id":"bad"}`, http.StatusBadRequest},
-		{"", `{}`, http.StatusUnauthorized},
+		{role: "operator", body: `{"version":"25.12.2","canary_device_id":"` + id + `"}`, want: http.StatusForbidden},
+		{role: "readonly", body: `{"version":"25.12.2","canary_device_id":"` + id + `"}`, want: http.StatusForbidden},
+		{role: "admin", body: `{"version":"SNAPSHOT","canary_device_id":"` + id + `"}`, want: http.StatusBadRequest},
+		{role: "admin", body: `{"version":"25.12.2","canary_device_id":"bad"}`, want: http.StatusBadRequest},
+		{body: `{}`, want: http.StatusUnauthorized},
 	}
-	for _, tc := range cases {
+	for _, tc := range tests {
 		req := httptest.NewRequest(http.MethodPost, "/api/firmware/rollouts", strings.NewReader(tc.body))
 		if tc.role != "" {
 			req = req.WithContext(context.WithValue(req.Context(), userContextKey, authUser{ID: "u", Role: tc.role}))
