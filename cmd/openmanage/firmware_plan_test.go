@@ -30,7 +30,7 @@ func TestValidBuildServerURL(t *testing.T) {
 }
 
 func TestCompareReleases(t *testing.T) {
-	ordered := []string{"23.05.5", "24.10.0-rc1", "24.10.0", "24.10.4", "24.10-SNAPSHOT", "25.12.0-rc2", "25.12.0", "25.12.10", "SNAPSHOT"}
+	ordered := []string{"23.05.5", "24.10.0-rc0", "24.10.0-rc1", "24.10.0", "24.10.4", "24.10-SNAPSHOT", "25.12.0-rc2", "25.12.0", "25.12.10", "SNAPSHOT"}
 	for i := 1; i < len(ordered); i++ {
 		if compareReleases(ordered[i-1], ordered[i]) >= 0 {
 			t.Errorf("%s should sort before %s", ordered[i-1], ordered[i])
@@ -38,6 +38,9 @@ func TestCompareReleases(t *testing.T) {
 	}
 	if releaseBranch("25.12.2") != "25.12" || releaseBranch("24.10-SNAPSHOT") != "24.10" || releaseBranch("SNAPSHOT") != "SNAPSHOT" {
 		t.Fatal("branch of a release")
+	}
+	if rv, ok := parseReleaseVersion("24.10.0-rc0"); !ok || !rv.releaseCandidate {
+		t.Fatal("rc0 must retain release-candidate identity")
 	}
 	for _, bad := range []string{"", "25.12", "../x", "25.12.2/../../", "25.12.2 "} {
 		if releaseVersionPattern.MatchString(bad) {
