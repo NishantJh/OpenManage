@@ -50,19 +50,19 @@ type firmwareRolloutMember struct {
 }
 
 type firmwareRollout struct {
-	ID             int64                   `json:"id"`
-	Version        string                  `json:"version"`
-	Status         string                  `json:"status"`
-	CanaryDeviceID string                  `json:"canary_device_id"`
-	CreatedBy      string                  `json:"created_by"`
-	CreatedAt      time.Time               `json:"created_at"`
+	ID                   int64                   `json:"id"`
+	Version              string                  `json:"version"`
+	Status               string                  `json:"status"`
+	CanaryDeviceID       string                  `json:"canary_device_id"`
+	CreatedBy            string                  `json:"created_by"`
+	CreatedAt            time.Time               `json:"created_at"`
 	UpdatedAt            time.Time               `json:"updated_at"`
 	CurrentBatch         int                     `json:"current_batch"`
 	MaxConcurrentFlashes int                     `json:"max_concurrent_flashes"`
 	StartedAt            *time.Time              `json:"started_at,omitempty"`
 	CompletedAt          *time.Time              `json:"completed_at,omitempty"`
-	PauseReason           string                  `json:"pause_reason,omitempty"`
-	Devices        []firmwareRolloutMember `json:"devices"`
+	PauseReason          string                  `json:"pause_reason,omitempty"`
+	Devices              []firmwareRolloutMember `json:"devices"`
 }
 
 const firmwareRolloutColumns = `id, version, status, canary_device_id::text, COALESCE(created_by::text,''), created_at, updated_at, current_batch, max_concurrent_flashes, started_at, completed_at, pause_reason`
