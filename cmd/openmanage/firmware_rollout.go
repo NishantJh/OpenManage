@@ -247,7 +247,7 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 func loadFirmwareRollout(ctx context.Context, db *pgxpool.Pool, id int64) (firmwareRollout, error) {
 	var out firmwareRollout
 	err := db.QueryRow(ctx, `SELECT `+firmwareRolloutColumns+` FROM firmware_rollouts WHERE id=$1`, id).
-		Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID, &out.CreatedBy, &out.CreatedAt, &out.UpdatedAt, &out.CurrentBatch, &out.MaxConcurrentFlashes, &out.StartedAt, &out.CompletedAt)
+		Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID, &out.CreatedBy, &out.CreatedAt, &out.UpdatedAt, &out.CurrentBatch, &out.MaxConcurrentFlashes, &out.StartedAt, &out.CompletedAt, &out.PauseReason)
 	if err != nil {
 		return out, err
 	}
