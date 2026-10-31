@@ -118,6 +118,13 @@ func TestCreateAndListFirmwareHardwareQualification(t *testing.T) {
 		t.Fatalf("qualification audit count=%d", auditCount)
 	}
 
+	if _, err := db.Exec(context.Background(), `UPDATE firmware_hardware_qualifications SET evidence_reference='tampered' WHERE id=$1`, created.ID); err == nil {
+		t.Fatal("qualification records must reject updates")
+	}
+	if _, err := db.Exec(context.Background(), `DELETE FROM firmware_hardware_qualifications WHERE id=$1`, created.ID); err == nil {
+		t.Fatal("qualification records must reject deletion")
+	}
+
 	list := httptest.NewRequest(http.MethodGet, "/api/firmware/hardware-qualifications?board_name=generic&model=OpenWrt+x86", nil)
 	list = list.WithContext(context.WithValue(list.Context(), userContextKey, authUser{ID: userID, Role: "operator"}))
 	listRec := httptest.NewRecorder()
