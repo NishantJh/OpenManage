@@ -106,7 +106,7 @@ export default function FirmwareRollouts({devices,role,onChanged}:{devices:Devic
         await apiJSON<FirmwareRollout>("/api/firmware/rollouts/"+created.id+"/preview","POST",undefined,"Could not preview the rollout");
         await loadDetail(created.id);setNotice("Draft created and previewed. Review the immutable plans and physical qualification gate before starting.");
       }catch(e){setError(e instanceof Error?e.message:"Could not preview the rollout");await loadDetail(created.id)}
-      await loadRollouts();
+      await loadRollouts();onChanged();
     }catch(e){setError(e instanceof Error?e.message:"Could not create the rollout draft")}
     finally{setBusy(false)}
   }
@@ -134,7 +134,7 @@ export default function FirmwareRollouts({devices,role,onChanged}:{devices:Devic
     setBusy(true);setError("");setNotice("");
     try{
       await apiJSON<FirmwareHardwareQualification>("/api/firmware/hardware-qualifications","POST",qualificationDraft,"Could not record hardware qualification");
-      await loadDetail(detail.id);setNotice("Qualification record saved. The campaign gate has been recalculated.");
+      await loadDetail(detail.id);onChanged();setNotice("Qualification record saved. The campaign gate has been recalculated.");
     }catch(e){setError(e instanceof Error?e.message:"Could not record hardware qualification")}
     finally{setBusy(false)}
   }
@@ -187,7 +187,7 @@ export default function FirmwareRollouts({devices,role,onChanged}:{devices:Devic
               {canStart&&<button className="primary danger" disabled={busy} onClick={()=>void action("/start",undefined,"Canary gate opened. Prepare only the canary first.")}>Start campaign</button>}
               {canAdvance&&<button className="primary" disabled={busy} onClick={()=>void action("/advance",undefined,"Next batch released.")}>Release next batch</button>}
               {canPause&&<button className="secondary" disabled={busy} onClick={()=>void action("/pause",{reason:pauseReason})}>Pause campaign</button>}
-              {canCancel&&<button className="secondary" disabled={busy} onClick={()=>void action("/cancel",undefined,"Campaign cancelled before device execution.")}>Cancel draft</button>}
+              {canCancel&&<button className="secondary" disabled={busy} onClick={()=>void action("/cancel",undefined,"Campaign cancelled before device execution.")}>Cancel campaign</button>}
             </div>
             {canPause&&<label className="rollout-pause-reason">Pause reason<input value={pauseReason} maxLength={500} onChange={e=>setPauseReason(e.target.value)}/></label>}
             {selected.status==="previewed"&&qualification&&!qualification.qualified&&<p className="empty-line">Campaign cannot start until every hardware/release group has current physical qualification evidence.</p>}
@@ -227,7 +227,7 @@ export default function FirmwareRollouts({devices,role,onChanged}:{devices:Devic
                 <div><b>{member.device_name}</b><small>{member.model} · {member.current_release} → {selected.version} · {member.board_name} / {member.target}</small></div>
                 <div><span className="rollout-batch">{member.batch_number===0?"CANARY":"BATCH "+member.batch_number}</span><strong className={"rollout-status status-"+member.status}>{member.status.replaceAll("_"," ")}</strong></div>
               </div>
-              {member.plan&&<div className="rollout-plan-summary"><span>Plan SHA-256 <code>{short(member.plan_digest)}</code></span><span>Inventory <code>{short(member.inventory_digest)}</code></span><span>Desired set revision <b>{member.desired_package_set_revision}</b></span><span>{member.plan.packages.length} package entries · {member.plan.warnings.length} warnings · {member.plan.blockers.length} blockers</span></div>}
+              {member.plan&&<div className="rollout-plan-summary"><span>Plan SHA-256 <code>{short(member.plan_digest??"")}</code></span><span>Inventory <code>{short(member.inventory_digest)}</code></span><span>Desired set revision <b>{member.desired_package_set_revision}</b></span><span>{member.plan.packages.length} package entries · {member.plan.warnings.length} warnings · {member.plan.blockers.length} blockers</span></div>}
               {member.plan?.blockers.map(item=><p className="error" key={item}>{item}</p>)}
               {member.plan?.warnings.map(item=><p className="warning" key={item}>{item}</p>)}
               {canAdmin&&member.status==="queued"&&member.batch_number===selected.current_batch&&((member.batch_number===0&&selected.status==="awaiting_canary")||(member.batch_number>0&&selected.status==="batch_running"))&&<div className="snapshot-controls"><button className="secondary" disabled={busy} onClick={()=>void prepareDevice(member.device_id)}>Prepare {member.device_name}</button></div>}
