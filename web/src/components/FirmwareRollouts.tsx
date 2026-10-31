@@ -162,7 +162,7 @@ export default function FirmwareRollouts({devices,role,onChanged}:{devices:Devic
       <div className="rollout-device-select">
         {enrolled.filter(d=>d.id!==canaryID).map(d=><div className="rollout-device-row" key={d.id}>
           <label><input type="checkbox" checked={assignments[d.id]!==undefined} onChange={e=>setAssignments(old=>{const next={...old};if(e.target.checked)next[d.id]=1;else delete next[d.id];return next})}/><span><b>{d.name}</b><small>{d.model||"Model unknown"} · {d.firmware||"Release unknown"} · {d.status}</small></span></label>
-          {assignments[d.id]!==undefined&&<select className="secondary" aria-label={"Batch for "+d.name} value={assignments[d.id]} onChange={e=>setAssignments(old=>({...old,[d.id]:Number(e.target.value)}))}>{[1,2,3,4,5].map(n=><option key={n} value={n}>Batch {n}</option>)}</select>}
+          {assignments[d.id]!==undefined&&<select className="secondary" aria-label={"Batch for "+d.name} value={assignments[d.id]} onChange={e=>setAssignments(old=>({...old,[d.id]:Number(e.target.value)}))}>{[1,2,3,4].map(n=><option key={n} value={n}>Batch {n}</option>)}</select>}
         </div>)}
         {!enrolled.length&&<p className="empty-line">Enroll devices before creating a rollout.</p>}
       </div>
