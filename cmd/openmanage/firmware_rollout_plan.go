@@ -316,7 +316,7 @@ func (a *app) previewFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	for _, item := range planned {
 		tag, err := tx.Exec(ctx, `UPDATE firmware_rollout_devices SET plan=$3::jsonb,plan_digest=$4,updated_at=NOW()
 			WHERE rollout_id=$1 AND device_id_snapshot=$2 AND plan IS NULL AND plan_digest=''`,
-			id, item.member.DeviceID, item.plan, item.digest)
+			id, item.member.DeviceID, string(item.plan), item.digest)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not save a rollout device plan")
 			return
