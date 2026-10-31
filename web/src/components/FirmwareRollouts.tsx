@@ -4,12 +4,12 @@ import type { Device, FirmwareHardwareQualification, FirmwarePlan, FirmwareRelea
 import UpgradeJob from "./UpgradeJob";
 
 const requiredChecks=[
-  ["image","Image flashed and device rebooted"],
-  ["packages","Installed package set verified"],
-  ["network","Network connectivity verified"],
-  ["boot","Boot and system health verified"],
-  ["management","Management access verified"],
-  ["services","Services and client connectivity verified"],
+  ["image_hash_verified","Image hash verified"],
+  ["pre_flash_backup_verified","Pre-flash backup verified"],
+  ["sysupgrade_test_passed","Sysupgrade test passed"],
+  ["post_reboot_reachable","Device reachable after reboot"],
+  ["post_reboot_inventory_verified","Post-reboot inventory verified"],
+  ["management_access_verified","Management access verified"],
 ] as const;
 const emptyPlan:FirmwarePlan={version:"",version_code:"",kernel:"",target:"",profile:"",profile_title:"",package_manager:"opkg",packages:[],kept:[],renamed:[],dropped:[],unavailable:[],removed_defaults:[],blockers:[],warnings:[]};
 const activeStatuses=["awaiting_canary","canary_running","awaiting_batch","batch_running"];
@@ -139,7 +139,6 @@ export default function FirmwareRollouts({devices,role,onChanged}:{devices:Devic
     finally{setBusy(false)}
   }
   const selected=detail;
-  const currentMembers=selected?.devices.filter(d=>d.batch_number===selected.current_batch)??[];
   const canStart=Boolean(canAdmin&&selected?.status==="previewed"&&qualification?.qualified);
   const canAdvance=Boolean(canAdmin&&selected?.status==="awaiting_batch");
   const canPause=Boolean(canAdmin&&selected&&activeStatuses.includes(selected.status));
