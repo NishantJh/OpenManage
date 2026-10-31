@@ -291,7 +291,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "device, inventory, or desired package-set revision changed before flash")
 			return
 		}
-		qualification, qualificationErr := findMatchingFirmwareHardwareQualification(r.Context(), tx, rolloutMember, upVersionForPlan(planJSON))
+		qualification, qualificationErr := findMatchingFirmwareHardwareQualification(r.Context(), tx, rolloutMember, upgradeVersion)
 		var linked bool
 		if qualificationErr == nil {
 			qualificationErr = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM firmware_rollout_qualifications
