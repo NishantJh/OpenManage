@@ -88,11 +88,11 @@ var packageInstallOperations = []operation{
 	opPackageCleanup,
 }
 
-// packageInstallRunningSQL is true while a package install is running on the device. Other
-// long jobs (upgrade, restore, configuration change) refuse to start while it is.
-const packageInstallRunningSQL = `EXISTS(SELECT 1 FROM package_installs WHERE device_id=$1 AND status='running')`
+// packageInstallRunningSQL is true while any package operation is running on the device.
+const packageInstallRunningSQL = `EXISTS(SELECT 1 FROM package_installs WHERE device_id=$1 AND status='running')
+	OR EXISTS(SELECT 1 FROM package_removals WHERE device_id=$1 AND status='running')`
 
-const packageInstallBusyMessage = "a package is being installed on this device; wait for it to finish"
+const packageInstallBusyMessage = "a package operation is running on this device; wait for it to finish"
 
 type packageInstall struct {
 	ID         int64          `json:"id"`
@@ -182,7 +182,7 @@ func (a *app) installPackageSource(w http.ResponseWriter, r *http.Request) {
 		WHEN EXISTS(SELECT 1 FROM device_restores WHERE device_id=$1 AND status='running') THEN 'a backup restore is running on this device'
 		WHEN EXISTS(SELECT 1 FROM config_changes WHERE device_id=$1 AND status='applying') THEN 'a configuration change is being applied to this device'
 		WHEN EXISTS(SELECT 1 FROM firmware_upgrades WHERE device_id=$1 AND status IN ('preparing','ready','flashing','verifying')) THEN 'a firmware upgrade is open on this device; cancel or finish it first'
-		WHEN `+packageInstallRunningSQL+` THEN 'a package is already being installed on this device'
+		WHEN `+packageInstallRunningSQL+` THEN 'a package operation is already running on this device'
 		ELSE '' END`, deviceID).Scan(&busy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not start the install")
