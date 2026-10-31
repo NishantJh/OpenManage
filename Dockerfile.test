@@ -1,0 +1,21 @@
+FROM node:24-alpine AS frontend
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
+FROM golang:1.27.3-bookworm AS go-test
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+COPY . ./
+RUN mkdir -p cmd/openmanage/web/dist
+COPY --from=frontend /src/web/dist/ ./cmd/openmanage/web/dist/
+RUN files="$(find cmd -type f -name '*.go')" && test -n "$files" && \
+    unformatted="$(gofmt -l $files)" && \
+    if [ -n "$unformatted" ]; then printf 'Go files need gofmt:\n%s\n' "$unformatted"; exit 1; fi
+RUN --network=none go vet ./...
+RUN go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+RUN --network=none "$(go env GOPATH)/bin/staticcheck" ./...
+RUN --network=none go test -race ./...

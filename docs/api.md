@@ -43,6 +43,11 @@ All routes are under `/api`. Every route except `GET /api/healthz` and `POST /ap
 - `GET /api/devices/{id}/config-snapshots/{snapshot}/changes` — lists UCI paths added, removed or changed since the previous snapshot. Values of secret-looking options (keys, passwords, secrets, tokens) are redacted, and the raw configuration is never returned. Admin.
 - `POST /api/devices/{id}/config-snapshots/{snapshot}/acknowledge` — marks drift up to and including this snapshot as reviewed, so the device no longer reports `config_drift`. Admin.
 
+## Read-only device settings
+
+- `GET /api/config-schema` — returns the LuCI-like settings menu and curated field metadata used by the device settings view. Any signed-in role.
+- `GET /api/devices/{id}/settings` — reads the live UCI export from an enrolled device over its pinned SSH connection and returns package/section/option data. Values of secret-looking options are omitted and marked `secret`; raw export text is never returned or stored by this endpoint. Each package includes a keyed HMAC `version` token for stale-view detection. Any signed-in role. The request contacts the selected device but makes no configuration changes.
+
 ## Controlled changes
 
 - `GET /api/config-settings` — lists the settings OpenManage can change (currently `system.hostname`). Admin.
