@@ -61,10 +61,11 @@ type firmwareRollout struct {
 	MaxConcurrentFlashes int                     `json:"max_concurrent_flashes"`
 	StartedAt            *time.Time              `json:"started_at,omitempty"`
 	CompletedAt          *time.Time              `json:"completed_at,omitempty"`
+	PauseReason           string                  `json:"pause_reason,omitempty"`
 	Devices        []firmwareRolloutMember `json:"devices"`
 }
 
-const firmwareRolloutColumns = `id, version, status, canary_device_id::text, COALESCE(created_by::text,''), created_at, updated_at, current_batch, max_concurrent_flashes, started_at, completed_at`
+const firmwareRolloutColumns = `id, version, status, canary_device_id::text, COALESCE(created_by::text,''), created_at, updated_at, current_batch, max_concurrent_flashes, started_at, completed_at, pause_reason`
 
 func normalizeFirmwareRolloutRequest(in firmwareRolloutRequest) (firmwareRolloutRequest, error) {
 	in.Version = strings.TrimSpace(in.Version)
@@ -167,7 +168,7 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(r.Context(), `INSERT INTO firmware_rollouts(version,status,canary_device_id,created_by,max_concurrent_flashes)
 		VALUES($1,'draft',$2,$3,$4) RETURNING `+firmwareRolloutColumns,
 		in.Version, in.CanaryDeviceID, user.ID, in.MaxConcurrentFlashes).Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID,
-		&out.CreatedBy, &out.CreatedAt, &out.UpdatedAt, &out.CurrentBatch, &out.MaxConcurrentFlashes, &out.StartedAt, &out.CompletedAt)
+		&out.CreatedBy, &out.CreatedAt, &out.UpdatedAt, &out.CurrentBatch, &out.MaxConcurrentFlashes, &out.StartedAt, &out.CompletedAt, &out.PauseReason)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create the rollout draft")
 		return
