@@ -375,9 +375,13 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err == nil {
-		_, err = tx.Exec(ctx, `UPDATE firmware_rollout_devices SET status='preparing',upgrade_id=$3,updated_at=NOW()
+		var tag pgconn.CommandTag
+		tag, err = tx.Exec(ctx, `UPDATE firmware_rollout_devices SET status='preparing',upgrade_id=$3,updated_at=NOW()
 			WHERE rollout_id=$1 AND device_id_snapshot=$2 AND status='queued' AND plan_digest=$4`,
 			rolloutID, deviceID, up.ID, member.PlanDigest)
+		if err == nil && tag.RowsAffected() != 1 {
+			err = errors.New("rollout device state changed during preparation")
+		}
 	}
 	if err == nil {
 		nextStatus := "batch_running"
@@ -395,10 +399,14 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 			map[string]any{"device_id": deviceID, "upgrade_id": up.ID, "batch_number": member.BatchNumber})
 	}
 	if err != nil {
+		_ = tx.Rollback(ctx)
+		_ = a.pauseFirmwareRollout(ctx, rolloutID, "audit or persistence failure while preparing a rollout device", user.ID)
 		writeError(w, http.StatusInternalServerError, "could not start rollout device preparation")
 		return
 	}
 	if err = tx.Commit(ctx); err != nil {
+		_ = tx.Rollback(ctx)
+		_ = a.pauseFirmwareRollout(ctx, rolloutID, "commit failure while preparing a rollout device", user.ID)
 		writeError(w, http.StatusInternalServerError, "could not start rollout device preparation")
 		return
 	}
