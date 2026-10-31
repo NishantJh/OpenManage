@@ -707,12 +707,47 @@ func (a *app) setFirmwareRolloutDeviceStatus(ctx context.Context, upgradeID int6
 	if err = tx.QueryRow(ctx, `SELECT id FROM firmware_rollouts WHERE id=$1 FOR UPDATE`, rolloutID).Scan(&lockedID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus); err != nil {
+	var batchNumber int
+	if err = tx.QueryRow(ctx, `SELECT batch_number FROM firmware_rollout_devices WHERE upgrade_id=$1 FOR UPDATE`, upgradeID).Scan(&batchNumber); err != nil {
 		return err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("rollout device link disappeared")
 	}
 	if pauseReason != "" {
 		if _, err = tx.Exec(ctx, `UPDATE firmware_rollouts SET status='paused',pause_reason=$2,updated_at=NOW() WHERE id=$1 AND status NOT IN ('complete','cancelled')`, rolloutID, pauseReason); err != nil {
 			return err
+		}
+	}
+	if memberStatus == "done" {
+		var campaignStatus string
+		var currentBatch int
+		if err = tx.QueryRow(ctx, `SELECT status,current_batch FROM firmware_rollouts WHERE id=$1`, rolloutID).Scan(&campaignStatus, &currentBatch); err != nil {
+			return err
+		}
+		if (campaignStatus == "canary_running" || campaignStatus == "batch_running") && currentBatch == batchNumber {
+			var total, acknowledged int
+			err = tx.QueryRow(ctx, `SELECT count(*)::int,
+				count(*) FILTER (WHERE rd.status='done' AND u.status='done' AND u.acknowledged_at IS NOT NULL)::int
+				FROM firmware_rollout_devices rd LEFT JOIN firmware_upgrades u ON u.id=rd.upgrade_id
+				WHERE rd.rollout_id=$1 AND rd.batch_number=$2`, rolloutID, batchNumber).Scan(&total, &acknowledged)
+			if err != nil {
+				return err
+			}
+			if total > 0 && total == acknowledged {
+				if _, err = tx.Exec(ctx, `UPDATE firmware_rollouts SET status='awaiting_batch',updated_at=NOW() WHERE id=$1`, rolloutID); err != nil {
+					return err
+				}
+				if err = insertAuditEvent(ctx, tx, "", "firmware.rollout_batch_ready", "firmware_rollout", strconv.FormatInt(rolloutID, 10), map[string]any{
+					"batch_number": batchNumber,
+				}); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if err = insertAuditEvent(ctx, tx, "", "firmware.rollout_device_"+memberStatus, "firmware_rollout", strconv.FormatInt(rolloutID, 10), map[string]any{
