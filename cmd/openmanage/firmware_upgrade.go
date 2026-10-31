@@ -416,6 +416,7 @@ func (a *app) endReadyUpgrade(ctx context.Context, id int64, reason, actorID str
 	stopped, deviceID := a.markUpgradeStopped(ctx, id, "ready", reason, actorID)
 	if stopped {
 		a.cleanupStaged(ctx, deviceID)
+		a.pauseFirmwareRolloutForUpgrade(ctx, id, "stopped", reason)
 	}
 	return stopped
 }
@@ -452,6 +453,9 @@ func (j *upgradeJob) stop(ctx context.Context, reason string, actorID string) {
 		j.a.cleanupStaged(sctx, j.deviceID)
 	}
 	j.a.markUpgradeStopped(sctx, j.id, "preparing", reason, actorID)
+	if j.rolloutID > 0 {
+		j.a.pauseFirmwareRolloutForUpgrade(sctx, j.id, "stopped", reason)
+	}
 }
 
 // run prepares the image. Every failure ends the job as stopped with a plain reason;
@@ -921,6 +925,7 @@ func (a *app) recoverFirmwareUpgrades(ctx context.Context, startedAt time.Time) 
 		stopped, deviceID := a.markUpgradeStopped(sctx, o.id, o.status, reason, "")
 		if stopped {
 			a.cleanupStaged(sctx, deviceID)
+			a.pauseFirmwareRolloutForUpgrade(sctx, o.id, "stopped", reason)
 		}
 		cancel()
 	}
