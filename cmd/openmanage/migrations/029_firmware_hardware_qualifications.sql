@@ -30,3 +30,18 @@ CREATE TABLE IF NOT EXISTS firmware_rollout_qualifications (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (rollout_id, qualification_id)
 );
+
+-- Qualification evidence is append-only. Prevent accidental application-level
+-- mutation or deletion from silently changing a campaign's safety basis.
+CREATE OR REPLACE FUNCTION reject_firmware_hardware_qualification_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'firmware hardware qualification records are immutable';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS firmware_hardware_qualifications_immutable
+    ON firmware_hardware_qualifications;
+CREATE TRIGGER firmware_hardware_qualifications_immutable
+    BEFORE UPDATE OR DELETE ON firmware_hardware_qualifications
+    FOR EACH ROW EXECUTE FUNCTION reject_firmware_hardware_qualification_mutation();
