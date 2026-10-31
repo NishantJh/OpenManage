@@ -26,23 +26,23 @@ var requiredFirmwareUpgradeChecks = []string{
 }
 
 var allowedFirmwareUpgradeChecks = map[string]bool{
-	"image_hash_verified":             true,
-	"pre_flash_backup_verified":       true,
-	"sysupgrade_test_passed":          true,
-	"post_reboot_reachable":           true,
-	"post_reboot_inventory_verified":  true,
-	"management_access_verified":      true,
-	"service_health_verified":         true,
-	"custom_packages_reported":        true,
+	"image_hash_verified":            true,
+	"pre_flash_backup_verified":      true,
+	"sysupgrade_test_passed":         true,
+	"post_reboot_reachable":          true,
+	"post_reboot_inventory_verified": true,
+	"management_access_verified":     true,
+	"service_health_verified":        true,
+	"custom_packages_reported":       true,
 }
 
 var allowedFirmwareRecoveryMethods = map[string]bool{
-	"failsafe":        true,
-	"factory_reset":   true,
-	"serial_console":  true,
-	"tftp":            true,
-	"dual_image":      true,
-	"not_exercised":   true,
+	"failsafe":       true,
+	"factory_reset":  true,
+	"serial_console": true,
+	"tftp":           true,
+	"dual_image":     true,
+	"not_exercised":  true,
 }
 
 type firmwareHardwareQualificationRequest struct {
@@ -88,11 +88,11 @@ type firmwareRolloutQualificationGap struct {
 }
 
 type firmwareRolloutQualificationStatus struct {
-	RolloutID        int64                              `json:"rollout_id"`
-	Qualified        bool                               `json:"qualified"`
-	RequiredHardware int                                `json:"required_hardware"`
-	Matched          []firmwareHardwareQualification    `json:"matched"`
-	Missing          []firmwareRolloutQualificationGap  `json:"missing"`
+	RolloutID        int64                             `json:"rollout_id"`
+	Qualified        bool                              `json:"qualified"`
+	RequiredHardware int                               `json:"required_hardware"`
+	Matched          []firmwareHardwareQualification   `json:"matched"`
+	Missing          []firmwareRolloutQualificationGap `json:"missing"`
 }
 
 func firmwareQualificationLabel(value string, max int) bool {
@@ -324,9 +324,9 @@ func findMatchingFirmwareHardwareQualification(ctx context.Context, q rolloutQue
 
 func (a *app) firmwareRolloutQualificationStatus(ctx context.Context, rollout firmwareRollout) (firmwareRolloutQualificationStatus, error) {
 	type hardwareKey struct {
-		board   string
-		model   string
-		source  string
+		board  string
+		model  string
+		source string
 	}
 	grouped := make(map[hardwareKey][]string)
 	for _, member := range rollout.Devices {
@@ -348,11 +348,11 @@ func (a *app) firmwareRolloutQualificationStatus(ctx context.Context, rollout fi
 	})
 
 	out := firmwareRolloutQualificationStatus{
-		RolloutID: rollout.ID,
-		Qualified: true,
+		RolloutID:        rollout.ID,
+		Qualified:        true,
 		RequiredHardware: len(keys),
-		Matched: []firmwareHardwareQualification{},
-		Missing: []firmwareRolloutQualificationGap{},
+		Matched:          []firmwareHardwareQualification{},
+		Missing:          []firmwareRolloutQualificationGap{},
 	}
 	for _, key := range keys {
 		member := firmwareRolloutMember{DeviceID: grouped[key][0], BoardName: key.board, Model: key.model, CurrentRelease: key.source}
