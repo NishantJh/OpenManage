@@ -136,7 +136,7 @@ func (a *app) startFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	}
 	if !qualificationStatus.Qualified {
 		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": "current physical hardware qualification is required for every hardware/release group",
+			"error":                "current physical hardware qualification is required for every hardware/release group",
 			"qualification_status": qualificationStatus,
 		})
 		return
