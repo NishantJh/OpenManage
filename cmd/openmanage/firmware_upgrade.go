@@ -12,7 +12,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
-	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -415,17 +415,22 @@ func (a *app) endReadyUpgrade(ctx context.Context, id int64, reason, actorID str
 	stopped, deviceID := a.markUpgradeStopped(ctx, id, "ready", reason, actorID)
 	if stopped {
 		a.cleanupStaged(ctx, deviceID)
+		a.pauseFirmwareRolloutForUpgrade(ctx, id, "stopped", reason)
 	}
 	return stopped
 }
 
 type upgradeJob struct {
-	a        *app
-	id       int64
-	deviceID string
-	version  string
-	userID   string
-	staged   bool
+	a                 *app
+	id                int64
+	deviceID          string
+	version           string
+	userID            string
+	staged            bool
+	rolloutID         int64
+	rolloutMember     firmwareRolloutMember
+	rolloutPlan       firmwarePlan
+	rolloutPlanDigest string
 }
 
 func (j *upgradeJob) setStep(ctx context.Context, step string) {
@@ -447,6 +452,9 @@ func (j *upgradeJob) stop(ctx context.Context, reason string, actorID string) {
 		j.a.cleanupStaged(sctx, j.deviceID)
 	}
 	j.a.markUpgradeStopped(sctx, j.id, "preparing", reason, actorID)
+	if j.rolloutID > 0 {
+		j.a.pauseFirmwareRolloutForUpgrade(sctx, j.id, "stopped", reason)
+	}
 }
 
 // run prepares the image. Every failure ends the job as stopped with a plain reason;
@@ -474,33 +482,45 @@ func (j *upgradeJob) run(ctx context.Context) {
 		fail(err.Error())
 		return
 	}
-	ov, err := fetchOverview(ctx, serverURL)
+	branches, err := firmwareRolloutBranches(ctx, serverURL)
 	if err != nil {
 		fail(err.Error())
 		return
 	}
-	var branches []string
-	for name := range ov.Branches {
-		if !strings.Contains(name, "SNAPSHOT") {
-			branches = append(branches, name)
-		}
-	}
-	sort.Strings(branches)
 	if problem := upgradePathProblem(manifest.Release, j.version, branches); problem != "" {
 		fail(problem)
 		return
 	}
-	plan, err := a.firmwarePlanForDevice(ctx, serverURL, j.deviceID, manifest, j.version)
-	if err != nil {
-		fail(err.Error())
-		return
-	}
-	if len(plan.Blockers) > 0 {
-		fail(strings.Join(plan.Blockers, " "))
-		return
-	}
-	if encoded, err := json.Marshal(plan); err == nil {
-		_, _ = a.db.Exec(ctx, `UPDATE firmware_upgrades SET plan=$2 WHERE id=$1`, j.id, encoded)
+	var plan firmwarePlan
+	if j.rolloutID > 0 {
+		if digest != j.rolloutMember.InventoryDigest {
+			fail("the live inventory digest no longer matches the rollout preview")
+			return
+		}
+		current, currentErr := firmwareRolloutMemberCurrent(ctx, a.db, j.rolloutMember)
+		if currentErr != nil || !current {
+			fail("the device, inventory, or desired package-set revision changed after rollout preparation")
+			return
+		}
+		plan = j.rolloutPlan
+		planDigest, digestErr := firmwareRolloutPlanDigest(j.rolloutMember, j.version, plan)
+		if digestErr != nil || planDigest != j.rolloutPlanDigest || len(plan.Blockers) > 0 || len(plan.Warnings) > 0 {
+			fail("the immutable rollout plan failed its digest or safety checks")
+			return
+		}
+	} else {
+		plan, err = a.firmwarePlanForDevice(ctx, serverURL, j.deviceID, manifest, j.version)
+		if err != nil {
+			fail(err.Error())
+			return
+		}
+		if len(plan.Blockers) > 0 {
+			fail(strings.Join(plan.Blockers, " "))
+			return
+		}
+		if encoded, marshalErr := json.Marshal(plan); marshalErr == nil {
+			_, _ = a.db.Exec(ctx, `UPDATE firmware_upgrades SET plan=$2 WHERE id=$1`, j.id, encoded)
+		}
 	}
 
 	j.setStep(ctx, "building")
@@ -571,12 +591,40 @@ func (j *upgradeJob) run(ctx context.Context) {
 		fail("could not record that the image is ready")
 		return
 	}
-	_, err = tx.Exec(ctx, `UPDATE firmware_upgrades SET status='ready', step='', detail='', image_name=$2, image_sha256=$3,
-		image_size=$4, boot_id=$5, inventory_digest=$6, ready_at=NOW(), expires_at=NOW() + ($7 * INTERVAL '1 second')
-		WHERE id=$1 AND status='preparing'`, j.id, img.Name, imageHash, imageSize, bootID, digest, int(upgradeReadyTTL.Seconds()))
+	if j.rolloutID > 0 {
+		var rolloutStatus string
+		var currentBatch int
+		err = tx.QueryRow(ctx, `SELECT status,current_batch FROM firmware_rollouts WHERE id=$1 FOR UPDATE`, j.rolloutID).Scan(&rolloutStatus, &currentBatch)
+		if err == nil && ((rolloutStatus != "canary_running" && rolloutStatus != "batch_running") || currentBatch != j.rolloutMember.BatchNumber) {
+			err = errors.New("rollout was paused or its active batch changed during preparation")
+		}
+	}
+	if err == nil {
+		var tag pgconn.CommandTag
+		tag, err = tx.Exec(ctx, `UPDATE firmware_upgrades SET status='ready', step='', detail='', image_name=$2, image_sha256=$3,
+			image_size=$4, boot_id=$5, inventory_digest=$6, ready_at=NOW(), expires_at=NOW() + ($7 * INTERVAL '1 second')
+			WHERE id=$1 AND status='preparing'`, j.id, img.Name, imageHash, imageSize, bootID, digest, int(upgradeReadyTTL.Seconds()))
+		if err == nil && tag.RowsAffected() != 1 {
+			err = errors.New("upgrade state changed before the image was ready")
+		}
+	}
 	if err == nil {
 		err = insertAuditEvent(ctx, tx, j.userID, "device.firmware_upgrade_ready", "device", j.deviceID,
 			map[string]any{"upgrade_id": j.id, "version": j.version, "image_sha256": imageHash, "backup_id": backup.Backup.ID})
+	}
+	if err == nil && j.rolloutID > 0 {
+		tag, updateErr := tx.Exec(ctx, `UPDATE firmware_rollout_devices SET status='ready',updated_at=NOW()
+			WHERE rollout_id=$1 AND device_id_snapshot=$2 AND upgrade_id=$3 AND status='preparing'`,
+			j.rolloutID, j.deviceID, j.id)
+		if updateErr != nil {
+			err = updateErr
+		} else if tag.RowsAffected() != 1 {
+			err = errors.New("rollout device state changed while preparation completed")
+		}
+	}
+	if err == nil && j.rolloutID > 0 {
+		err = insertAuditEvent(ctx, tx, j.userID, "firmware.rollout_device_ready", "firmware_rollout", strconv.FormatInt(j.rolloutID, 10),
+			map[string]any{"device_id": j.deviceID, "upgrade_id": j.id, "batch_number": j.rolloutMember.BatchNumber})
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
@@ -880,6 +928,7 @@ func (a *app) recoverFirmwareUpgrades(ctx context.Context, startedAt time.Time) 
 		stopped, deviceID := a.markUpgradeStopped(sctx, o.id, o.status, reason, "")
 		if stopped {
 			a.cleanupStaged(sctx, deviceID)
+			a.pauseFirmwareRolloutForUpgrade(sctx, o.id, "stopped", reason)
 		}
 		cancel()
 	}
