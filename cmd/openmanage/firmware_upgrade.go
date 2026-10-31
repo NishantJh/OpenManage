@@ -601,9 +601,13 @@ func (j *upgradeJob) run(ctx context.Context) {
 		}
 	}
 	if err == nil {
-		_, err = tx.Exec(ctx, `UPDATE firmware_upgrades SET status='ready', step='', detail='', image_name=$2, image_sha256=$3,
+		var tag pgconn.CommandTag
+		tag, err = tx.Exec(ctx, `UPDATE firmware_upgrades SET status='ready', step='', detail='', image_name=$2, image_sha256=$3,
 			image_size=$4, boot_id=$5, inventory_digest=$6, ready_at=NOW(), expires_at=NOW() + ($7 * INTERVAL '1 second')
 			WHERE id=$1 AND status='preparing'`, j.id, img.Name, imageHash, imageSize, bootID, digest, int(upgradeReadyTTL.Seconds()))
+		if err == nil && tag.RowsAffected() != 1 {
+			err = errors.New("upgrade state changed before the image was ready")
+		}
 	}
 	if err == nil {
 		err = insertAuditEvent(ctx, tx, j.userID, "device.firmware_upgrade_ready", "device", j.deviceID,
