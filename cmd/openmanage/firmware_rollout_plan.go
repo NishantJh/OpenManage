@@ -15,6 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type firmwareRolloutUnsupportedPathError struct { reason string }
+
+func (e firmwareRolloutUnsupportedPathError) Error() string { return e.reason }
+
 type rolloutQueryRower interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
@@ -143,7 +147,7 @@ func (a *app) firmwarePlanForRolloutMember(ctx context.Context, serverURL string
 	}
 	sort.Strings(branches)
 	if problem := upgradePathProblem(manifest.Release, rollout.Version, branches); problem != "" {
-		return firmwarePlan{}, errors.New(problem)
+		return firmwarePlan{}, firmwareRolloutUnsupportedPathError{reason: problem}
 	}
 	plan, err := firmwarePlanFor(ctx, serverURL, manifest, rollout.Version)
 	if err != nil {
@@ -215,7 +219,12 @@ func (a *app) previewFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	for _, member := range rollout.Devices {
 		plan, err := a.firmwarePlanForRolloutMember(ctx, serverURL, rollout, member)
 		if err != nil {
-			buildServerError(w, err)
+			var pathErr firmwareRolloutUnsupportedPathError
+			if errors.As(err, &pathErr) {
+				writeError(w, http.StatusConflict, pathErr.Error())
+			} else {
+				buildServerError(w, err)
+			}
 			return
 		}
 		if len(plan.Blockers) > 0 {
