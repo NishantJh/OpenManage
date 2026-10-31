@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	firmwareRolloutBodyLimit = 16 << 10
-	firmwareRolloutListLimit = 20
-	firmwareRolloutMaxDevices = 20
-	firmwareRolloutMaxBatches = 4
+	firmwareRolloutBodyLimit    = 16 << 10
+	firmwareRolloutListLimit    = 20
+	firmwareRolloutMaxDevices   = 20
+	firmwareRolloutMaxBatches   = 4
 	firmwareRolloutMaxBatchSize = 5
 )
 
@@ -29,22 +29,22 @@ type firmwareRolloutRequest struct {
 }
 
 type firmwareRolloutMember struct {
-	DeviceID                   string          `json:"device_id"`
-	DeviceName                 string          `json:"device_name"`
-	Model                      string          `json:"model"`
-	CurrentRelease             string          `json:"current_release"`
-	BoardName                  string          `json:"board_name"`
-	Target                     string          `json:"target"`
-	InventoryID                int64           `json:"inventory_id"`
-	InventoryDigest            string          `json:"inventory_digest"`
-	InventoryVerifiedAt        time.Time       `json:"inventory_verified_at"`
-	DesiredPackageSetRevision  int             `json:"desired_package_set_revision"`
-	BatchNumber                int             `json:"batch_number"`
-	Position                   int             `json:"position"`
-	Status                     string          `json:"status"`
-	Plan                       json.RawMessage `json:"plan,omitempty"`
-	PlanDigest                 string          `json:"plan_digest,omitempty"`
-	InventoryManifest          json.RawMessage `json:"-"`
+	DeviceID                  string          `json:"device_id"`
+	DeviceName                string          `json:"device_name"`
+	Model                     string          `json:"model"`
+	CurrentRelease            string          `json:"current_release"`
+	BoardName                 string          `json:"board_name"`
+	Target                    string          `json:"target"`
+	InventoryID               int64           `json:"inventory_id"`
+	InventoryDigest           string          `json:"inventory_digest"`
+	InventoryVerifiedAt       time.Time       `json:"inventory_verified_at"`
+	DesiredPackageSetRevision int             `json:"desired_package_set_revision"`
+	BatchNumber               int             `json:"batch_number"`
+	Position                  int             `json:"position"`
+	Status                    string          `json:"status"`
+	Plan                      json.RawMessage `json:"plan,omitempty"`
+	PlanDigest                string          `json:"plan_digest,omitempty"`
+	InventoryManifest         json.RawMessage `json:"-"`
 }
 
 type firmwareRollout struct {
@@ -151,7 +151,6 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var rolloutID int64
 	var out firmwareRollout
 	err = tx.QueryRow(r.Context(), `INSERT INTO firmware_rollouts(version,status,canary_device_id,created_by)
 		VALUES($1,'draft',$2,$3) RETURNING id,version,status,canary_device_id::text,COALESCE(created_by::text,''),created_at,updated_at`,
@@ -163,8 +162,8 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type selection struct {
-		id string
-		batch int
+		id       string
+		batch    int
 		position int
 	}
 	selections := make([]selection, 0, len(ids))
@@ -260,7 +259,6 @@ func loadFirmwareRollout(ctx context.Context, db *pgxpool.Pool, id int64) (firmw
 	}
 	return out, rows.Err()
 }
-
 
 func (a *app) getFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	if !requireAnyRole(w, r, "admin", "operator") {
