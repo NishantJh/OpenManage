@@ -81,7 +81,7 @@ export default function FirmwareRollouts({devices,role,onChanged}:{devices:Devic
     setQualificationDraft(d=>({...d,board_name:gap.board_name,model:gap.model,source_release:gap.source_release,target_release:gap.target_release}));
   },[qualification?.missing,gapIndex]);
 
-  const updateDraft=(key:keyof QualificationDraft,value:unknown)=>setQualificationDraft(d=>({...d,[key]:value}));
+  function updateDraft<K extends keyof QualificationDraft>(key:K,value:QualificationDraft[K]){setQualificationDraft(d=>({...d,[key]:value}))}
   async function refresh(id=selectedID){
     await loadRollouts();
     if(id!==null)await loadDetail(id);
