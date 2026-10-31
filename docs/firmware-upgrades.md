@@ -362,9 +362,9 @@ These controls change desired metadata only. Saving or restoring does not contac
 
 Step 6 builds campaign coordination around the existing single-device firmware job. It does not replace that job or weaken its checks.
 
-### 6a. Campaign drafts and immutable membership
+### 6a. Campaign drafts and immutable membership — implemented in PR #139
 
-An administrator selects the target release, exactly one canary device, and ordered batch membership. Draft creation snapshots each device's identity, latest stored inventory id/digest, and desired-package-set revision. It is metadata-only: no device contact, build-server request, package operation, or flash. A draft is not executable.
+An administrator creates a draft with a final stable target release, exactly one canary device, and up to four ordered batches (maximum five devices per batch, twenty total). The API snapshots device identity, latest stored inventory id/digest/manifest, and desired-package-set revision. Draft creation is metadata-only: no device contact, build-server request, package operation, image preparation, or flash. A draft is not executable. Admins create drafts; admins and operators can inspect the latest 20 campaigns.
 
 ### 6b. Server-computed plan preview
 
