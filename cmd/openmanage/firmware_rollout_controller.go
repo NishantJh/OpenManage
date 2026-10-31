@@ -280,7 +280,7 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 	}
 	plan, err := firmwareRolloutMemberPlan(member, rollout.Version)
 	if err != nil {
-		a.pauseFirmwareRollout(ctx, rolloutID, "stale or invalid plan: "+err.Error(), r.Context().Value(userContextKey).(authUser).ID)
+		a.setFirmwareRolloutPaused(ctx, rolloutID, "stale or invalid plan: "+err.Error(), r.Context().Value(userContextKey).(authUser).ID)
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -290,12 +290,12 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !current {
-		a.pauseFirmwareRollout(ctx, rolloutID, "device, inventory, or desired package-set revision changed", r.Context().Value(userContextKey).(authUser).ID)
+		a.setFirmwareRolloutPaused(ctx, rolloutID, "device, inventory, or desired package-set revision changed", r.Context().Value(userContextKey).(authUser).ID)
 		writeError(w, http.StatusConflict, "device, inventory, or desired package-set revision changed; create a new rollout draft")
 		return
 	}
 	if _, err = findMatchingFirmwareHardwareQualification(ctx, a.db, member, rollout.Version); err != nil {
-		a.pauseFirmwareRollout(ctx, rolloutID, "physical hardware qualification expired or no longer matches", r.Context().Value(userContextKey).(authUser).ID)
+		a.setFirmwareRolloutPaused(ctx, rolloutID, "physical hardware qualification expired or no longer matches", r.Context().Value(userContextKey).(authUser).ID)
 		writeError(w, http.StatusConflict, "current physical hardware qualification is required before preparing this device")
 		return
 	}
@@ -310,7 +310,7 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if problem := upgradePathProblem(member.CurrentRelease, rollout.Version, branches); problem != "" {
-		a.pauseFirmwareRollout(ctx, rolloutID, "unsupported release path: "+problem, r.Context().Value(userContextKey).(authUser).ID)
+		a.setFirmwareRolloutPaused(ctx, rolloutID, "unsupported release path: "+problem, r.Context().Value(userContextKey).(authUser).ID)
 		writeError(w, http.StatusConflict, problem)
 		return
 	}
@@ -336,21 +336,21 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 	var locked string
 	if err = tx.QueryRow(ctx, `SELECT id::text FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&locked); err != nil {
 		_ = tx.Rollback(ctx)
-		_ = a.pauseFirmwareRollout(ctx, rolloutID, "selected device was removed during preparation", user.ID)
+		_ = a.setFirmwareRolloutPaused(ctx, rolloutID, "selected device was removed during preparation", user.ID)
 		writeError(w, http.StatusConflict, "device no longer exists")
 		return
 	}
 	current, err = firmwareRolloutMemberCurrent(ctx, tx, member)
 	if err != nil || !current {
 		_ = tx.Rollback(ctx)
-		_ = a.pauseFirmwareRollout(ctx, rolloutID, "device, inventory, or desired package-set revision changed during preparation", user.ID)
+		_ = a.setFirmwareRolloutPaused(ctx, rolloutID, "device, inventory, or desired package-set revision changed during preparation", user.ID)
 		writeError(w, http.StatusConflict, "device, inventory, or desired package-set revision changed; create a new rollout draft")
 		return
 	}
 	qualification, err := findMatchingFirmwareHardwareQualification(ctx, tx, member, rollout.Version)
 	if err != nil {
 		_ = tx.Rollback(ctx)
-		_ = a.pauseFirmwareRollout(ctx, rolloutID, "physical hardware qualification expired during preparation", user.ID)
+		_ = a.setFirmwareRolloutPaused(ctx, rolloutID, "physical hardware qualification expired during preparation", user.ID)
 		writeError(w, http.StatusConflict, "current physical hardware qualification is required")
 		return
 	}
@@ -358,7 +358,7 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM firmware_rollout_qualifications
 		WHERE rollout_id=$1 AND qualification_id=$2)`, rolloutID, qualification.ID).Scan(&linked); err != nil || !linked {
 		_ = tx.Rollback(ctx)
-		_ = a.pauseFirmwareRollout(ctx, rolloutID, "campaign qualification evidence link is missing", user.ID)
+		_ = a.setFirmwareRolloutPaused(ctx, rolloutID, "campaign qualification evidence link is missing", user.ID)
 		writeError(w, http.StatusConflict, "hardware qualification was not recorded for this campaign")
 		return
 	}
@@ -411,13 +411,13 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 	}
 	if err != nil {
 		_ = tx.Rollback(ctx)
-		_ = a.pauseFirmwareRollout(ctx, rolloutID, "audit or persistence failure while preparing a rollout device", user.ID)
+		_ = a.setFirmwareRolloutPaused(ctx, rolloutID, "audit or persistence failure while preparing a rollout device", user.ID)
 		writeError(w, http.StatusInternalServerError, "could not start rollout device preparation")
 		return
 	}
 	if err = tx.Commit(ctx); err != nil {
 		_ = tx.Rollback(ctx)
-		_ = a.pauseFirmwareRollout(ctx, rolloutID, "commit failure while preparing a rollout device", user.ID)
+		_ = a.setFirmwareRolloutPaused(ctx, rolloutID, "commit failure while preparing a rollout device", user.ID)
 		writeError(w, http.StatusInternalServerError, "could not start rollout device preparation")
 		return
 	}
@@ -496,13 +496,13 @@ func (a *app) advanceFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		_ = tx.Rollback(ctx)
-		_ = a.pauseFirmwareRollout(ctx, id, "audit or persistence failure while advancing a batch", user.ID)
+		_ = a.setFirmwareRolloutPaused(ctx, id, "audit or persistence failure while advancing a batch", user.ID)
 		writeError(w, http.StatusInternalServerError, "could not audit rollout advancement")
 		return
 	}
 	if err = tx.Commit(ctx); err != nil {
 		_ = tx.Rollback(ctx)
-		_ = a.pauseFirmwareRollout(ctx, id, "commit failure while advancing a batch", user.ID)
+		_ = a.setFirmwareRolloutPaused(ctx, id, "commit failure while advancing a batch", user.ID)
 		writeError(w, http.StatusInternalServerError, "could not advance the rollout")
 		return
 	}
@@ -540,7 +540,7 @@ func (a *app) pauseFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "pause reason must be 500 characters or fewer on one line")
 		return
 	}
-	if err := a.pauseFirmwareRollout(r.Context(), id, reason, r.Context().Value(userContextKey).(authUser).ID); err != nil {
+	if err := a.setFirmwareRolloutPaused(r.Context(), id, reason, r.Context().Value(userContextKey).(authUser).ID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "rollout not found")
 		} else {
@@ -621,7 +621,7 @@ func (a *app) cancelFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (a *app) pauseFirmwareRollout(ctx context.Context, rolloutID int64, reason, actorID string) error {
+func (a *app) setFirmwareRolloutPaused(ctx context.Context, rolloutID int64, reason, actorID string) error {
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
 		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollouts SET status='paused',pause_reason=$2,updated_at=NOW()
