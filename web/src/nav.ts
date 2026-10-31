@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 export const pages=[
  {path:"/",key:"overview",label:"Overview"},
  {path:"/devices",key:"devices",label:"Devices"},
+ {path:"/settings",key:"settings",label:"Device settings"},
  {path:"/floor-plan",key:"floorplan",label:"Floor plan"},
  {path:"/configuration",key:"configuration",label:"Configuration"},
  {path:"/monitoring",key:"monitoring",label:"Monitoring"},
@@ -13,6 +14,7 @@ export const pages=[
 export type PageKey=typeof pages[number]["key"];
 
 function currentPage():PageKey{
+ if(window.location.pathname.startsWith("/settings/"))return "settings";
  const p=window.location.pathname.replace(/\/+$/,"")||"/";
  return pages.find(x=>x.path===p)?.key??"overview";
 }
