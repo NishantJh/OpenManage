@@ -229,6 +229,8 @@ func main() {
 	mux.HandleFunc("GET /api/firmware/hardware-qualifications", a.listFirmwareHardwareQualifications)
 	mux.HandleFunc("POST /api/firmware/hardware-qualifications", a.createFirmwareHardwareQualification)
 	mux.HandleFunc("GET /api/config-settings", a.listWritableSettings)
+	mux.HandleFunc("GET /api/config-schema", a.getConfigSchema)
+	mux.HandleFunc("GET /api/devices/{id}/settings", a.getDeviceSettings)
 	mux.HandleFunc("GET /api/devices/{id}/config-changes", a.listConfigChanges)
 	mux.HandleFunc("POST /api/devices/{id}/config-changes", a.previewConfigChange)
 	mux.HandleFunc("POST /api/devices/{id}/config-changes/{change}/apply", a.applyConfigChange)
