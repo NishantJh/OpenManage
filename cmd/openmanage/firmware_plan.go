@@ -489,26 +489,26 @@ type packageRename struct {
 }
 
 type firmwarePlan struct {
-	Version         string          `json:"version"`
-	VersionCode     string          `json:"version_code"`
-	Kernel          string          `json:"kernel"`
-	Target          string          `json:"target"`
-	Profile         string          `json:"profile"`
-	ProfileTitle    string          `json:"profile_title"`
-	PackageManager  string          `json:"package_manager"`
-	Packages        []string        `json:"packages"`
-	Kept            []string        `json:"kept"`
-	Renamed         []packageRename `json:"renamed"`
-	Dropped         []string        `json:"dropped"`
-	Unavailable     []string        `json:"unavailable"`
-	RemovedDefaults []string        `json:"removed_defaults"`
-	Blockers        []string        `json:"blockers"`
-	Warnings        []string        `json:"warnings"`
-	DesiredSetRevision       int                `json:"desired_set_revision,omitempty"`
-	DesiredOfficialPackages  []string           `json:"desired_official_packages,omitempty"`
-	DesiredUnavailable       []string           `json:"desired_unavailable,omitempty"`
-	DesiredSources           []packageSetSource `json:"desired_sources,omitempty"`
-	available                map[string]bool
+	Version                 string             `json:"version"`
+	VersionCode             string             `json:"version_code"`
+	Kernel                  string             `json:"kernel"`
+	Target                  string             `json:"target"`
+	Profile                 string             `json:"profile"`
+	ProfileTitle            string             `json:"profile_title"`
+	PackageManager          string             `json:"package_manager"`
+	Packages                []string           `json:"packages"`
+	Kept                    []string           `json:"kept"`
+	Renamed                 []packageRename    `json:"renamed"`
+	Dropped                 []string           `json:"dropped"`
+	Unavailable             []string           `json:"unavailable"`
+	RemovedDefaults         []string           `json:"removed_defaults"`
+	Blockers                []string           `json:"blockers"`
+	Warnings                []string           `json:"warnings"`
+	DesiredSetRevision      int                `json:"desired_set_revision,omitempty"`
+	DesiredOfficialPackages []string           `json:"desired_official_packages,omitempty"`
+	DesiredUnavailable      []string           `json:"desired_unavailable,omitempty"`
+	DesiredSources          []packageSetSource `json:"desired_sources,omitempty"`
+	available               map[string]bool
 	// stock is the image's default package list for the device's profile; the stock
 	// diff reads it, the plan response does not carry it.
 	stock []string

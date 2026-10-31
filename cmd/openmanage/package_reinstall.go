@@ -20,10 +20,10 @@ type reinstallCandidate struct {
 	Name string `json:"name"`
 	// SourceID, Version and Format describe the confirmed source that fits the device; they
 	// are empty when none does, and Reason says why.
-	SourceID *int64 `json:"source_id"`
-	Version  string `json:"version,omitempty"`
-	Format   string `json:"format,omitempty"`
-	Reason   string `json:"reason,omitempty"`
+	SourceID   *int64 `json:"source_id"`
+	Version    string `json:"version,omitempty"`
+	Format     string `json:"format,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 	SourceMode string `json:"source_mode,omitempty"`
 }
 
@@ -50,50 +50,81 @@ func (a *app) reinstallCandidates(ctx context.Context, wanted []string, m firmwa
 // sources selected by the desired package-set revision. Source IDs are captured in the plan.
 func (a *app) reinstallCandidatesWithDesired(ctx context.Context, wanted []string, desired []packageSetSource, m firmwareManifest) ([]reinstallCandidate, error) {
 	have := map[string]bool{}
-	for _, p := range m.Packages { have[p.Name] = true }
+	for _, p := range m.Packages {
+		have[p.Name] = true
+	}
 	desiredByName := make(map[string]packageSetSource, len(desired))
-	for _, source := range desired { desiredByName[source.Name] = source }
+	for _, source := range desired {
+		desiredByName[source.Name] = source
+	}
 	seen := map[string]bool{}
 	names := make([]string, 0, len(wanted)+len(desired))
-	for _, name := range wanted { if !seen[name] { seen[name] = true; names = append(names, name) } }
-	for _, source := range desired { if !seen[source.Name] { seen[source.Name] = true; names = append(names, source.Name) } }
+	for _, name := range wanted {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	for _, source := range desired {
+		if !seen[source.Name] {
+			seen[source.Name] = true
+			names = append(names, source.Name)
+		}
+	}
 	out := []reinstallCandidate{}
 	for _, name := range names {
-		if have[name] { continue }
+		if have[name] {
+			continue
+		}
 		c := reinstallCandidate{Name: name, Reason: "no confirmed package source for this name"}
 		if selected, ok := desiredByName[name]; ok {
 			c.SourceMode = selected.Mode
 			if selected.SourceID == nil {
 				c.Reason = "no confirmed source was available when this firmware plan was prepared"
-				out = append(out, c); continue
+				out = append(out, c)
+				continue
 			}
 			var id int64
 			var version, format, arch string
 			err := a.db.QueryRow(ctx, `SELECT id, version, format, arch FROM package_sources WHERE id=$1 AND name=$2 AND status='confirmed'`, *selected.SourceID, name).Scan(&id, &version, &format, &arch)
 			if errors.Is(err, pgx.ErrNoRows) {
 				c.Reason = "the selected package source is no longer confirmed or available"
-			} else if err != nil { return nil, err
+			} else if err != nil {
+				return nil, err
 			} else if selected.Version != "" && version != selected.Version {
 				c.Reason = "the selected package source version no longer matches the firmware plan"
 			} else if ok, why := sourceFits(format, arch, m); ok {
 				c.SourceID, c.Version, c.Format, c.Reason = &id, version, format, ""
-			} else { c.Reason = why }
-			out = append(out, c); continue
+			} else {
+				c.Reason = why
+			}
+			out = append(out, c)
+			continue
 		}
 		rows, err := a.db.Query(ctx, `SELECT id, version, format, arch FROM package_sources WHERE name=$1 AND status='confirmed' ORDER BY confirmed_at DESC NULLS LAST, id DESC`, name)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		first := true
 		for rows.Next() {
 			var id int64
 			var version, format, arch string
-			if err := rows.Scan(&id, &version, &format, &arch); err != nil { rows.Close(); return nil, err }
+			if err := rows.Scan(&id, &version, &format, &arch); err != nil {
+				rows.Close()
+				return nil, err
+			}
 			if ok, why := sourceFits(format, arch, m); ok {
 				c.SourceID, c.Version, c.Format, c.Reason = &id, version, format, ""
 				break
-			} else if first { c.Reason = why }
+			} else if first {
+				c.Reason = why
+			}
 			first = false
 		}
-		if err := rows.Err(); err != nil { rows.Close(); return nil, err }
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
 		rows.Close()
 		out = append(out, c)
 	}
