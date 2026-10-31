@@ -92,6 +92,10 @@ func applyDesiredPackageSet(plan *firmwarePlan, revision packageSetRevision) {
 			plan.Warnings = append(plan.Warnings, "Desired removal "+name+" is not a default package in the target release.")
 			continue
 		}
+		if accessCriticalPackage(name) {
+			plan.Blockers = append(plan.Blockers, "The desired package set removes "+name+", which is needed to reach and manage the device. Edit the desired package set before upgrading.")
+			continue
+		}
 		delete(positive, name)
 		plan.Kept = removePackageName(plan.Kept, name)
 		if !negative[name] {

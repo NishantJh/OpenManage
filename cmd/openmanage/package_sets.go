@@ -55,6 +55,18 @@ type packageSetResponse struct {
 	Revisions       []packageSetRevision `json:"revisions"`
 }
 
+// accessCriticalPackage reports default packages that a firmware image must keep: without
+// them the device may boot but OpenManage can no longer reach or configure it over SSH and
+// rpcd. Swaps of wpad, dnsmasq and similar packages stay possible; these do not.
+func accessCriticalPackage(name string) bool {
+	for _, prefix := range []string{"kernel", "base-files", "busybox", "libc", "musl", "procd", "ubus", "uci", "rpcd", "netifd", "dropbear", "openssh", "apk", "opkg"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizePackageSetNames(values []string) ([]string, error) {
 	if len(values) > packageSetMaxItems {
 		return nil, errors.New("too many package names")
@@ -92,6 +104,11 @@ func normalizePackageSetRequest(in packageSetRequest) (packageSetRequest, error)
 	removed := make(map[string]bool, len(in.RemovedDefaults))
 	for _, name := range in.RemovedDefaults {
 		removed[name] = true
+	}
+	for _, name := range in.RemovedDefaults {
+		if accessCriticalPackage(name) {
+			return in, errors.New(name + " is needed to reach and manage the device and cannot be removed from the image")
+		}
 	}
 	for name := range official {
 		if removed[name] {

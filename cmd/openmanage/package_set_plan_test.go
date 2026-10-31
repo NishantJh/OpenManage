@@ -45,3 +45,23 @@ func TestApplyDesiredPackageSetOnlyRemovesTargetDefaults(t *testing.T) {
 		t.Fatalf("warning = %v", plan.Warnings)
 	}
 }
+
+func TestApplyDesiredPackageSetBlocksAccessCriticalRemoval(t *testing.T) {
+	plan := firmwarePlan{Packages: []string{"dropbear", "ppp"}, stock: []string{"dropbear", "ppp"}, available: map[string]bool{}}
+	applyDesiredPackageSet(&plan, packageSetRevision{Revision: 3, RemovedDefaults: []string{"dropbear", "ppp"}})
+	if len(plan.Blockers) != 1 || !strings.Contains(plan.Blockers[0], "dropbear") {
+		t.Fatalf("blockers = %v", plan.Blockers)
+	}
+	if !slices.Equal(plan.Packages, []string{"-ppp", "dropbear"}) {
+		t.Fatalf("dropbear must stay in the image request: %v", plan.Packages)
+	}
+}
+
+func TestPackageSetRequestRejectsAccessCriticalRemoval(t *testing.T) {
+	if _, err := normalizePackageSetRequest(packageSetRequest{RemovedDefaults: []string{"dropbear"}}); err == nil {
+		t.Fatal("removing dropbear must be rejected")
+	}
+	if _, err := normalizePackageSetRequest(packageSetRequest{RemovedDefaults: []string{"dnsmasq", "wpad-basic-mbedtls"}, OfficialPackages: []string{"dnsmasq-full", "wpad-openssl"}}); err != nil {
+		t.Fatalf("swaps of dnsmasq and wpad must stay possible: %v", err)
+	}
+}
