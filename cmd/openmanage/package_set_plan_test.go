@@ -10,9 +10,9 @@ func TestApplyDesiredPackageSet(t *testing.T) {
 	plan := firmwarePlan{
 		Packages:        []string{"curl", "-ppp"},
 		RemovedDefaults: []string{"ppp"},
-		stock:     []string{"ppp", "dnsmasq"},
-		available: map[string]bool{"curl": true, "ppp": true, "luci-app-demo": true},
-		Warnings:  []string{},
+		stock:           []string{"ppp", "dnsmasq"},
+		available:       map[string]bool{"curl": true, "ppp": true, "luci-app-demo": true},
+		Warnings:        []string{},
 	}
 	revision := packageSetRevision{
 		Revision: 7, OfficialPackages: []string{"luci-app-demo", "missing-feed-package", "ppp"}, RemovedDefaults: []string{"dnsmasq"},

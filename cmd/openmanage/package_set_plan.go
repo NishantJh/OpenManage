@@ -15,7 +15,9 @@ func (a *app) firmwarePlanForDevice(ctx context.Context, serverURL, deviceID str
 		return plan, err
 	}
 	set, err := a.loadDevicePackageSet(ctx, deviceID)
-	if err != nil { return plan, err }
+	if err != nil {
+		return plan, err
+	}
 	if set.Current == nil {
 		return plan, nil
 	}
@@ -54,7 +56,8 @@ func (a *app) resolveDesiredPackageSources(ctx context.Context, sources []packag
 			err := a.db.QueryRow(ctx, `SELECT id, version FROM package_sources WHERE name=$1 AND status='confirmed' ORDER BY confirmed_at DESC NULLS LAST, id DESC LIMIT 1`, source.Name).Scan(&id, &version)
 			if errors.Is(err, pgx.ErrNoRows) {
 				plan.Warnings = append(plan.Warnings, "No confirmed package source is available for desired package "+source.Name+".")
-			} else if err != nil { return nil, err
+			} else if err != nil {
+				return nil, err
 			} else {
 				source.SourceID, source.Version = &id, version
 			}

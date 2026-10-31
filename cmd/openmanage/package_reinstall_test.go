@@ -147,7 +147,9 @@ func TestDesiredPackageSourcesUseThePlanSnapshot(t *testing.T) {
 	_ = add("luci-theme-latest", "3.0", "d")
 	manifest := firmwareManifest{PackageManager: "apk", Arch: "x86_64"}
 	got, err := a.reinstallCandidatesWithDesired(ctx, []string{"luci-theme-pinned"}, resolved, manifest)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 2 || got[0].SourceID == nil || *got[0].SourceID != pinnedV1 || got[0].Version != "1.0" || got[1].SourceID == nil || *got[1].SourceID != latestV1 || got[1].Version != "2.0" {
 		t.Fatalf("reinstall candidates must retain selected source ids: %+v", got)
 	}
