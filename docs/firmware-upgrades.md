@@ -173,6 +173,15 @@ The packages the official feeds do not offer (the plan's "unavailable" list, typ
 - **Screen:** the Firmware page has a Software sources section. Administrators add a package (upload or GitHub release link), read its description, dependencies and install scripts, and confirm by repeating the SHA-256. Operators see confirmed sources. Per device it shows installs, results, and the packages that need reinstalling after a flash, each with an Install button that opens the same typed-device-name confirmation.
 - **Check for update:** `POST /api/package-sources/{id}/check-update` (administrators; confirmed sources registered from a GitHub release link). It asks GitHub for the latest release tag (github.com only, same address checks as downloads), works out the matching file link by replacing the old tag in the file name, and returns `up_to_date` or `newer` with the link. It downloads and registers nothing; the administrator presses "Download for review" and the new file is a new pending source with the normal review and confirmation. It runs only when the button is pressed; there is no background check.
 
+### Desired package sets (as built in Step 5a)
+
+PR #132 adds a per-device desired package set with immutable, numbered revisions. Each revision records official packages to add, firmware defaults to remove, and confirmed package sources either pinned to a registered source id/version or following the latest confirmed source registered for that package name. The actor and timestamp are retained, and restoring an earlier revision creates a new revision rather than mutating history.
+
+- API: `GET` and `PUT /api/devices/{id}/package-set`; `POST /api/devices/{id}/package-set/revisions/{revision}/restore`. Reads are available to device readers; writes and restores are administrator-only.
+- The migration is additive and re-runnable. Package source rows referenced by a pinned revision cannot be deleted; the last confirmed source for a name referenced in latest mode cannot be deleted.
+- This step stores desired state only. It does not install/remove packages, contact a device, alter an inventory, or change the current firmware plan. The set-to-plan diff and reinstall-list integration are Step 5b.
+- Scope decision: no device-group model exists, so inheritance is deferred. No automatic post-flash reinstall is introduced; the existing report-and-manual-install behaviour remains.
+
 ### The package set changes over time
 
 There is no fixed list of third-party packages anywhere in the code. What should be on a device is data:
