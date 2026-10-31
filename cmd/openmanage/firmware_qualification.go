@@ -165,8 +165,8 @@ func normalizeFirmwareHardwareQualification(in firmwareHardwareQualificationRequ
 		in.RecoveryMethod != "not_exercised" && len(in.EvidenceReference) == 0 {
 		return in, errors.New("a successful physical qualification requires an evidence reference")
 	}
-	if len(in.EvidenceReference) > 512 || strings.ContainsAny(in.EvidenceReference, "\r\n") {
-		return in, errors.New("evidence_reference must be 512 characters or fewer on one line")
+	if len(in.EvidenceReference) > 512 || (in.EvidenceReference != "" && !firmwareQualificationLabel(in.EvidenceReference, 512)) {
+		return in, errors.New("evidence_reference must be 512 characters or fewer on one line without control characters")
 	}
 	if len(in.Notes) > 4000 {
 		return in, errors.New("notes must be 4000 characters or fewer")
