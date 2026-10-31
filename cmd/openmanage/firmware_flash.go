@@ -557,7 +557,7 @@ func (a *app) finishUpgrade(rec upgradeRecord, status, detail string, checks []u
 	if err != nil {
 		log.Printf("firmware upgrade %d finished as %s but could not be recorded", rec.ID, status)
 		if rec.RolloutID > 0 {
-			a.pauseFirmwareRolloutForUpgrade(context.Background(), rec.ID, "needs_attention", "could not persist or audit the flash verification result")
+			a.pauseFirmwareRolloutForUpgrade(ctx, rec.ID, "needs_attention", "could not persist or audit the flash verification result")
 		}
 		return
 	}
@@ -585,12 +585,27 @@ func (a *app) acknowledgeFirmwareUpgrade(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	user := r.Context().Value(userContextKey).(authUser)
+	var rolloutID int64
+	lookupErr := a.db.QueryRow(r.Context(), `SELECT rollout_id FROM firmware_rollout_devices
+		WHERE upgrade_id=$1 AND device_id_snapshot=$2`, id, deviceID).Scan(&rolloutID)
+	if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "could not inspect rollout membership")
+		return
+	}
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not acknowledge the upgrade")
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var rolloutStatus string
+	var currentBatch int
+	if rolloutID > 0 {
+		if err = tx.QueryRow(r.Context(), `SELECT status,current_batch FROM firmware_rollouts WHERE id=$1 FOR UPDATE`, rolloutID).Scan(&rolloutStatus, &currentBatch); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not lock the rollout")
+			return
+		}
+	}
 	var backupID *string
 	var pinned bool
 	err = tx.QueryRow(r.Context(), `UPDATE firmware_upgrades SET acknowledged_at=NOW(), acknowledged_by=$3
@@ -606,10 +621,28 @@ func (a *app) acknowledgeFirmwareUpgrade(w http.ResponseWriter, r *http.Request)
 	if err == nil {
 		err = insertAuditEvent(r.Context(), tx, user.ID, "device.firmware_upgrade_acknowledge", "device", deviceID, map[string]any{"upgrade_id": id})
 	}
+	if err == nil && rolloutID > 0 && (rolloutStatus == "canary_running" || rolloutStatus == "batch_running") {
+		var total, acknowledged int
+		err = tx.QueryRow(r.Context(), `SELECT count(*)::int,
+			count(*) FILTER (WHERE rd.status='done' AND u.status='done' AND u.acknowledged_at IS NOT NULL)::int
+			FROM firmware_rollout_devices rd LEFT JOIN firmware_upgrades u ON u.id=rd.upgrade_id
+			WHERE rd.rollout_id=$1 AND rd.batch_number=$2`, rolloutID, currentBatch).Scan(&total, &acknowledged)
+		if err == nil && total > 0 && total == acknowledged {
+			_, err = tx.Exec(r.Context(), `UPDATE firmware_rollouts SET status='awaiting_batch',updated_at=NOW() WHERE id=$1`, rolloutID)
+			if err == nil {
+				err = insertAuditEvent(r.Context(), tx, user.ID, "firmware.rollout_batch_acknowledged", "firmware_rollout",
+					fmt.Sprint(rolloutID), map[string]any{"batch_number": currentBatch})
+			}
+		}
+	}
 	if err == nil {
 		err = tx.Commit(r.Context())
 	}
 	if err != nil {
+		_ = tx.Rollback(r.Context())
+		if rolloutID > 0 {
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "audit or persistence failure while acknowledging a campaign result", user.ID)
+		}
 		writeError(w, http.StatusInternalServerError, "could not acknowledge the upgrade")
 		return
 	}
