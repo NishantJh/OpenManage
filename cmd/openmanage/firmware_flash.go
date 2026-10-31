@@ -183,6 +183,17 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := r.Context().Value(userContextKey).(authUser)
+	var rolloutID int64
+	rolloutLookupErr := a.db.QueryRow(r.Context(), `SELECT rollout_id FROM firmware_rollout_devices
+		WHERE upgrade_id=$1 AND device_id_snapshot=$2`, id, deviceID).Scan(&rolloutID)
+	if rolloutLookupErr != nil && !errors.Is(rolloutLookupErr, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "could not inspect rollout membership")
+		return
+	}
+	if rolloutID > 0 && user.Role != "admin" {
+		writeError(w, http.StatusForbidden, "only an administrator can flash a rollout device")
+		return
+	}
 
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
@@ -190,6 +201,16 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var rolloutStatus string
+	var currentBatch, maxConcurrent int
+	if rolloutID > 0 {
+		err = tx.QueryRow(r.Context(), `SELECT status,current_batch,max_concurrent_flashes FROM firmware_rollouts WHERE id=$1 FOR UPDATE`,
+			rolloutID).Scan(&rolloutStatus, &currentBatch, &maxConcurrent)
+		if err != nil {
+			writeError(w, http.StatusConflict, "rollout is no longer available for flashing")
+			return
+		}
+	}
 	var deviceName string
 	err = tx.QueryRow(r.Context(), `SELECT name FROM devices WHERE id=$1 FOR NO KEY UPDATE`, deviceID).Scan(&deviceName)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -230,6 +251,69 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "acknowledge every warning in the plan to flash")
 		return
 	}
+	var rolloutMember firmwareRolloutMember
+	if rolloutID > 0 {
+		var memberStatus string
+		err = tx.QueryRow(r.Context(), `SELECT device_id_snapshot::text,device_name,model,current_release,board_name,target,
+			inventory_id,inventory_digest,desired_package_set_revision,batch_number,status,plan,plan_digest
+			FROM firmware_rollout_devices WHERE rollout_id=$1 AND upgrade_id=$2 FOR UPDATE`, rolloutID, id).Scan(
+			&rolloutMember.DeviceID, &rolloutMember.DeviceName, &rolloutMember.Model, &rolloutMember.CurrentRelease,
+			&rolloutMember.BoardName, &rolloutMember.Target, &rolloutMember.InventoryID, &rolloutMember.InventoryDigest,
+			&rolloutMember.DesiredPackageSetRevision, &rolloutMember.BatchNumber, &memberStatus,
+			&rolloutMember.Plan, &rolloutMember.PlanDigest)
+		if err != nil || rolloutMember.DeviceID != deviceID || memberStatus != "ready" ||
+			rolloutMember.BatchNumber != currentBatch ||
+			(currentBatch == 0 && (rolloutStatus != "canary_running" || deviceID == "")) ||
+			(currentBatch > 0 && rolloutStatus != "batch_running") {
+			_ = tx.Rollback(r.Context())
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "campaign device was not ready in the active batch", user.ID)
+			writeError(w, http.StatusConflict, "campaign device is not ready in the active batch")
+			return
+		}
+		rolloutPlan, planErr := firmwareRolloutMemberPlan(rolloutMember, upVersionForPlan(planJSON))
+		if planErr != nil {
+			_ = tx.Rollback(r.Context())
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "stale rollout plan: "+planErr.Error(), user.ID)
+			writeError(w, http.StatusConflict, planErr.Error())
+			return
+		}
+		jobPlanDigest, digestErr := firmwareRolloutPlanDigest(rolloutMember, upVersionForPlan(planJSON), plan)
+		if digestErr != nil || jobPlanDigest != rolloutMember.PlanDigest || len(rolloutPlan.Warnings) > 0 || len(rolloutPlan.Blockers) > 0 {
+			_ = tx.Rollback(r.Context())
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "firmware job plan does not match the immutable rollout preview", user.ID)
+			writeError(w, http.StatusConflict, "firmware job plan does not match the immutable rollout preview")
+			return
+		}
+		current, currentErr := firmwareRolloutMemberCurrent(r.Context(), tx, rolloutMember)
+		if currentErr != nil || !current {
+			_ = tx.Rollback(r.Context())
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "device, inventory, or desired package-set revision changed before flash", user.ID)
+			writeError(w, http.StatusConflict, "device, inventory, or desired package-set revision changed before flash")
+			return
+		}
+		qualification, qualificationErr := findMatchingFirmwareHardwareQualification(r.Context(), tx, rolloutMember, upVersionForPlan(planJSON))
+		var linked bool
+		if qualificationErr == nil {
+			qualificationErr = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM firmware_rollout_qualifications
+				WHERE rollout_id=$1 AND qualification_id=$2)`, rolloutID, qualification.ID).Scan(&linked)
+		}
+		if qualificationErr != nil || !linked {
+			_ = tx.Rollback(r.Context())
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "physical hardware qualification expired or no longer matches", user.ID)
+			writeError(w, http.StatusConflict, "current physical hardware qualification is required before flash")
+			return
+		}
+		var activeFlashes int
+		if err = tx.QueryRow(r.Context(), `SELECT count(*) FROM firmware_rollout_devices
+			WHERE rollout_id=$1 AND status IN ('flashing','verifying')`, rolloutID).Scan(&activeFlashes); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not check rollout flash concurrency")
+			return
+		}
+		if activeFlashes >= maxConcurrent {
+			writeError(w, http.StatusConflict, "the rollout has reached its concurrent flash limit")
+			return
+		}
+	}
 	var busy string
 	err = tx.QueryRow(r.Context(), `SELECT CASE
 		WHEN EXISTS(SELECT 1 FROM device_restores WHERE device_id=$1 AND status='running') THEN 'a backup restore is running on this device'
@@ -253,10 +337,26 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		err = insertAuditEvent(r.Context(), tx, user.ID, "device.firmware_upgrade_flash", "device", deviceID,
 			map[string]any{"upgrade_id": id, "version": up.Version, "image_sha256": imageHash, "warnings_acknowledged": len(plan.Warnings)})
 	}
+	if err == nil && rolloutID > 0 {
+		tag, updateErr := tx.Exec(r.Context(), `UPDATE firmware_rollout_devices SET status='flashing',updated_at=NOW()
+			WHERE rollout_id=$1 AND upgrade_id=$2 AND status='ready'`, rolloutID, id)
+		if updateErr != nil {
+			err = updateErr
+		} else if tag.RowsAffected() != 1 {
+			err = errors.New("rollout device state changed before flash")
+		}
+	}
+	if err == nil && rolloutID > 0 {
+		err = insertAuditEvent(r.Context(), tx, user.ID, "firmware.rollout_device_flash", "firmware_rollout",
+			fmt.Sprint(rolloutID), map[string]any{"device_id": deviceID, "upgrade_id": id, "batch_number": rolloutMember.BatchNumber})
+	}
 	if err == nil {
 		err = tx.Commit(r.Context())
 	}
 	if err != nil {
+		if rolloutID > 0 {
+			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "audit or persistence failure while starting a campaign flash", user.ID)
+		}
 		writeError(w, http.StatusInternalServerError, "could not start the flash")
 		return
 	}
