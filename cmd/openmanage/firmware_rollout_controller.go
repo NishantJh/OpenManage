@@ -24,8 +24,8 @@ func firmwareRolloutMemberPlan(member firmwareRolloutMember, version string) (fi
 	if plan.Version != version {
 		return plan, errors.New("the stored rollout plan target does not match the campaign")
 	}
-	if len(plan.Blockers) > 0 || len(plan.Warnings) > 0 {
-		return plan, errors.New("rollout plans with blockers or warnings cannot be executed")
+	if len(plan.Blockers) > 0 {
+		return plan, errors.New("rollout plans with blockers cannot be executed")
 	}
 	digest, err := firmwareRolloutPlanDigest(member, version, plan)
 	if err != nil || digest != member.PlanDigest {
@@ -174,6 +174,10 @@ func (a *app) startFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
+	if err = lockFirmwareRolloutDevices(ctx, tx, rollout); err != nil {
+		writeError(w, http.StatusConflict, "a selected device was removed; create a new rollout draft")
+		return
+	}
 	var status string
 	if err = tx.QueryRow(ctx, `SELECT status FROM firmware_rollouts WHERE id=$1 FOR UPDATE`, id).Scan(&status); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not lock the rollout")
@@ -181,10 +185,6 @@ func (a *app) startFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	}
 	if status != "previewed" {
 		writeError(w, http.StatusConflict, "the rollout is no longer in previewed state")
-		return
-	}
-	if err = lockFirmwareRolloutDevices(ctx, tx, rollout); err != nil {
-		writeError(w, http.StatusConflict, "a selected device was removed; create a new rollout draft")
 		return
 	}
 	for _, member := range rollout.Devices {
@@ -195,6 +195,21 @@ func (a *app) startFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		}
 		if !current {
 			writeError(w, http.StatusConflict, "a selected device, inventory, or desired package-set revision changed during start; create a new rollout draft")
+			return
+		}
+		var reserved bool
+		if err = tx.QueryRow(ctx, `SELECT
+			EXISTS(SELECT 1 FROM firmware_upgrades WHERE device_id=$1 AND status IN ('preparing','ready','flashing','verifying'))
+			OR EXISTS(SELECT 1 FROM firmware_rollout_devices rd
+				JOIN firmware_rollouts other ON other.id=rd.rollout_id
+				WHERE rd.device_id_snapshot=$1 AND rd.rollout_id<>$2
+				AND other.status IN ('awaiting_canary','canary_running','batch_running','paused'))`,
+			member.DeviceID, id).Scan(&reserved); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not check existing device upgrade reservations")
+			return
+		}
+		if reserved {
+			writeError(w, http.StatusConflict, member.DeviceName+" has an open upgrade or is reserved by another active rollout")
 			return
 		}
 		qualification, err := findMatchingFirmwareHardwareQualification(ctx, tx, member, rollout.Version)
@@ -326,18 +341,18 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer tx.Rollback(ctx)
-	var status string
-	var currentBatch int
-	err = tx.QueryRow(ctx, `SELECT status,current_batch FROM firmware_rollouts WHERE id=$1 FOR UPDATE`, rolloutID).Scan(&status, &currentBatch)
-	if err != nil || currentBatch != rollout.CurrentBatch || status != rollout.Status {
-		writeError(w, http.StatusConflict, "rollout state changed; reload before preparing a device")
-		return
-	}
 	var locked string
 	if err = tx.QueryRow(ctx, `SELECT id::text FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&locked); err != nil {
 		_ = tx.Rollback(ctx)
 		_ = a.setFirmwareRolloutPaused(ctx, rolloutID, "selected device was removed during preparation", user.ID)
 		writeError(w, http.StatusConflict, "device no longer exists")
+		return
+	}
+	var status string
+	var currentBatch int
+	err = tx.QueryRow(ctx, `SELECT status,current_batch FROM firmware_rollouts WHERE id=$1 FOR UPDATE`, rolloutID).Scan(&status, &currentBatch)
+	if err != nil || currentBatch != rollout.CurrentBatch || status != rollout.Status {
+		writeError(w, http.StatusConflict, "rollout state changed; reload before preparing a device")
 		return
 	}
 	current, err = firmwareRolloutMemberCurrent(ctx, tx, member)

@@ -37,7 +37,7 @@ func TestNormalizeFirmwareRolloutRequestFlashConcurrency(t *testing.T) {
 	}
 }
 
-func TestFirmwareRolloutMemberPlanRequiresExactDigestAndCleanPlan(t *testing.T) {
+func TestFirmwareRolloutMemberPlanRequiresExactDigestAndRejectsBlockers(t *testing.T) {
 	member := firmwareRolloutMember{
 		DeviceID:                  "550e8400-e29b-41d4-a716-446655440000",
 		DeviceName:                "router-1",
@@ -81,8 +81,22 @@ func TestFirmwareRolloutMemberPlanRequiresExactDigestAndCleanPlan(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := firmwareRolloutMemberPlan(warnedMember, warned.Version); err == nil {
-		t.Fatal("plans with warnings must not be executable")
+	if _, err := firmwareRolloutMemberPlan(warnedMember, warned.Version); err != nil {
+		t.Fatalf("warnings should remain visible for per-device acknowledgement at flash time: %v", err)
+	}
+	blocked := firmwarePlan{Version: "25.12.2", Blockers: []string{"unsupported board"}}
+	blockedJSON, err := json.Marshal(blocked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedMember := member
+	blockedMember.Plan = blockedJSON
+	blockedMember.PlanDigest, err = firmwareRolloutPlanDigest(blockedMember, blocked.Version, blocked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firmwareRolloutMemberPlan(blockedMember, blocked.Version); err == nil {
+		t.Fatal("plans with blockers must not be executable")
 	}
 }
 
