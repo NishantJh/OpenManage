@@ -231,6 +231,14 @@ func appendPackageSetRevision(ctx context.Context, tx pgx.Tx, deviceID, userID s
 	if err := tx.QueryRow(ctx, `SELECT name FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&ignored); err != nil {
 		return err
 	}
+	var flashActive bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM firmware_rollout_devices
+		WHERE device_id_snapshot=$1 AND status='flashing')`, deviceID).Scan(&flashActive); err != nil {
+		return err
+	}
+	if flashActive {
+		return errors.New("the desired package set cannot change while a campaign flash is active")
+	}
 	var setID int64
 	var currentRevision *int
 	err := tx.QueryRow(ctx, `SELECT s.id, r.revision FROM device_package_sets s
