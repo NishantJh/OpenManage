@@ -356,8 +356,6 @@ The Firmware page exposes the per-device desired package set. Administrators can
 
 These controls change desired metadata only. Saving or restoring does not contact a device, install or remove packages, or alter an existing firmware plan. The selected revision is incorporated when a new firmware plan is prepared (Step 5b). Custom packages remain manual post-flash installs; no automatic reinstall is enabled. Operators and readonly users can inspect revision history; only administrators can edit or restore. Package-source selection is available to administrators and operators, while readonly users see recorded source references without registry details.
 
-
-
 ## Step 6 — staged firmware rollout (planned; no fleet execution enabled)
 
 Step 6 builds campaign coordination around the existing single-device firmware job. It does not replace that job or weaken its checks.

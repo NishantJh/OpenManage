@@ -138,7 +138,7 @@ Safety invariants:
 - Failed flashes may require failsafe, physical reset, serial, or TFTP recovery. Never claim automatic rollback on single-partition hardware.
 
 Exit criteria: hardware qualification is recorded; a canary must pass all checks before any batch is released; batches are bounded and individually confirmed; every state survives process restart; any failure halts further flashing; and CI plus the documented physical-hardware drill pass.
- 
+
 ### 6. Monitoring and later integrations
 
 - [x] Add opt-in server-side monitoring in the existing Go process, persisted settings and per-device check history in PostgreSQL, bounded three-worker batches, PostgreSQL advisory-lock coordination, and 30-day history retention.

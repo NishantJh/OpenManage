@@ -125,7 +125,7 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	rows, err := tx.Query(r.Context(), `SELECT id::text FROM devices WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`, ids)
+	rows, err := tx.Query(r.Context(), `SELECT id::text FROM devices WHERE id::text=ANY($1::text[]) ORDER BY id FOR UPDATE`, ids)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not validate rollout devices")
 		return
