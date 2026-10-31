@@ -229,11 +229,11 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "type the device name exactly to confirm the flash")
 		return
 	}
-	var status, upgradeVersion string
+	var status, upgradeVersion, upgradeInventoryDigest string
 	var planJSON []byte
 	var expired bool
-	err = tx.QueryRow(r.Context(), `SELECT status, plan, COALESCE(expires_at < NOW(), TRUE),version FROM firmware_upgrades
-		WHERE id=$1 AND device_id=$2 FOR UPDATE`, id, deviceID).Scan(&status, &planJSON, &expired, &upgradeVersion)
+	err = tx.QueryRow(r.Context(), `SELECT status, plan, COALESCE(expires_at < NOW(), TRUE),version,inventory_digest FROM firmware_upgrades
+		WHERE id=$1 AND device_id=$2 FOR UPDATE`, id, deviceID).Scan(&status, &planJSON, &expired, &upgradeVersion, &upgradeInventoryDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "upgrade not found")
 		return
@@ -280,7 +280,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 			&rolloutMember.DesiredPackageSetRevision, &rolloutMember.BatchNumber, &memberStatus,
 			&rolloutMember.Plan, &rolloutMember.PlanDigest)
 		if err != nil || rolloutMember.DeviceID != deviceID || memberStatus != "ready" ||
-			upgradeVersion != rolloutVersion || up.InventoryDigest != rolloutMember.InventoryDigest ||
+			upgradeVersion != rolloutVersion || upgradeInventoryDigest != rolloutMember.InventoryDigest ||
 			rolloutMember.BatchNumber != currentBatch ||
 			(currentBatch == 0 && (rolloutStatus != "canary_running" || deviceID != canaryDeviceID)) ||
 			(currentBatch > 0 && rolloutStatus != "batch_running") {
