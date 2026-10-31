@@ -323,11 +323,11 @@ func (a *app) runPackageRemoval(id int64) {
 		}
 	}
 	if present || after.Status != "ok" || err != nil {
-		checks = append(checks, upgradeCheck{Name: "removed package", Status: "failed", Detail: "the device inventory did not verify that "+name+" is absent"})
+		checks = append(checks, upgradeCheck{Name: "removed package", Status: "failed", Detail: "the device inventory did not verify that " + name + " is absent"})
 		fail("the removal command returned, but the package's absence could not be verified; check the device", checks)
 		return
 	}
-	checks = append(checks, upgradeCheck{Name: "removed package", Status: "ok", Detail: name+" is absent from the device inventory"})
+	checks = append(checks, upgradeCheck{Name: "removed package", Status: "ok", Detail: name + " is absent from the device inventory"})
 	a.finishPackageRemoval(id, "done", "removed", checks)
 }
 
