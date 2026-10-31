@@ -24,6 +24,7 @@ func TestNormalizeFirmwareRolloutRequest(t *testing.T) {
 		{name: "canary only", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary}},
 		{name: "snapshot", in: firmwareRolloutRequest{Version: "SNAPSHOT", CanaryDeviceID: canary}, wantErr: true},
 		{name: "release candidate", in: firmwareRolloutRequest{Version: "25.12.2-rc1", CanaryDeviceID: canary}, wantErr: true},
+		{name: "zero-numbered release candidate", in: firmwareRolloutRequest{Version: "25.12.2-rc0", CanaryDeviceID: canary}, wantErr: true},
 		{name: "invalid canary", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: "bad"}, wantErr: true},
 		{name: "duplicate across batches", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{first}, {first}}}, wantErr: true},
 		{name: "canary duplicated in batch", in: firmwareRolloutRequest{Version: "25.12.2", CanaryDeviceID: canary, Batches: [][]string{{canary}}}, wantErr: true},
