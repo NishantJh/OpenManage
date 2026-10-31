@@ -348,3 +348,10 @@ Write operations audit transactionally (a Section 2 rule). A job state machine i
 5. Are large release jumps in scope, or only same-release and next-release upgrades?
 6. (Decided) The setup script targets Debian (and Ubuntu) only at first.
 7. (Decided) Release file or upload, installed allow-untrusted; feeds later if ever.
+
+
+### Desired package set UI (Step 5d)
+
+The Firmware page exposes the per-device desired package set. Administrators can edit official package additions, firmware-default removals, and custom package-source references. Custom sources must already be confirmed in Software sources; each entry can pin an exact registered source id/version or follow the latest confirmed source for that package name. The UI displays the current revision and the latest 50 immutable revisions. Restoring a revision creates a new revision based on the selected historical revision; it does not rewrite history.
+
+These controls change desired metadata only. Saving or restoring does not contact a device, install or remove packages, or alter an existing firmware plan. The selected revision is incorporated when a new firmware plan is prepared (Step 5b). Custom packages remain manual post-flash installs; no automatic reinstall is enabled. Operators and readonly users can inspect revision history; only administrators can edit or restore. Package-source selection is available to administrators and operators, while readonly users see recorded source references without registry details.

@@ -42,3 +42,7 @@ export type PackageSource={id:number;name:string;version:string;arch:string;form
 export type PackageUpdateCheck={status:"up_to_date"|"newer";tag:string;url?:string};
 export type PackageInstall={id:number;device_id:string;source_id:number|null;name:string;version:string;sha256:string;status:"running"|"done"|"failed";step:string;detail:string;checks:FirmwareUpgradeCheck[];created_at:string;finished_at:string|null};
 export type PackageReinstall={name:string;source_id:number|null;version?:string;format?:string;reason?:string};
+
+export type DevicePackageSetSource={name:string;mode:"pinned"|"latest";source_id?:number;version?:string};
+export type DevicePackageSetRevision={revision:number;official_packages:string[];removed_defaults:string[];sources:DevicePackageSetSource[];created_by:string;created_at:string;based_on_revision:number|null};
+export type DevicePackageSet={device_id:string;current_revision:number;current?:DevicePackageSetRevision;revisions:DevicePackageSetRevision[]};

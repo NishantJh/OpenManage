@@ -3,6 +3,7 @@ import { PackageSearch, RefreshCw } from "lucide-react";
 import { apiJSON } from "../api";
 import type { Device, FirmwareInventory, FirmwareInventoryResult, FirmwareSettings, FirmwareStockDiff, Role } from "../types";
 import UpgradePlan from "./UpgradePlan";
+import DesiredPackageSet from "./DesiredPackageSet";
 
 const space=(kb:number)=>kb<1024?kb+" KiB":kb<1024*1024?(kb/1024).toFixed(kb<10240?1:0)+" MiB":(kb/1024/1024).toFixed(1)+" GiB";
 
@@ -30,6 +31,7 @@ export default function DeviceFirmware({devices,role,onChanged}:{devices:Device[
  const added=new Set(stock?.added??[]);
  return <div className="device-firmware"><div className="section-head"><div><h2>Firmware and packages</h2><p>What each device runs today. Reading it changes nothing on the device.</p></div><div className="tools"><select aria-label="Device" className="secondary" value={deviceId} onChange={e=>setDeviceId(e.target.value)} disabled={!enrolled.length}>{enrolled.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select>{canRead&&<button className="primary" onClick={()=>void read()} disabled={busy||!deviceId}>{busy?"Reading…":<><RefreshCw size={15}/> Read from device</>}</button>}</div></div>
  {message&&<div className={message.tone+" backup-message"}>{message.text}</div>}
+ {device&&<DesiredPackageSet deviceId={device.id} deviceName={device.name} role={role} onChanged={onChanged}/> }
  {!enrolled.length?<div className="table-card"><p className="empty-line">Enroll a device to see its firmware.</p></div>:loading?<div className="table-card"><p className="empty-line">Loading…</p></div>:!m?<div className="table-card"><p className="empty-line"><PackageSearch size={15}/> No inventory yet.{canRead?" Read from device to see its release and packages.":""}</p></div>:<>
   <div className="firmware-facts table-card">
    <div><small>RELEASE</small><b>OpenWrt {m.release}</b><span>{m.revision}</span></div>
