@@ -228,6 +228,38 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "acknowledge every warning in the plan to flash")
 		return
 	}
+	var rolloutID int64
+	var rolloutStatus string
+	var currentBatch, memberBatch, maxConcurrent int
+	rolloutErr := tx.QueryRow(r.Context(), `SELECT ro.id,ro.status,ro.current_batch,rd.batch_number,ro.max_concurrent_flashes
+		FROM firmware_rollout_devices rd JOIN firmware_rollouts ro ON ro.id=rd.rollout_id
+		WHERE rd.upgrade_id=$1 FOR UPDATE OF ro,rd`, id).Scan(
+		&rolloutID, &rolloutStatus, &currentBatch, &memberBatch, &maxConcurrent)
+	if rolloutErr != nil && !errors.Is(rolloutErr, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "could not validate rollout flash permissions")
+		return
+	}
+	if rolloutErr == nil {
+		if user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "only an administrator can flash a campaign device")
+			return
+		}
+		if (rolloutStatus != "canary_running" && rolloutStatus != "batch_running") || memberBatch != currentBatch {
+			writeError(w, http.StatusConflict, "this device is not in the currently released rollout batch")
+			return
+		}
+		var active int
+		if err = tx.QueryRow(r.Context(), `SELECT count(*) FROM firmware_rollout_devices
+			WHERE rollout_id=$1 AND batch_number=$2 AND status IN ('flashing','verifying')`,
+			rolloutID, memberBatch).Scan(&active); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not check rollout flash concurrency")
+			return
+		}
+		if active >= maxConcurrent {
+			writeError(w, http.StatusConflict, "the rollout's concurrent flash limit has been reached")
+			return
+		}
+	}
 	var busy string
 	err = tx.QueryRow(r.Context(), `SELECT CASE
 		WHEN EXISTS(SELECT 1 FROM device_restores WHERE device_id=$1 AND status='running') THEN 'a backup restore is running on this device'
@@ -248,8 +280,18 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		WHERE id=$1 RETURNING `+firmwareUpgradeColumns, id), &up)
 	if err == nil {
 		imageHash = up.ImageSHA256
-		err = insertAuditEvent(r.Context(), tx, user.ID, "device.firmware_upgrade_flash", "device", deviceID,
-			map[string]any{"upgrade_id": id, "version": up.Version, "image_sha256": imageHash, "warnings_acknowledged": len(plan.Warnings)})
+		if rolloutID > 0 {
+			if _, err = tx.Exec(r.Context(), `UPDATE firmware_rollout_devices SET status='flashing',updated_at=NOW()
+				WHERE rollout_id=$1 AND upgrade_id=$2`, rolloutID, id); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not update rollout flash state")
+				return
+			}
+		}
+		details := map[string]any{"upgrade_id": id, "version": up.Version, "image_sha256": imageHash, "warnings_acknowledged": len(plan.Warnings)}
+		if rolloutID > 0 {
+			details["rollout_id"] = rolloutID
+		}
+		err = insertAuditEvent(r.Context(), tx, user.ID, "device.firmware_upgrade_flash", "device", deviceID, details)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
