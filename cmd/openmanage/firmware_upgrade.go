@@ -490,7 +490,7 @@ func (j *upgradeJob) run(ctx context.Context) {
 		fail(problem)
 		return
 	}
-	plan, err := firmwarePlanFor(ctx, serverURL, manifest, j.version)
+	plan, err := a.firmwarePlanForDevice(ctx, serverURL, j.deviceID, manifest, j.version)
 	if err != nil {
 		fail(err.Error())
 		return

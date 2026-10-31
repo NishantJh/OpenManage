@@ -456,8 +456,8 @@ func (a *app) postFlashChecks(ctx context.Context, rec upgradeRecord) []upgradeC
 	}
 	// Packages the official feeds lack were left out of the image on purpose. Report which
 	// are missing and which confirmed sources could restore them; never install on its own.
-	if len(rec.Plan.Unavailable) > 0 {
-		candidates, err := a.reinstallCandidates(ctx, rec.Plan.Unavailable, m)
+	if len(rec.Plan.Unavailable) > 0 || len(rec.Plan.DesiredSources) > 0 {
+		candidates, err := a.reinstallCandidatesWithDesired(ctx, rec.Plan.Unavailable, rec.Plan.DesiredSources, m)
 		if err != nil {
 			checks = append(checks, upgradeCheck{"Third-party packages", "warning", "could not look up package sources"})
 		} else {
