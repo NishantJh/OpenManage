@@ -470,6 +470,11 @@ func (a *app) runVerify(id int64) {
 		return
 	}
 	_, _ = a.db.Exec(ctx, `UPDATE firmware_upgrades SET status='verifying', step='waiting for the device' WHERE id=$1 AND status='flashing'`, id)
+	if rec.RolloutID > 0 {
+		if err := a.setFirmwareRolloutDeviceStatus(ctx, id, "verifying", ""); err != nil {
+			a.pauseFirmwareRolloutForUpgrade(ctx, id, "needs_attention", "could not restore rollout verification state after restart")
+		}
+	}
 	a.verifyUpgrade(ctx, rec)
 }
 
