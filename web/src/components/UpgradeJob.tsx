@@ -13,7 +13,7 @@ const checkTag:Record<string,string>={ok:"OK",warning:"CHECK",failed:"FAILED"};
 // device's name on a ready job.
 export default function UpgradeJob({deviceId,deviceName,version,role,plan,campaignMode=false,upgradeId}:{deviceId:string;deviceName:string;version:string;role:Role;plan:FirmwarePlan;campaignMode?:boolean;upgradeId?:number}){
  const [jobs,setJobs]=useState<FirmwareUpgrade[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(""),[typed,setTyped]=useState(""),[seen,setSeen]=useState<string[]>([]);
- const canPrepare=role==="admin"||role==="operator",canFlash=role==="admin",canAcknowledge=campaignMode?role==="admin":canPrepare,current=useRef(deviceId),job=(upgradeId!==undefined?jobs.find(j=>j.id===upgradeId):jobs[0])??null,active=job!==null&&open(job.status);
+ const canPrepare=campaignMode?role==="admin":role==="admin"||role==="operator",canFlash=role==="admin",canAcknowledge=campaignMode?role==="admin":canPrepare,current=useRef(deviceId),job=(upgradeId!==undefined?jobs.find(j=>j.id===upgradeId):jobs[0])??null,active=job!==null&&open(job.status);
  async function load(){const id=deviceId;try{const d=await apiJSON<FirmwareUpgrade[]>("/api/devices/"+id+"/firmware-upgrades","GET",undefined,"Could not load the upgrade");if(current.current===id)setJobs(d)}catch(e){if(current.current===id)setError(e instanceof Error?e.message:"Could not load the upgrade")}}
  useEffect(()=>{current.current=deviceId;setJobs([]);setError("");setTyped("");setSeen([]);void load()},[deviceId,upgradeId]);
  useEffect(()=>{if(!active)return;const t=setInterval(()=>void load(),3000);return()=>clearInterval(t)},[active,deviceId]);
