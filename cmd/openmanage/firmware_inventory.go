@@ -459,6 +459,12 @@ func (a *app) takeFirmwareInventory(ctx context.Context, deviceID, userID string
 		return out, storeFailed
 	}
 	defer tx.Rollback(ctx)
+	// Serialize inventory snapshots with rollout previews and desired-package-set
+	// edits, all of which lock the device row before reading or changing its state.
+	var lockedDeviceID string
+	if err = tx.QueryRow(ctx, `SELECT id::text FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&lockedDeviceID); err != nil {
+		return out, storeFailed
+	}
 	var prevID int64
 	var prevDigest string
 	err = tx.QueryRow(ctx, `SELECT id, digest FROM firmware_inventories WHERE device_id=$1

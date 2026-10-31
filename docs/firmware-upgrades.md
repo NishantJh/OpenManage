@@ -365,9 +365,9 @@ Step 6 builds campaign coordination around the existing single-device firmware j
 
 An administrator creates a draft with a final stable target release, exactly one canary device, and up to four ordered batches (maximum five devices per batch, twenty total). The API snapshots device identity, latest stored inventory id/digest/manifest, and desired-package-set revision. Draft creation is metadata-only: no device contact, build-server request, package operation, image preparation, or flash. A draft is not executable. Admins create drafts; admins and operators can inspect the latest 20 campaigns.
 
-### 6b. Server-computed plan preview
+### 6b. Server-computed plan preview — implemented in the Step 6b PR
 
-The server computes and persists each member's plan from the draft's stored inventory and desired-package-set revision, then records a digest of the complete plan. It rejects missing/stale inventory, changed device identity or desired-set revision, unsupported release paths, and any plan blocker. A preview is immutable; a changed device, inventory, desired set, or target release requires a new draft.
+An administrator requests a preview after enabling the firmware build server. OpenManage computes each member's plan from the draft's stored inventory manifest and the exact immutable desired-package-set revision captured by the draft (not the device's current revision or latest inventory). Custom package sources are resolved once and stored with the plan. The server rejects a changed device identity, newer inventory, changed desired-set revision, unsupported release path, or any plan blocker. Each plan is persisted with a SHA-256 digest over its release, member snapshot, and computed plan. Saving all member plans, moving the campaign to `previewed`, and writing the audit event are one transaction. A preview is immutable; changed inputs require a new draft. Planning uses bounded concurrency (at most eight devices at once). A request/build-server timeout aborts the entire preview before any plan or campaign state is persisted.
 
 ### 6c. Physical-hardware qualification
 

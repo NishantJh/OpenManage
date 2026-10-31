@@ -219,6 +219,7 @@ func main() {
 	mux.HandleFunc("GET /api/firmware/rollouts", a.listFirmwareRollouts)
 	mux.HandleFunc("POST /api/firmware/rollouts", a.createFirmwareRollout)
 	mux.HandleFunc("GET /api/firmware/rollouts/{rollout}", a.getFirmwareRollout)
+	mux.HandleFunc("POST /api/firmware/rollouts/{rollout}/preview", a.previewFirmwareRollout)
 	mux.HandleFunc("GET /api/config-settings", a.listWritableSettings)
 	mux.HandleFunc("GET /api/devices/{id}/config-changes", a.listConfigChanges)
 	mux.HandleFunc("POST /api/devices/{id}/config-changes", a.previewConfigChange)
