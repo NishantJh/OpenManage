@@ -368,9 +368,9 @@ An administrator creates a draft with a final stable target release, exactly one
 
 An administrator requests a preview after enabling the firmware build server. OpenManage computes each member's plan from the draft's stored inventory manifest and the exact immutable desired-package-set revision captured by the draft (not the device's current revision or latest inventory). Custom package sources are resolved once and stored with the plan. The server rejects a changed device identity, newer inventory, changed desired-set revision, unsupported release path, or any plan blocker. Each plan is persisted with a SHA-256 digest over its release, member snapshot, and computed plan. Saving all member plans, moving the campaign to `previewed`, and writing the audit event are one transaction. A preview is immutable; changed inputs require a new draft.
 
-### 6c. Physical-hardware qualification
+### 6c. Physical-hardware qualification — implemented in the Step 6c PR
 
-Before a campaign may flash, an administrator must record a successful single-device upgrade and recovery drill on supported physical hardware. Record board/model, source and target release, date, checks, recovery path exercised, and outcome. The qualification must match the campaign's supported hardware. VM and container tests remain useful CI evidence but never satisfy this gate.
+Administrators can record immutable qualification evidence through the hardware-qualification API. A record includes exact board/model, source and target release, test date, physical-hardware attestation, required upgrade checks, upgrade and recovery outcomes, recovery method, and an evidence reference. A record qualifies only when it is physical hardware, both outcomes passed, all required checks are present, recovery was exercised, and the evidence reference is non-empty. Qualifications expire after 365 days and must match each campaign member's exact board, model, source release, and campaign target release. VM/container records remain visible for traceability but never satisfy the gate. Step 6d will enforce this qualification status before allowing the canary to start.
 
 ### 6d. Canary and batches
 
