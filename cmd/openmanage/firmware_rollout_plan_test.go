@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -170,7 +171,7 @@ func TestPreviewFirmwareRolloutRejectsStaleInventoryBeforeBuildServer(t *testing
 	}
 
 	preview := httptest.NewRequest(http.MethodPost, "/preview", nil)
-	preview.SetPathValue("rollout", "1")
+	preview.SetPathValue("rollout", strconv.FormatInt(rollout.ID, 10))
 	preview = preview.WithContext(context.WithValue(preview.Context(), userContextKey, authUser{ID: userID, Role: "admin"}))
 	previewRec := httptest.NewRecorder()
 	a.previewFirmwareRollout(previewRec, preview)
