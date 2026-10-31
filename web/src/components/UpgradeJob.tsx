@@ -11,9 +11,9 @@ const checkTag:Record<string,string>={ok:"OK",warning:"CHECK",failed:"FAILED"};
 // Prepares, flashes and verifies one firmware upgrade. Preparing changes nothing on the
 // device beyond one staged file; the flash only starts when an administrator types the
 // device's name on a ready job.
-export default function UpgradeJob({deviceId,deviceName,version,role,plan,campaignMode=false,upgradeId}:{deviceId:string;deviceName:string;version:string;role:Role;plan:FirmwarePlan;campaignMode?:boolean;upgradeId?:number}){
+export default function UpgradeJob({deviceId,deviceName,version,role,plan,campaignMode=false,campaignActive=true,upgradeId}:{deviceId:string;deviceName:string;version:string;role:Role;plan:FirmwarePlan;campaignMode?:boolean;campaignActive?:boolean;upgradeId?:number}){
  const [jobs,setJobs]=useState<FirmwareUpgrade[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(""),[typed,setTyped]=useState(""),[seen,setSeen]=useState<string[]>([]);
- const canPrepare=campaignMode?role==="admin":role==="admin"||role==="operator",canFlash=role==="admin",canAcknowledge=campaignMode?role==="admin":canPrepare,current=useRef(deviceId),job=(upgradeId!==undefined?jobs.find(j=>j.id===upgradeId):jobs[0])??null,active=job!==null&&open(job.status);
+ const canPrepare=campaignMode?role==="admin":role==="admin"||role==="operator",canFlash=role==="admin"&&(!campaignMode||campaignActive),canAcknowledge=campaignMode?role==="admin":canPrepare,current=useRef(deviceId),job=(upgradeId!==undefined?jobs.find(j=>j.id===upgradeId):jobs[0])??null,active=job!==null&&open(job.status);
  async function load(){const id=deviceId;try{const d=await apiJSON<FirmwareUpgrade[]>("/api/devices/"+id+"/firmware-upgrades","GET",undefined,"Could not load the upgrade");if(current.current===id)setJobs(d)}catch(e){if(current.current===id)setError(e instanceof Error?e.message:"Could not load the upgrade")}}
  useEffect(()=>{current.current=deviceId;setJobs([]);setError("");setTyped("");setSeen([]);void load()},[deviceId,upgradeId]);
  useEffect(()=>{if(!active)return;const t=setInterval(()=>void load(),3000);return()=>clearInterval(t)},[active,deviceId]);
@@ -23,7 +23,7 @@ export default function UpgradeJob({deviceId,deviceName,version,role,plan,campai
  const allSeen=jobWarnings.every(w=>seen.includes(w)),nameOk=typed===deviceName;
  const unacked=job!==null&&(job.status==="done"||job.status==="done_with_warnings"||job.status==="needs_attention")&&!job.acknowledged_at;
  const checks=job?.result??[];
- return <div className="upgrade-job"><div className="section-head"><div><h2>Upgrade this device</h2><p>Preparing builds the image, takes a backup and stages the image on the device. Nothing is flashed until you confirm.</p></div></div>
+ return <div className="upgrade-job"><div className="section-head"><div><h2>{campaignMode?"Campaign device upgrade":"Upgrade this device"}</h2><p>Preparing builds the image, takes a backup and stages the image on the device. Nothing is flashed until you confirm.</p></div></div>
  {error&&<div className="error backup-message">{error}</div>}
  {job&&<div className="table-card upgrade-status"><div className="table-meta"><span>● &nbsp; OpenWrt {job.version} &nbsp; <b className={"job-"+job.status}>{label[job.status]??job.status}</b></span>{job.finished_at&&<span>{new Date(job.finished_at).toLocaleString()}</span>}</div>
   <div className="upgrade-body">
@@ -33,7 +33,7 @@ export default function UpgradeJob({deviceId,deviceName,version,role,plan,campai
     <p>Image <code>{job.image_name}</code> · {mib(job.image_size)} · SHA-256 <code>{job.image_sha256.slice(0,16)}…</code></p>
     <p>A backup was taken and is kept until you acknowledge the result.{job.expires_at&&" The staged image expires at "+new Date(job.expires_at).toLocaleTimeString()+"."}</p>
     {jobWarnings.length>0&&<div className="warning plan-warnings">{jobWarnings.map(w=><label key={w} className="check-row"><input type="checkbox" checked={seen.includes(w)} onChange={e=>setSeen(s=>e.target.checked?[...s,w]:s.filter(x=>x!==w))}/> {w}</label>)}</div>}
-    {canFlash?<div className="snapshot-controls"><input aria-label="Device name" placeholder={"Type "+deviceName+" to confirm"} value={typed} onChange={e=>setTyped(e.target.value)}/><button className="primary danger" disabled={busy||!nameOk||!allSeen} onClick={()=>void call("/"+job.id+"/flash",{confirm_name:typed,acknowledge_warnings:jobWarnings.length>0&&allSeen},"Could not start the flash")}><Rocket size={15}/> Flash and restart {deviceName}</button><button className="secondary" disabled={busy} onClick={()=>void call("/"+job.id+"/cancel",undefined,"Could not cancel")}>Cancel</button></div>:<p className="empty-line">Only an administrator can flash.</p>}
+    {canFlash?<>{canFlash?<div className="snapshot-controls"><input aria-label="Device name" placeholder={"Type "+deviceName+" to confirm"} value={typed} onChange={e=>setTyped(e.target.value)}/><button className="primary danger" disabled={busy||!nameOk||!allSeen} onClick={()=>void call("/"+job.id+"/flash",{confirm_name:typed,acknowledge_warnings:jobWarnings.length>0&&allSeen},"Could not start the flash")}><Rocket size={15}/> Flash and restart {deviceName}</button></div>:<p className="empty-line">{campaignMode&&!campaignActive?"Campaign is paused; flash confirmation is disabled.":"Only an administrator can flash."}</p>}{role==="admin"&&<div className="snapshot-controls"><button className="secondary" disabled={busy} onClick={()=>void call("/"+job.id+"/cancel",undefined,"Could not cancel")}>Cancel staged upgrade</button></div>}</>}
    </>}
    {job.status==="stopped"&&<p>{job.detail||"Stopped."} Nothing was flashed.</p>}
    {(job.status==="done"||job.status==="done_with_warnings"||job.status==="needs_attention")&&<>
