@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type firmwareRolloutUnsupportedPathError struct { reason string }
+type firmwareRolloutUnsupportedPathError struct{ reason string }
 
 func (e firmwareRolloutUnsupportedPathError) Error() string { return e.reason }
 
@@ -88,17 +88,17 @@ func firmwareRolloutMemberCurrent(ctx context.Context, q rolloutQueryRower, memb
 }
 
 type firmwareRolloutPlanDigestInput struct {
-	DeviceID                  string        `json:"device_id"`
-	DeviceName                string        `json:"device_name"`
-	Model                     string        `json:"model"`
-	CurrentRelease            string        `json:"current_release"`
-	BoardName                 string        `json:"board_name"`
-	Target                    string        `json:"target"`
-	InventoryID               int64         `json:"inventory_id"`
-	InventoryDigest           string        `json:"inventory_digest"`
-	DesiredPackageSetRevision int           `json:"desired_package_set_revision"`
-	Version                   string        `json:"version"`
-	Plan                      firmwarePlan  `json:"plan"`
+	DeviceID                  string       `json:"device_id"`
+	DeviceName                string       `json:"device_name"`
+	Model                     string       `json:"model"`
+	CurrentRelease            string       `json:"current_release"`
+	BoardName                 string       `json:"board_name"`
+	Target                    string       `json:"target"`
+	InventoryID               int64        `json:"inventory_id"`
+	InventoryDigest           string       `json:"inventory_digest"`
+	DesiredPackageSetRevision int          `json:"desired_package_set_revision"`
+	Version                   string       `json:"version"`
+	Plan                      firmwarePlan `json:"plan"`
 }
 
 func firmwareRolloutPlanDigest(member firmwareRolloutMember, version string, plan firmwarePlan) (string, error) {
