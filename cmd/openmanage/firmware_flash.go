@@ -544,7 +544,10 @@ func (a *app) finishUpgrade(rec upgradeRecord, status, detail string, checks []u
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `UPDATE firmware_upgrades SET status=$2, detail=$3, result=$4, step='', finished_at=NOW()
 		WHERE id=$1 AND status IN ('flashing','verifying')`, rec.ID, status, detail, result)
-	if err == nil && tag.RowsAffected() == 1 {
+	if err == nil && tag.RowsAffected() != 1 {
+		err = errors.New("firmware upgrade state changed before result recording")
+	}
+	if err == nil {
 		err = insertAuditEvent(ctx, tx, "", "device.firmware_upgrade_"+status, "device", rec.DeviceID,
 			map[string]any{"upgrade_id": rec.ID, "version": rec.Version, "detail": detail})
 	}
@@ -553,6 +556,19 @@ func (a *app) finishUpgrade(rec upgradeRecord, status, detail string, checks []u
 	}
 	if err != nil {
 		log.Printf("firmware upgrade %d finished as %s but could not be recorded", rec.ID, status)
+		if rec.RolloutID > 0 {
+			a.pauseFirmwareRolloutForUpgrade(context.Background(), rec.ID, "needs_attention", "could not persist or audit the flash verification result")
+		}
+		return
+	}
+	if rec.RolloutID > 0 {
+		if status == "done" {
+			if err := a.setFirmwareRolloutDeviceStatus(ctx, rec.ID, "done", ""); err != nil {
+				a.pauseFirmwareRolloutForUpgrade(context.Background(), rec.ID, "needs_attention", "could not audit successful rollout device verification")
+			}
+		} else {
+			a.pauseFirmwareRolloutForUpgrade(ctx, rec.ID, status, detail)
+		}
 	}
 }
 
