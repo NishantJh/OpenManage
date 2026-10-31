@@ -203,7 +203,7 @@ func (a *app) startFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 			OR EXISTS(SELECT 1 FROM firmware_rollout_devices rd
 				JOIN firmware_rollouts other ON other.id=rd.rollout_id
 				WHERE rd.device_id_snapshot=$1 AND rd.rollout_id<>$2
-				AND other.status IN ('awaiting_canary','canary_running','batch_running','paused'))`,
+				AND other.status IN ('awaiting_canary','canary_running','awaiting_batch','batch_running','paused'))`,
 			member.DeviceID, id).Scan(&reserved); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not check existing device upgrade reservations")
 			return
