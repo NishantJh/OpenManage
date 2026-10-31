@@ -80,6 +80,7 @@ try {
       { key: "wireless.@wifi-iface[0].key", label: "Passphrase", kind: "secret", editable: false, secret: true, risk: "disruptive", help: "Shown once", config: "wireless", section: "@wifi-iface[0]", option: "key" },
     ] },
   ] };
+  const settingsJson = body => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   let ssidValue = "old-network", settingsVersion = "version-one", previewRequest;
   const settingsResponse = () => ({ device_id: settingsDeviceId, captured_at: new Date().toISOString(), packages: { wireless: { version: settingsVersion, sections: [
     { name: "radio0", type: "wifi-device", options: [] },
@@ -88,20 +89,20 @@ try {
     ] },
   ] } } });
   const batchRecord = (status, id = 41) => ({ id, device_id: settingsDeviceId, setting: "settings.batch", label: "Settings batch", old_value: "", new_value: "", status, detail: "", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600000).toISOString(), finished_at: null, disruption_acknowledged: true, changes: [{ setting: "wireless.@wifi-iface[0].ssid", label: "SSID", old_value: "old-network", new_value: "new-network" }] });
-  await page.route("**/api/devices", r => r.fulfill(json([settingsDevice])));
-  await page.route("**/api/config-schema", r => r.fulfill(json(settingsPages)));
-  await page.route(`**/api/devices/${settingsDeviceId}/settings`, r => r.fulfill(json(settingsResponse())));
+  await page.route("**/api/devices", r => r.fulfill(settingsJson([settingsDevice])));
+  await page.route("**/api/config-schema", r => r.fulfill(settingsJson(settingsPages)));
+  await page.route(`**/api/devices/${settingsDeviceId}/settings`, r => r.fulfill(settingsJson(settingsResponse())));
   await page.route(`**/api/devices/${settingsDeviceId}/config-change-batches`, async r => {
     if (r.request().method() === "POST") {
       previewRequest = r.request().postDataJSON();
-      return r.fulfill(json(batchRecord("previewed")));
+      return r.fulfill(settingsJson(batchRecord("previewed")));
     }
-    return r.fulfill(json([]));
+    return r.fulfill(settingsJson([]));
   });
   await page.route(`**/api/devices/${settingsDeviceId}/config-change-batches/*/apply`, async r => {
     ssidValue = "new-network";
     settingsVersion = "version-two";
-    return r.fulfill(json(batchRecord("applied")));
+    return r.fulfill(settingsJson(batchRecord("applied")));
   });
   await page.goto(baseUrl + "/settings/" + settingsDeviceId);
   await page.getByRole("button", { name: "Wireless", exact: true }).click();
