@@ -106,10 +106,10 @@ try {
   });
   await page.goto(baseUrl + "/settings/" + settingsDeviceId);
   await page.getByRole("button", { name: "Wireless", exact: true }).click();
-  const ssidInput = page.getByLabel("SSID");
+  const ssidInput = page.getByRole("textbox", { name: "SSID", exact: true });
   assert.ok(await ssidInput.isDisabled(), "existing SSID stays locked until explicit unlock");
   await page.getByLabel("Unlock this existing SSID to edit it").check();
-  await page.getByLabel("SSID").fill("new-network");
+  await page.getByRole("textbox", { name: "SSID", exact: true }).fill("new-network");
   const previewButton = page.getByRole("button", { name: /Preview 1 change/ });
   assert.ok(await previewButton.isDisabled(), "disruptive edit requires an explicit acknowledgement");
   await page.getByLabel(/I understand these changes/).check();
@@ -121,8 +121,8 @@ try {
   assert.ok(!(await page.locator("body").innerText()).includes("secret-fixture"), "secret values must not appear in the settings UI");
   await page.getByRole("button", { name: "Apply with rollback" }).click();
   await page.getByText("Settings were applied, verified over a fresh connection, and confirmed.").waitFor();
-  await page.getByLabel("SSID").waitFor();
-  assert.equal(await page.getByLabel("SSID").inputValue(), "new-network");
+  await page.getByRole("textbox", { name: "SSID", exact: true }).waitFor();
+  assert.equal(await page.getByRole("textbox", { name: "SSID", exact: true }).inputValue(), "new-network");
   await page.unrouteAll({ behavior: "ignoreErrors" });
   console.log("PASS: settings batch preview, disruption acknowledgement, secret redaction and apply flow");
   // Floor plan rooms: sizes in feet, rename from the map, canvas follows the rooms (nothing is saved).
