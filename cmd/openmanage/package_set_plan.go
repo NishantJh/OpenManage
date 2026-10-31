@@ -22,7 +22,9 @@ func (a *app) firmwarePlanForDevice(ctx context.Context, serverURL, deviceID str
 		return plan, nil
 	}
 	plan.DesiredSources, err = a.resolveDesiredPackageSources(ctx, set.Current.Sources, &plan)
-	if err != nil { return plan, err }
+	if err != nil {
+		return plan, err
+	}
 	applyDesiredPackageSet(&plan, *set.Current)
 	return plan, nil
 }
