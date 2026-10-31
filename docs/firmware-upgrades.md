@@ -171,6 +171,7 @@ Registering a package source installs nothing on any device yet; installing and 
 - The device's package manager selects one fixed command: `opkg remove <name>` or `apk del --no-network <name>`. The package name is validated before it is included; callers cannot provide command text or arguments. Package-manager output is discarded and never stored.
 - OpenManage reads the package inventory before and after the operation. The job is successful only when the named package is absent afterward. The command's exit status alone is not enough.
 - Only one package operation (install or remove) may run on a device. Firmware upgrades, restores and configuration changes remain mutually exclusive with package operations. Interrupted jobs are marked failed on server restart with a note to verify the device.
+- On apk devices the job first asks `apk info -r <name>` which installed packages depend on it and refuses to continue when any do, naming them (only names matching the device's own package list are kept). apk itself never removes a dependent: it keeps the package and prints "not removed due to", so a package that is still installed after a successful command is reported as kept by the package manager. opkg refuses such a removal on its own.
 - `device.package_remove` records the device and package name. No package is removed automatically by firmware planning, flashing, desired-set editing or reinstall reporting.
 
 ### Reinstalling after a flash (as built)

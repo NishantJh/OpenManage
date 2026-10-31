@@ -164,3 +164,24 @@ func TestRemoveDevicePackageRequest(t *testing.T) {
 		t.Fatalf("running removals=%d err=%v", running, err)
 	}
 }
+
+func TestPackageDependents(t *testing.T) {
+	if op, ok := packageDependentsOperation("apk", "liba"); !ok || op.command != "apk info -r liba </dev/null 2>/dev/null" {
+		t.Fatalf("apk dependents command = %+v %v", op, ok)
+	}
+	if _, ok := packageDependentsOperation("opkg", "liba"); ok {
+		t.Fatal("opkg already refuses removing a needed package")
+	}
+	if _, ok := packageDependentsOperation("apk", "liba; reboot"); ok {
+		t.Fatal("an invalid package name must not build a command")
+	}
+	installed := []firmwarePackage{{Name: "liba", Version: "1.0-r0"}, {Name: "appb", Version: "1.0-r0"}, {Name: "other", Version: "2.0"}}
+	output := "liba-1.0-r0 is required by:\nappb-1.0-r0\nnot-installed-9\n  other-2.0  \nliba-1.0-r0\n"
+	got := installedDependents(output, "liba", installed)
+	if len(got) != 2 || got[0] != "appb" || got[1] != "other" {
+		t.Fatalf("dependents = %v", got)
+	}
+	if got := installedDependents("liba-1.0-r0 is required by:\n", "liba", installed); len(got) != 0 {
+		t.Fatalf("no dependents expected: %v", got)
+	}
+}
