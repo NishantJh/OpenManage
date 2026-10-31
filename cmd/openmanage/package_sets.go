@@ -326,7 +326,7 @@ func (a *app) restoreDevicePackageSetRevision(w http.ResponseWriter, r *http.Req
 		return
 	}
 	in.Sources = []packageSetSourceInput{}
- 	for rows.Next() {
+	for rows.Next() {
 		var source packageSetSourceInput
 		if err = rows.Scan(&source.Name, &source.Mode, &source.SourceID); err != nil {
 			break
