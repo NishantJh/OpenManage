@@ -235,10 +235,18 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(r.Context(), `SELECT status, plan, COALESCE(expires_at < NOW(), TRUE),version,inventory_digest FROM firmware_upgrades
 		WHERE id=$1 AND device_id=$2 FOR UPDATE`, id, deviceID).Scan(&status, &planJSON, &expired, &upgradeVersion, &upgradeInventoryDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if rolloutID > 0 {
+			_ = tx.Rollback(r.Context())
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "campaign upgrade job disappeared before flash", user.ID)
+		}
 		writeError(w, http.StatusNotFound, "upgrade not found")
 		return
 	}
 	if err != nil {
+		if rolloutID > 0 {
+			_ = tx.Rollback(r.Context())
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "campaign upgrade record could not be read before flash", user.ID)
+		}
 		writeError(w, http.StatusInternalServerError, "could not start the flash")
 		return
 	}
