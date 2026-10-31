@@ -8,9 +8,8 @@ import (
 	"errors"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
-	"time"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -132,6 +131,20 @@ func (a *app) firmwarePlanForRolloutMember(ctx context.Context, serverURL string
 		return firmwarePlan{}, errors.New("the rollout inventory snapshot does not match its recorded identity")
 	}
 
+	overview, err := fetchOverview(ctx, serverURL)
+	if err != nil {
+		return firmwarePlan{}, err
+	}
+	branches := make([]string, 0, len(overview.Branches))
+	for name := range overview.Branches {
+		if !strings.Contains(name, "SNAPSHOT") {
+			branches = append(branches, name)
+		}
+	}
+	sort.Strings(branches)
+	if problem := upgradePathProblem(manifest.Release, rollout.Version, branches); problem != "" {
+		return firmwarePlan{}, errors.New(problem)
+	}
 	plan, err := firmwarePlanFor(ctx, serverURL, manifest, rollout.Version)
 	if err != nil {
 		return plan, err
