@@ -8,8 +8,8 @@ import (
 	"errors"
 	"net/http"
 	"sort"
-	"strings"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -220,8 +220,8 @@ func (a *app) previewFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(plan.Blockers) > 0 {
 			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":   "rollout preview is blocked by one or more device plans",
-				"device":  member.DeviceName,
+				"error":    "rollout preview is blocked by one or more device plans",
+				"device":   member.DeviceName,
 				"blockers": plan.Blockers,
 			})
 			return
