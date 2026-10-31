@@ -162,6 +162,17 @@ Registering a package source installs nothing on any device yet; installing and 
 - **Audit:** `device.package_install` records the source, version and hash. The package manager's output is never stored: an install script runs as root and could print a secret, and operators can read install records.
 - **Tested** on a real OpenWrt VM in the opt-in "OpenWrt VM flash test" workflow, after the flash: register, review, confirm, install, check the files and the post-install script on the VM, and a second install of the same version refused.
 
+### Removing a package now (Step 5c)
+
+`POST /api/devices/{id}/package-removals` starts a typed, administrator-only removal job; `GET` lists recent removal attempts. This is an explicit apply-now action, separate from editing a desired package set.
+
+- The request must contain the exact package name twice (selection and confirmation), the exact device name, `apply_now: true`, and acknowledgement that package removal scripts may run as root.
+- Only a syntactically valid package name that is currently installed and marked user-installed by the device inventory may be removed. Firmware defaults, dependency-installed packages, protected management/network/security packages, kernel packages and kernel modules are refused.
+- The device's package manager selects one fixed command: `opkg remove <name>` or `apk del --no-network <name>`. The package name is validated before it is included; callers cannot provide command text or arguments. Package-manager output is discarded and never stored.
+- OpenManage reads the package inventory before and after the operation. The job is successful only when the named package is absent afterward. The command's exit status alone is not enough.
+- Only one package operation (install or remove) may run on a device. Firmware upgrades, restores and configuration changes remain mutually exclusive with package operations. Interrupted jobs are marked failed on server restart with a note to verify the device.
+- `device.package_remove` records the device and package name. No package is removed automatically by firmware planning, flashing, desired-set editing or reinstall reporting.
+
 ### Reinstalling after a flash (as built)
 
 The packages the official feeds do not offer (the plan's "unavailable" list, typically third-party themes) are left out of the image on purpose. After the device restarts, the upgrade's checks add **Third-party packages**: for each of those packages the device does not have, the newest confirmed package source that fits the device (same name; `.ipk` for opkg or `.apk` for apk; architecture `all`/`noarch` or equal to the device's) is named, or the reason none fits (no source, wrong format after an opkg to apk switch, wrong architecture). Any missing package makes the upgrade end "done with warnings".

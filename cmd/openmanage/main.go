@@ -210,6 +210,8 @@ func main() {
 	mux.HandleFunc("POST /api/devices/{id}/package-set/revisions/{revision}/restore", a.restoreDevicePackageSetRevision)
 	mux.HandleFunc("GET /api/devices/{id}/package-installs", a.listPackageInstalls)
 	mux.HandleFunc("POST /api/devices/{id}/package-installs", a.installPackageSource)
+	mux.HandleFunc("GET /api/devices/{id}/package-removals", a.listPackageRemovals)
+	mux.HandleFunc("POST /api/devices/{id}/package-removals", a.removeDevicePackage)
 	mux.HandleFunc("GET /api/devices/{id}/package-reinstalls", a.getPackageReinstalls)
 	mux.HandleFunc("GET /api/firmware/settings", a.getFirmwareSettings)
 	mux.HandleFunc("PUT /api/firmware/settings", a.updateFirmwareSettings)
@@ -277,6 +279,7 @@ func main() {
 	}()
 	go a.recoverFirmwareUpgradesAtStartup(ctx)
 	go a.recoverPackageInstallsAtStartup(ctx)
+	go a.recoverPackageRemovalsAtStartup(ctx)
 
 	handler := securityHeaders(frontendFallback(apiDeadline(a.authMiddleware(mux))))
 	srv := &http.Server{
