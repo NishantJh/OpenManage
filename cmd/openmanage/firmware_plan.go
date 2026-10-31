@@ -261,10 +261,11 @@ type releaseInfo struct {
 }
 
 type releaseVersion struct {
-	parts    [3]int
-	rc       int // 0 for a final release
-	snapshot bool
-	branchSn bool // "24.10-SNAPSHOT"
+	parts            [3]int
+	rc               int // release-candidate number
+	releaseCandidate bool
+	snapshot         bool
+	branchSn         bool // "24.10-SNAPSHOT"
 }
 
 func parseReleaseVersion(v string) (releaseVersion, bool) {
@@ -279,6 +280,7 @@ func parseReleaseVersion(v string) (releaseVersion, bool) {
 	}
 	base, rc, hasRC := strings.Cut(v, "-rc")
 	if hasRC {
+		rv.releaseCandidate = true
 		rv.rc, _ = strconv.Atoi(rc)
 	}
 	if b, ok := strings.CutSuffix(base, "-SNAPSHOT"); ok {
@@ -304,7 +306,7 @@ func compareReleases(a, b string) int {
 		}
 	}
 	rank := func(r releaseVersion) int {
-		if r.rc > 0 {
+		if r.releaseCandidate {
 			return r.rc - 1000
 		}
 		return 0
@@ -373,7 +375,7 @@ func overviewReleases(ov asuOverview) []releaseInfo {
 			}
 			seen[v] = true
 			rv, _ := parseReleaseVersion(v)
-			out = append(out, releaseInfo{Version: v, Branch: name, Snapshot: rv.snapshot || rv.branchSn, RC: rv.rc > 0})
+			out = append(out, releaseInfo{Version: v, Branch: name, Snapshot: rv.snapshot || rv.branchSn, RC: rv.releaseCandidate})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return compareReleases(out[i].Version, out[j].Version) > 0 })
@@ -695,7 +697,7 @@ func firmwarePlanFor(ctx context.Context, serverURL string, m firmwareManifest, 
 	if rv.snapshot || rv.branchSn {
 		plan.Warnings = append(plan.Warnings, "Snapshots are development builds and can break without notice.")
 	}
-	if rv.rc > 0 {
+	if rv.releaseCandidate {
 		plan.Warnings = append(plan.Warnings, "This is a release candidate, not a final release.")
 	}
 	if releaseBranch(version) != releaseBranch(m.Release) {
