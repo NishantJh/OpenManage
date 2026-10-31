@@ -216,7 +216,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		if rolloutID > 0 {
 			_ = tx.Rollback(r.Context())
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "campaign device was removed before flash", user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "campaign device was removed before flash", user.ID)
 		}
 		writeError(w, http.StatusNotFound, "device not found")
 		return
@@ -245,7 +245,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 	if status != "ready" || expired {
 		if rolloutID > 0 && expired {
 			_ = tx.Rollback(r.Context())
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "the staged image expired before flash confirmation", user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "the staged image expired before flash confirmation", user.ID)
 		}
 		writeError(w, http.StatusConflict, "this upgrade is not ready, or its staged image has expired; prepare it again")
 		return
@@ -254,14 +254,14 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(planJSON, &plan) != nil {
 		if rolloutID > 0 {
 			_ = tx.Rollback(r.Context())
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "the staged job plan could not be decoded", user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "the staged job plan could not be decoded", user.ID)
 		}
 		writeError(w, http.StatusInternalServerError, "could not read the upgrade plan")
 		return
 	}
 	if rolloutID > 0 && len(plan.Warnings) > 0 {
 		_ = tx.Rollback(r.Context())
-		_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "campaign plans with warnings cannot be flashed", user.ID)
+		_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "campaign plans with warnings cannot be flashed", user.ID)
 		writeError(w, http.StatusConflict, "campaign plans with warnings cannot be flashed")
 		return
 	}
@@ -285,28 +285,28 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 			(currentBatch == 0 && (rolloutStatus != "canary_running" || deviceID != canaryDeviceID)) ||
 			(currentBatch > 0 && rolloutStatus != "batch_running") {
 			_ = tx.Rollback(r.Context())
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "campaign device was not ready in the active batch", user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "campaign device was not ready in the active batch", user.ID)
 			writeError(w, http.StatusConflict, "campaign device is not ready in the active batch")
 			return
 		}
 		rolloutPlan, planErr := firmwareRolloutMemberPlan(rolloutMember, upgradeVersion)
 		if planErr != nil {
 			_ = tx.Rollback(r.Context())
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "stale rollout plan: "+planErr.Error(), user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "stale rollout plan: "+planErr.Error(), user.ID)
 			writeError(w, http.StatusConflict, planErr.Error())
 			return
 		}
 		jobPlanDigest, digestErr := firmwareRolloutPlanDigest(rolloutMember, upgradeVersion, plan)
 		if digestErr != nil || jobPlanDigest != rolloutMember.PlanDigest || len(rolloutPlan.Warnings) > 0 || len(rolloutPlan.Blockers) > 0 {
 			_ = tx.Rollback(r.Context())
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "firmware job plan does not match the immutable rollout preview", user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "firmware job plan does not match the immutable rollout preview", user.ID)
 			writeError(w, http.StatusConflict, "firmware job plan does not match the immutable rollout preview")
 			return
 		}
 		current, currentErr := firmwareRolloutMemberCurrent(r.Context(), tx, rolloutMember)
 		if currentErr != nil || !current {
 			_ = tx.Rollback(r.Context())
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "device, inventory, or desired package-set revision changed before flash", user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "device, inventory, or desired package-set revision changed before flash", user.ID)
 			writeError(w, http.StatusConflict, "device, inventory, or desired package-set revision changed before flash")
 			return
 		}
@@ -318,7 +318,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		}
 		if qualificationErr != nil || !linked {
 			_ = tx.Rollback(r.Context())
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "physical hardware qualification expired or no longer matches", user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "physical hardware qualification expired or no longer matches", user.ID)
 			writeError(w, http.StatusConflict, "current physical hardware qualification is required before flash")
 			return
 		}
@@ -375,7 +375,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if rolloutID > 0 {
 			_ = tx.Rollback(r.Context())
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "audit or persistence failure while starting a campaign flash", user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "audit or persistence failure while starting a campaign flash", user.ID)
 		}
 		writeError(w, http.StatusInternalServerError, "could not start the flash")
 		return
@@ -773,7 +773,7 @@ func (a *app) acknowledgeFirmwareUpgrade(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		_ = tx.Rollback(r.Context())
 		if rolloutID > 0 {
-			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "audit or persistence failure while acknowledging a campaign result", user.ID)
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "audit or persistence failure while acknowledging a campaign result", user.ID)
 		}
 		writeError(w, http.StatusInternalServerError, "could not acknowledge the upgrade")
 		return
