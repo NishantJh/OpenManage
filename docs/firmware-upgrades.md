@@ -372,11 +372,13 @@ An administrator requests a preview after enabling the firmware build server. Op
 
 Administrators can record immutable qualification evidence through the hardware-qualification API. A record includes exact board/model, source and target release, test date, physical-hardware attestation, required upgrade checks, upgrade and recovery outcomes, recovery method, and an evidence reference. A record qualifies only when it is physical hardware, both outcomes passed, all required checks are present, recovery was exercised, and the evidence reference is non-empty. Qualifications expire after 365 days and must match each campaign member's exact board, model, source release, and campaign target release. VM/container records remain visible for traceability but never satisfy the gate. Step 6d will enforce this qualification status before allowing the canary to start.
 
-### 6d. Canary and batches
+### 6d. Canary and batches — implemented in the Step 6d PR
 
-The canary is the only device eligible for the first flash. Its existing firmware job must reach `done`, all verification checks must be successful, and the result must be acknowledged before the next batch is released. Warnings are not a passing gate. Subsequent batches are released in order, with a small concurrency limit (initial maximum two). Every device still requires an individual administrator flash confirmation and warning acknowledgement through the existing endpoint.
+An administrator starts a previewed campaign only after every distinct hardware/release group has a current exact-match physical qualification and every immutable plan is digest-valid, warning-free, blocker-free, and still current. The canary is the only device eligible for the first prepare/flash. Each device is prepared from its stored rollout plan and must pass the existing per-device typed-name flash confirmation. Campaign plan warnings cannot be acknowledged through the single-device warning override.
 
-Any `needs_attention`, `done_with_warnings`, timeout, unreachable device, stale plan, failed verification, audit failure, or ambiguous flash state pauses progression. No automatic retry is permitted after the flash command may have been sent. Recovery is operator-led; single-partition devices may need failsafe, reset, serial, or TFTP recovery.
+The campaign defaults to at most two concurrent flashes; an administrator may lower the per-campaign limit to one when creating the draft, but cannot raise it above two. Batches are released in order only after every device in the current batch is `done`, all verification checks passed, and every result has been explicitly acknowledged. The controller exposes start, prepare, advance, pause, and cancel actions; cancellation is allowed only before any device job starts. Pausing does not claim to cancel a flash already sent.
+
+Any `needs_attention`, `done_with_warnings`, timeout, unreachable device, stale plan or package-set revision, failed verification, audit/persistence failure, or ambiguous flash state pauses progression. Inventory capture and desired-package-set edits are blocked while a campaign flash command is active. No automatic retry is permitted after the flash command may have been sent. Recovery is operator-led; single-partition devices may need failsafe, reset, serial, or TFTP recovery.
 
 ### 6e. UI, audit and verification
 
