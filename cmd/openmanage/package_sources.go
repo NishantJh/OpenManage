@@ -459,11 +459,37 @@ func (a *app) deletePackageSource(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var name, version, hash, status string
-	err = tx.QueryRow(r.Context(), `DELETE FROM package_sources WHERE id=$1 RETURNING name, version, sha256, status`, id).Scan(&name, &version, &hash, &status)
+	err = tx.QueryRow(r.Context(), `SELECT name FROM package_sources WHERE id=$1 FOR UPDATE`, id).Scan(&name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "package source not found")
 		return
 	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete the package source")
+		return
+	}
+	// Keep the latest-registered contract meaningful if this is the final confirmed
+	// source for a package. The same lock is used when a latest reference is added.
+	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtext('device_package_set_source:' || $1))`, name); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete the package source")
+		return
+	}
+	var needed bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS (
+		SELECT 1 FROM device_package_set_revision_sources refs
+		WHERE refs.tracking_mode='latest' AND refs.package_name=$1
+		AND NOT EXISTS (SELECT 1 FROM package_sources other
+			WHERE other.name=$1 AND other.status='confirmed' AND other.id<>$2)
+	)`, name, id).Scan(&needed)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete the package source")
+		return
+	}
+	if needed {
+		writeError(w, http.StatusConflict, "this is the last confirmed source used by a desired package set")
+		return
+	}
+	err = tx.QueryRow(r.Context(), `DELETE FROM package_sources WHERE id=$1 RETURNING name, version, sha256, status`, id).Scan(&name, &version, &hash, &status)
 	if err == nil {
 		err = insertAuditEvent(r.Context(), tx, user.ID, "package_source.delete", "package_source", strconv.FormatInt(id, 10),
 			map[string]any{"name": name, "version": version, "sha256": hash, "status": status})
