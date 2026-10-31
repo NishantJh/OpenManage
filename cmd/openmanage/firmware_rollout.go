@@ -26,6 +26,7 @@ type firmwareRolloutRequest struct {
 	Version        string     `json:"version"`
 	CanaryDeviceID string     `json:"canary_device_id"`
 	Batches        [][]string `json:"batches"`
+	MaxConcurrentFlashes int `json:"max_concurrent_flashes,omitempty"`
 }
 
 type firmwareRolloutMember struct {
@@ -45,6 +46,7 @@ type firmwareRolloutMember struct {
 	Plan                      json.RawMessage `json:"plan,omitempty"`
 	PlanDigest                string          `json:"plan_digest,omitempty"`
 	InventoryManifest         json.RawMessage `json:"-"`
+	UpgradeID                 *int64          `json:"upgrade_id,omitempty"`
 }
 
 type firmwareRollout struct {
@@ -55,10 +57,14 @@ type firmwareRollout struct {
 	CreatedBy      string                  `json:"created_by"`
 	CreatedAt      time.Time               `json:"created_at"`
 	UpdatedAt      time.Time               `json:"updated_at"`
+	CurrentBatch   int                     `json:"current_batch"`
+	MaxConcurrentFlashes int               `json:"max_concurrent_flashes"`
+	StartedAt      *time.Time              `json:"started_at,omitempty"`
+	CompletedAt    *time.Time              `json:"completed_at,omitempty"`
 	Devices        []firmwareRolloutMember `json:"devices"`
 }
 
-const firmwareRolloutColumns = `id, version, status, canary_device_id::text, COALESCE(created_by::text,''), created_at, updated_at`
+const firmwareRolloutColumns = `id, version, status, canary_device_id::text, COALESCE(created_by::text,''), created_at, updated_at, current_batch, max_concurrent_flashes, started_at, completed_at`
 
 func normalizeFirmwareRolloutRequest(in firmwareRolloutRequest) (firmwareRolloutRequest, error) {
 	in.Version = strings.TrimSpace(in.Version)
@@ -69,6 +75,12 @@ func normalizeFirmwareRolloutRequest(in firmwareRolloutRequest) (firmwareRollout
 	in.CanaryDeviceID = strings.ToLower(strings.TrimSpace(in.CanaryDeviceID))
 	if !validUUID(in.CanaryDeviceID) {
 		return in, errors.New("choose one valid canary device")
+	}
+	if in.MaxConcurrentFlashes == 0 {
+		in.MaxConcurrentFlashes = 2
+	}
+	if in.MaxConcurrentFlashes < 1 || in.MaxConcurrentFlashes > 2 {
+		return in, errors.New("maximum concurrent flashes must be 1 or 2")
 	}
 	if len(in.Batches) > firmwareRolloutMaxBatches {
 		return in, errors.New("too many rollout batches")
@@ -152,10 +164,10 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var out firmwareRollout
-	err = tx.QueryRow(r.Context(), `INSERT INTO firmware_rollouts(version,status,canary_device_id,created_by)
-		VALUES($1,'draft',$2,$3) RETURNING id,version,status,canary_device_id::text,COALESCE(created_by::text,''),created_at,updated_at`,
-		in.Version, in.CanaryDeviceID, user.ID).Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID,
-		&out.CreatedBy, &out.CreatedAt, &out.UpdatedAt)
+	err = tx.QueryRow(r.Context(), `INSERT INTO firmware_rollouts(version,status,canary_device_id,created_by,max_concurrent_flashes)
+		VALUES($1,'draft',$2,$3,$4) RETURNING `+firmwareRolloutColumns,
+		in.Version, in.CanaryDeviceID, user.ID, in.MaxConcurrentFlashes).Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID,
+		&out.CreatedBy, &out.CreatedAt, &out.UpdatedAt, &out.CurrentBatch, &out.MaxConcurrentFlashes, &out.StartedAt, &out.CompletedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create the rollout draft")
 		return
@@ -234,13 +246,13 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 func loadFirmwareRollout(ctx context.Context, db *pgxpool.Pool, id int64) (firmwareRollout, error) {
 	var out firmwareRollout
 	err := db.QueryRow(ctx, `SELECT `+firmwareRolloutColumns+` FROM firmware_rollouts WHERE id=$1`, id).
-		Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID, &out.CreatedBy, &out.CreatedAt, &out.UpdatedAt)
+		Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID, &out.CreatedBy, &out.CreatedAt, &out.UpdatedAt, &out.CurrentBatch, &out.MaxConcurrentFlashes, &out.StartedAt, &out.CompletedAt)
 	if err != nil {
 		return out, err
 	}
 	rows, err := db.Query(ctx, `SELECT device_id_snapshot::text,device_name,model,current_release,board_name,target,
 		inventory_id,inventory_digest,inventory_verified_at,desired_package_set_revision,batch_number,position,status,
-		plan,plan_digest,inventory_manifest
+		plan,plan_digest,inventory_manifest,upgrade_id
 		FROM firmware_rollout_devices WHERE rollout_id=$1 ORDER BY batch_number,position`, id)
 	if err != nil {
 		return out, err
@@ -252,7 +264,7 @@ func loadFirmwareRollout(ctx context.Context, db *pgxpool.Pool, id int64) (firmw
 		if err := rows.Scan(&member.DeviceID, &member.DeviceName, &member.Model, &member.CurrentRelease,
 			&member.BoardName, &member.Target, &member.InventoryID, &member.InventoryDigest,
 			&member.InventoryVerifiedAt, &member.DesiredPackageSetRevision, &member.BatchNumber,
-			&member.Position, &member.Status, &member.Plan, &member.PlanDigest, &member.InventoryManifest); err != nil {
+			&member.Position, &member.Status, &member.Plan, &member.PlanDigest, &member.InventoryManifest, &member.UpgradeID); err != nil {
 			return out, err
 		}
 		out.Devices = append(out.Devices, member)
