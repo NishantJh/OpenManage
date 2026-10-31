@@ -66,6 +66,7 @@ func TestNormalizeFirmwareHardwareQualification(t *testing.T) {
 	}{
 		{"same release", func(q *firmwareHardwareQualificationRequest) { q.TargetRelease = q.SourceRelease }},
 		{"snapshot target", func(q *firmwareHardwareQualificationRequest) { q.TargetRelease = "SNAPSHOT" }},
+		{"zero-numbered release candidate", func(q *firmwareHardwareQualificationRequest) { q.TargetRelease = "25.12.2-rc0" }},
 		{"future date", func(q *firmwareHardwareQualificationRequest) {
 			q.TestedOn = time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
 		}},
@@ -115,6 +116,13 @@ func TestCreateAndListFirmwareHardwareQualification(t *testing.T) {
 	}
 	if auditCount != 1 {
 		t.Fatalf("qualification audit count=%d", auditCount)
+	}
+
+	if _, err := db.Exec(context.Background(), `UPDATE firmware_hardware_qualifications SET evidence_reference='tampered' WHERE id=$1`, created.ID); err == nil {
+		t.Fatal("qualification records must reject updates")
+	}
+	if _, err := db.Exec(context.Background(), `DELETE FROM firmware_hardware_qualifications WHERE id=$1`, created.ID); err == nil {
+		t.Fatal("qualification records must reject deletion")
 	}
 
 	list := httptest.NewRequest(http.MethodGet, "/api/firmware/hardware-qualifications?board_name=generic&model=OpenWrt+x86", nil)
