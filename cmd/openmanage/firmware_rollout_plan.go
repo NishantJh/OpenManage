@@ -221,7 +221,7 @@ func (a *app) previewFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	planErrors := make([]error, len(rollout.Devices))
 	// Bound build-server fan-out while avoiding serial per-device network latency.
 	// Results are written by index so response/error selection remains deterministic.
-	const rolloutPlanConcurrency = 4
+	const rolloutPlanConcurrency = 8
 	semaphore := make(chan struct{}, rolloutPlanConcurrency)
 	var planWG sync.WaitGroup
 	for i, member := range rollout.Devices {
