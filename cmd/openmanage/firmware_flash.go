@@ -645,6 +645,9 @@ func (a *app) finishUpgrade(rec upgradeRecord, status, detail string, checks []u
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
 		log.Printf("firmware upgrade %d finished as %s but could not be recorded", rec.ID, status)
+		if rec.RolloutID > 0 {
+			a.pauseFirmwareRolloutForUpgrade(ctx, rec.ID, "needs_attention", "could not begin result persistence")
+		}
 		return
 	}
 	defer tx.Rollback(ctx)
@@ -670,7 +673,7 @@ func (a *app) finishUpgrade(rec upgradeRecord, status, detail string, checks []u
 	if rec.RolloutID > 0 {
 		if status == "done" {
 			if err := a.setFirmwareRolloutDeviceStatus(ctx, rec.ID, "done", ""); err != nil {
-				a.pauseFirmwareRolloutForUpgrade(context.Background(), rec.ID, "needs_attention", "could not audit successful rollout device verification")
+				a.pauseFirmwareRolloutForUpgrade(ctx, rec.ID, "needs_attention", "could not audit successful rollout device verification")
 			}
 		} else {
 			a.pauseFirmwareRolloutForUpgrade(ctx, rec.ID, status, detail)
