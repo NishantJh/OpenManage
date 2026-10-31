@@ -11,7 +11,7 @@ import (
 
 func TestNormalizeFirmwareRolloutRequestFlashConcurrency(t *testing.T) {
 	base := firmwareRolloutRequest{
-		Version: "25.12.2",
+		Version:        "25.12.2",
 		CanaryDeviceID: "550e8400-e29b-41d4-a716-446655440000",
 	}
 	got, err := normalizeFirmwareRolloutRequest(base)
@@ -39,14 +39,14 @@ func TestNormalizeFirmwareRolloutRequestFlashConcurrency(t *testing.T) {
 
 func TestFirmwareRolloutMemberPlanRequiresExactDigestAndCleanPlan(t *testing.T) {
 	member := firmwareRolloutMember{
-		DeviceID: "550e8400-e29b-41d4-a716-446655440000",
-		DeviceName: "router-1",
-		Model: "OpenWrt x86",
-		CurrentRelease: "24.10.4",
-		BoardName: "generic",
-		Target: "x86/64",
-		InventoryID: 17,
-		InventoryDigest: "inventory-digest",
+		DeviceID:                  "550e8400-e29b-41d4-a716-446655440000",
+		DeviceName:                "router-1",
+		Model:                     "OpenWrt x86",
+		CurrentRelease:            "24.10.4",
+		BoardName:                 "generic",
+		Target:                    "x86/64",
+		InventoryID:               17,
+		InventoryDigest:           "inventory-digest",
 		DesiredPackageSetRevision: 3,
 	}
 	plan := firmwarePlan{Version: "25.12.2"}
@@ -85,7 +85,6 @@ func TestFirmwareRolloutMemberPlanRequiresExactDigestAndCleanPlan(t *testing.T) 
 		t.Fatal("plans with warnings must not be executable")
 	}
 }
-
 
 func TestAdvanceFirmwareRolloutRequiresAcknowledgedSuccessfulBatch(t *testing.T) {
 	db := newEnrollmentTestDB(t)
