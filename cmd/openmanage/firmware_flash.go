@@ -277,7 +277,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, planErr.Error())
 			return
 		}
-		jobPlanDigest, digestErr := firmwareRolloutPlanDigest(rolloutMember, upVersionForPlan(planJSON), plan)
+		jobPlanDigest, digestErr := firmwareRolloutPlanDigest(rolloutMember, upgradeVersion, plan)
 		if digestErr != nil || jobPlanDigest != rolloutMember.PlanDigest || len(rolloutPlan.Warnings) > 0 || len(rolloutPlan.Blockers) > 0 {
 			_ = tx.Rollback(r.Context())
 			_ = a.pauseFirmwareRollout(r.Context(), rolloutID, "firmware job plan does not match the immutable rollout preview", user.ID)
