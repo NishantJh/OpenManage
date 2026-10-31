@@ -420,12 +420,13 @@ func (a *app) endReadyUpgrade(ctx context.Context, id int64, reason, actorID str
 }
 
 type upgradeJob struct {
-	a        *app
-	id       int64
-	deviceID string
-	version  string
-	userID   string
-	staged   bool
+	a         *app
+	id        int64
+	deviceID  string
+	version   string
+	userID    string
+	rolloutID int64
+	staged    bool
 }
 
 func (j *upgradeJob) setStep(ctx context.Context, step string) {
@@ -656,7 +657,8 @@ func (j *upgradeJob) stageOnDevice(ctx context.Context, image []byte, imageHash 
 }
 
 type startUpgradeRequest struct {
-	Version string `json:"version"`
+	Version   string `json:"version"`
+	RolloutID int64  `json:"rollout_id,omitempty"`
 }
 
 // startFirmwareUpgrade begins preparing an upgrade. It returns at once; the job runs on.
@@ -700,12 +702,33 @@ func (a *app) startFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not start the upgrade")
 		return
 	}
+	if in.RolloutID > 0 && user.Role != "admin" {
+		writeError(w, http.StatusForbidden, "only an administrator can prepare a campaign device")
+		return
+	}
+	var rolloutMember *firmwareRolloutMember
+	if in.RolloutID > 0 {
+		member, lockErr := lockFirmwareRolloutMemberForPreparation(r.Context(), tx, in.RolloutID, deviceID, in.Version)
+		if errors.Is(lockErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "rollout or device membership not found")
+			return
+		}
+		if lockErr != nil {
+			writeError(w, http.StatusConflict, lockErr.Error())
+			return
+		}
+		rolloutMember = &member
+	}
 	var busy string
 	err = tx.QueryRow(r.Context(), `SELECT CASE
 		WHEN EXISTS(SELECT 1 FROM device_restores WHERE device_id=$1 AND status='running') THEN 'a backup restore is running on this device'
 		WHEN EXISTS(SELECT 1 FROM config_changes WHERE device_id=$1 AND status='applying') THEN 'a configuration change is being applied to this device'
 		WHEN `+packageInstallRunningSQL+` THEN '`+packageInstallBusyMessage+`'
-		ELSE '' END`, deviceID).Scan(&busy)
+		WHEN EXISTS(SELECT 1 FROM firmware_rollout_devices rd JOIN firmware_rollouts ro ON ro.id=rd.rollout_id
+			WHERE rd.device_id_snapshot=$1 AND ro.id<>$2
+			AND ro.status IN ('awaiting_canary','canary_running','awaiting_batch','batch_running','paused'))
+			THEN 'this device is reserved by another active firmware rollout'
+		ELSE '' END`, deviceID, in.RolloutID).Scan(&busy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not start the upgrade")
 		return
@@ -722,9 +745,24 @@ func (a *app) startFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, openUpgradeMessage)
 		return
 	}
+	if err == nil && rolloutMember != nil {
+		tag, linkErr := tx.Exec(r.Context(), `UPDATE firmware_rollout_devices SET upgrade_id=$3,status='preparing',updated_at=NOW()
+			WHERE rollout_id=$1 AND device_id_snapshot=$2 AND status='queued' AND upgrade_id IS NULL`,
+			in.RolloutID, deviceID, up.ID)
+		if linkErr != nil || tag.RowsAffected() != 1 {
+			err = errors.New("could not reserve this device in the rollout")
+		} else {
+			_, err = tx.Exec(r.Context(), `UPDATE firmware_rollouts SET status=CASE WHEN current_batch=0
+				THEN 'canary_running' ELSE 'batch_running' END,updated_at=NOW()
+				WHERE id=$1 AND status IN ('awaiting_canary','awaiting_batch')`, in.RolloutID)
+		}
+	}
 	if err == nil {
-		err = insertAuditEvent(r.Context(), tx, user.ID, "device.firmware_upgrade_prepare", "device", deviceID,
-			map[string]any{"upgrade_id": up.ID, "version": in.Version})
+		details := map[string]any{"upgrade_id": up.ID, "version": in.Version}
+		if in.RolloutID > 0 {
+			details["rollout_id"] = in.RolloutID
+		}
+		err = insertAuditEvent(r.Context(), tx, user.ID, "device.firmware_upgrade_prepare", "device", deviceID, details)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -736,7 +774,7 @@ func (a *app) startFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), upgradeJobTimeout)
 	registerUpgradeRun(up.ID, cancel)
-	job := &upgradeJob{a: a, id: up.ID, deviceID: deviceID, version: in.Version, userID: user.ID}
+	job := &upgradeJob{a: a, id: up.ID, deviceID: deviceID, version: in.Version, userID: user.ID, rolloutID: in.RolloutID}
 	go func() {
 		defer cancel()
 		defer releaseUpgradeRun(job.id)
