@@ -145,8 +145,16 @@ func TestPackageSetSourceDeletionIsRestricted(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("set: %d %s", rec.Code, rec.Body)
 	}
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/x", nil)
+	deleteReq.SetPathValue("id", fmt.Sprint(sourceID))
+	deleteReq = deleteReq.WithContext(context.WithValue(deleteReq.Context(), userContextKey, authUser{ID: userID, Role: "admin"}))
+	deleteRec := httptest.NewRecorder()
+	a.deletePackageSource(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusConflict {
+		t.Fatalf("deleting a pinned source: status=%d body=%s", deleteRec.Code, deleteRec.Body)
+	}
 	_, err := db.Exec(ctx, `DELETE FROM package_sources WHERE id=$1`, sourceID)
 	if err == nil {
-		t.Fatal("a pinned source must not be deletable")
+		t.Fatal("the database must also restrict deletion of a pinned source")
 	}
 }

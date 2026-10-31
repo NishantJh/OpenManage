@@ -326,12 +326,15 @@ func (a *app) restoreDevicePackageSetRevision(w http.ResponseWriter, r *http.Req
 		return
 	}
 	in.Sources = []packageSetSourceInput{}
-	for rows.Next() {
+ 	for rows.Next() {
 		var source packageSetSourceInput
 		if err = rows.Scan(&source.Name, &source.Mode, &source.SourceID); err != nil {
 			break
 		}
 		in.Sources = append(in.Sources, source)
+	}
+	if err == nil {
+		err = rows.Err()
 	}
 	rows.Close()
 	if err != nil {
@@ -375,46 +378,59 @@ func (a *app) loadDevicePackageSet(ctx context.Context, deviceID string) (packag
 	if err != nil {
 		return out, err
 	}
-	rows, err := a.db.Query(ctx, `SELECT id, revision, official_packages, removed_defaults, COALESCE(created_by::text,''), created_at, based_on_revision
-		FROM device_package_set_revisions WHERE package_set_id=$1 ORDER BY revision DESC LIMIT $2`, setID, packageSetHistoryLimit)
+
+	// Load revisions and sources in one query. Nested queries while the history
+	// cursor is open can exhaust the connection pool under concurrent requests.
+	rows, err := a.db.Query(ctx, `SELECT r.id, r.revision, r.official_packages, r.removed_defaults,
+		COALESCE(r.created_by::text,''), r.created_at, r.based_on_revision,
+		COALESCE(s.package_name,''), COALESCE(s.tracking_mode,''), s.source_id,
+		COALESCE(s.source_version,'')
+		FROM device_package_set_revisions r
+		LEFT JOIN device_package_set_revision_sources s ON s.revision_id=r.id
+		WHERE r.package_set_id=$1
+		ORDER BY r.revision DESC, s.package_name
+		LIMIT $2`, setID, packageSetHistoryLimit*(packageSetMaxSources+1))
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
+
+	var lastRevisionID int64
+	var currentRevisionID int64
+	if currentID != nil {
+		currentRevisionID = *currentID
+	}
 	for rows.Next() {
 		var revisionID int64
 		var rev packageSetRevision
-		if err = rows.Scan(&revisionID, &rev.Revision, &rev.OfficialPackages, &rev.RemovedDefaults, &rev.CreatedBy, &rev.CreatedAt, &rev.BasedOnRevision); err != nil {
+		var sourceName, sourceMode, sourceVersion string
+		var sourceID *int64
+		if err = rows.Scan(&revisionID, &rev.Revision, &rev.OfficialPackages, &rev.RemovedDefaults,
+			&rev.CreatedBy, &rev.CreatedAt, &rev.BasedOnRevision,
+			&sourceName, &sourceMode, &sourceID, &sourceVersion); err != nil {
 			return out, err
 		}
-		if rev.OfficialPackages == nil {
-			rev.OfficialPackages = []string{}
-		}
-		if rev.RemovedDefaults == nil {
-			rev.RemovedDefaults = []string{}
-		}
-		rev.Sources = []packageSetSource{}
-		sources, qerr := a.db.Query(ctx, `SELECT package_name, tracking_mode, source_id, source_version
-			FROM device_package_set_revision_sources WHERE revision_id=$1 ORDER BY package_name`, revisionID)
-		if qerr != nil {
-			return out, qerr
-		}
-		for sources.Next() {
-			var source packageSetSource
-			if qerr = sources.Scan(&source.Name, &source.Mode, &source.SourceID, &source.Version); qerr != nil {
-				break
+		if revisionID != lastRevisionID {
+			if rev.OfficialPackages == nil {
+				rev.OfficialPackages = []string{}
 			}
-			rev.Sources = append(rev.Sources, source)
+			if rev.RemovedDefaults == nil {
+				rev.RemovedDefaults = []string{}
+			}
+			rev.Sources = []packageSetSource{}
+			out.Revisions = append(out.Revisions, rev)
+			lastRevisionID = revisionID
 		}
-		sources.Close()
-		if qerr != nil {
-			return out, qerr
+		if sourceName != "" {
+			idx := len(out.Revisions) - 1
+			out.Revisions[idx].Sources = append(out.Revisions[idx].Sources, packageSetSource{
+				Name: sourceName, Mode: sourceMode, SourceID: sourceID, Version: sourceVersion,
+			})
 		}
-		out.Revisions = append(out.Revisions, rev)
-		if currentID != nil && revisionID == *currentID {
-			copy := rev
+		if currentID != nil && revisionID == currentRevisionID {
+			copy := out.Revisions[len(out.Revisions)-1]
 			out.Current = &copy
-			out.CurrentRevision = rev.Revision
+			out.CurrentRevision = copy.Revision
 		}
 	}
 	if err = rows.Err(); err != nil {

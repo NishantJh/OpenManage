@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Package sources (docs/firmware-upgrades.md, "Package sources"): package files an
@@ -508,6 +509,11 @@ func (a *app) deletePackageSource(w http.ResponseWriter, r *http.Request) {
 		err = tx.Commit(r.Context())
 	}
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			writeError(w, http.StatusConflict, "this package source is still referenced by a desired package set")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "could not delete the package source")
 		return
 	}
