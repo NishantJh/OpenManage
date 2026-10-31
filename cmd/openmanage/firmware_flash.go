@@ -201,11 +201,11 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var rolloutStatus, canaryDeviceID string
+	var rolloutStatus, canaryDeviceID, rolloutVersion string
 	var currentBatch, maxConcurrent int
 	if rolloutID > 0 {
-		err = tx.QueryRow(r.Context(), `SELECT status,current_batch,max_concurrent_flashes,canary_device_id::text FROM firmware_rollouts WHERE id=$1 FOR UPDATE`,
-			rolloutID).Scan(&rolloutStatus, &currentBatch, &maxConcurrent, &canaryDeviceID)
+		err = tx.QueryRow(r.Context(), `SELECT status,current_batch,max_concurrent_flashes,canary_device_id::text,version FROM firmware_rollouts WHERE id=$1 FOR UPDATE`,
+			rolloutID).Scan(&rolloutStatus, &currentBatch, &maxConcurrent, &canaryDeviceID, &rolloutVersion)
 		if err != nil {
 			writeError(w, http.StatusConflict, "rollout is no longer available for flashing")
 			return
@@ -280,6 +280,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 			&rolloutMember.DesiredPackageSetRevision, &rolloutMember.BatchNumber, &memberStatus,
 			&rolloutMember.Plan, &rolloutMember.PlanDigest)
 		if err != nil || rolloutMember.DeviceID != deviceID || memberStatus != "ready" ||
+			upgradeVersion != rolloutVersion || up.InventoryDigest != rolloutMember.InventoryDigest ||
 			rolloutMember.BatchNumber != currentBatch ||
 			(currentBatch == 0 && (rolloutStatus != "canary_running" || deviceID != canaryDeviceID)) ||
 			(currentBatch > 0 && rolloutStatus != "batch_running") {
