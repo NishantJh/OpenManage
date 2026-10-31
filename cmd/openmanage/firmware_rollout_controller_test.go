@@ -90,7 +90,11 @@ func TestAdvanceFirmwareRolloutRequiresAcknowledgedSuccessfulBatch(t *testing.T)
 	db := newEnrollmentTestDB(t)
 	ctx := context.Background()
 	deviceID, userID := seedDeviceAndUser(t, db)
-	nextDeviceID, _ := seedDeviceAndUser(t, db)
+	var nextDeviceID string
+	if err := db.QueryRow(ctx, `INSERT INTO devices(name,address,model,status)
+		VALUES('batch-router','192.0.2.2','OpenWrt x86','online') RETURNING id::text`).Scan(&nextDeviceID); err != nil {
+		t.Fatal(err)
+	}
 
 	var rolloutID int64
 	if err := db.QueryRow(ctx, `INSERT INTO firmware_rollouts(version,status,canary_device_id,created_by)
