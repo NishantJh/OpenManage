@@ -141,13 +141,15 @@ type upgradeRecord struct {
 	BootID          string
 	InventoryDigest string
 	FlashSentAt     *time.Time
+	RolloutID       int64
 }
 
 func (a *app) loadUpgradeRecord(ctx context.Context, id int64) (upgradeRecord, error) {
 	var r upgradeRecord
 	var plan []byte
-	err := a.db.QueryRow(ctx, `SELECT id, device_id::text, version, status, plan, image_sha256, boot_id, inventory_digest, flash_sent_at
-		FROM firmware_upgrades WHERE id=$1`, id).Scan(&r.ID, &r.DeviceID, &r.Version, &r.Status, &plan, &r.ImageSHA256, &r.BootID, &r.InventoryDigest, &r.FlashSentAt)
+	err := a.db.QueryRow(ctx, `SELECT u.id, u.device_id::text, u.version, u.status, u.plan, u.image_sha256, u.boot_id, u.inventory_digest, u.flash_sent_at,
+		COALESCE(rd.rollout_id,0)
+		FROM firmware_upgrades u LEFT JOIN firmware_rollout_devices rd ON rd.upgrade_id=u.id WHERE u.id=$1`, id).Scan(&r.ID, &r.DeviceID, &r.Version, &r.Status, &plan, &r.ImageSHA256, &r.BootID, &r.InventoryDigest, &r.FlashSentAt, &r.RolloutID)
 	if err != nil {
 		return r, err
 	}
@@ -303,6 +305,7 @@ func (a *app) runFlash(id int64) {
 		if stopped, deviceID := a.markUpgradeStopped(sctx, id, "flashing", "not flashed: "+reason, ""); stopped {
 			a.cleanupStaged(sctx, deviceID)
 		}
+		a.pauseFirmwareRolloutForUpgrade(sctx, id, "stopped", "flash did not complete safely: "+reason)
 	}
 	rec, err := a.loadUpgradeRecord(ctx, id)
 	if err != nil {
@@ -347,6 +350,11 @@ func (a *app) runFlash(id int64) {
 	}
 	if _, err := a.db.Exec(ctx, `UPDATE firmware_upgrades SET status='verifying', step='waiting for the device' WHERE id=$1 AND status='flashing'`, id); err != nil {
 		log.Printf("firmware upgrade %d: could not record that verification started", id)
+		a.pauseFirmwareRolloutForUpgrade(context.Background(), id, "needs_attention", "audit/state failure after the flash command; verification state is ambiguous")
+	} else if rec.RolloutID > 0 {
+		if err := a.setFirmwareRolloutDeviceStatus(ctx, id, "verifying", ""); err != nil {
+			a.pauseFirmwareRolloutForUpgrade(context.Background(), id, "needs_attention", "could not record rollout verification state")
+		}
 	}
 	rec.FlashSentAt = &sent
 	a.verifyUpgrade(ctx, rec)
