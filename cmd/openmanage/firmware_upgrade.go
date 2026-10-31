@@ -475,26 +475,71 @@ func (j *upgradeJob) run(ctx context.Context) {
 		fail(err.Error())
 		return
 	}
-	ov, err := fetchOverview(ctx, serverURL)
-	if err != nil {
-		fail(err.Error())
-		return
-	}
-	var branches []string
-	for name := range ov.Branches {
-		if !strings.Contains(name, "SNAPSHOT") {
-			branches = append(branches, name)
+	var plan firmwarePlan
+	if j.rolloutID > 0 {
+		rollout, loadErr := loadFirmwareRollout(ctx, a.db, j.rolloutID)
+		if loadErr != nil {
+			fail("could not load the rollout plan")
+			return
 		}
-	}
-	sort.Strings(branches)
-	if problem := upgradePathProblem(manifest.Release, j.version, branches); problem != "" {
-		fail(problem)
-		return
-	}
-	plan, err := a.firmwarePlanForDevice(ctx, serverURL, j.deviceID, manifest, j.version)
-	if err != nil {
-		fail(err.Error())
-		return
+		var member *firmwareRolloutMember
+		for i := range rollout.Devices {
+			if rollout.Devices[i].DeviceID == j.deviceID {
+				member = &rollout.Devices[i]
+				break
+			}
+		}
+		if member == nil || digest != member.InventoryDigest {
+			fail("the device inventory changed after the rollout preview; create a new rollout draft")
+			return
+		}
+		current, checkErr := firmwareRolloutMemberPlanCurrent(ctx, a.db, *member)
+		if checkErr != nil || !current {
+			fail("the device identity or desired package set changed after the rollout preview; create a new rollout draft")
+			return
+		}
+		var campaignStatus string
+		var currentBatch, memberBatch int
+		checkErr = a.db.QueryRow(ctx, `SELECT ro.status,ro.current_batch,rd.batch_number
+			FROM firmware_rollout_devices rd JOIN firmware_rollouts ro ON ro.id=rd.rollout_id
+			WHERE rd.rollout_id=$1 AND rd.device_id_snapshot=$2`, j.rolloutID, j.deviceID).
+			Scan(&campaignStatus, &currentBatch, &memberBatch)
+		if checkErr != nil || (campaignStatus != "canary_running" && campaignStatus != "batch_running") || memberBatch != currentBatch {
+			fail("the rollout was paused or this device is no longer in the active batch")
+			return
+		}
+		plan, err = a.firmwarePlanForRolloutMember(ctx, serverURL, rollout, *member)
+		if err != nil {
+			fail("could not recompute the immutable rollout plan")
+			return
+		}
+		planDigest, digestErr := firmwareRolloutPlanDigest(*member, rollout.Version, plan)
+		if digestErr != nil || planDigest != member.PlanDigest {
+			fail("the recomputed plan differs from the reviewed rollout preview; create a new rollout draft")
+			return
+		}
+	} else {
+		ov, overviewErr := fetchOverview(ctx, serverURL)
+		if overviewErr != nil {
+			fail(overviewErr.Error())
+			return
+		}
+		var branches []string
+		for name := range ov.Branches {
+			if !strings.Contains(name, "SNAPSHOT") {
+				branches = append(branches, name)
+			}
+		}
+		sort.Strings(branches)
+		if problem := upgradePathProblem(manifest.Release, j.version, branches); problem != "" {
+			fail(problem)
+			return
+		}
+		plan, err = a.firmwarePlanForDevice(ctx, serverURL, j.deviceID, manifest, j.version)
+		if err != nil {
+			fail(err.Error())
+			return
+		}
 	}
 	if len(plan.Blockers) > 0 {
 		fail(strings.Join(plan.Blockers, " "))
