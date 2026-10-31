@@ -13,6 +13,7 @@ OpenManage is a lightweight, self-hosted web app for managing several OpenWrt de
 - **Health and monitoring:** read-only health checks, plus opt-in background monitoring with 30 days of history.
 - **Configuration backups:** encrypted `sysupgrade -b` archives, with download and admin-only restore. Restore needs the administrator's password again and checks that the archive still lets OpenManage sign in.
 - **Configuration snapshots and drift:** encrypted `uci export` snapshots, a change review with secrets redacted, and optional scheduled captures.
+- **Device settings viewer:** a LuCI-like read-only view of enrolled-device UCI settings, with secret-looking values hidden. Settings cannot yet be edited from this page.
 - **Controlled changes:** the system hostname can be changed with a preview, a 60-second rollback, and verification over a fresh SSH connection.
 - **Firmware (preparation only):** a read-only inventory of each device's release, packages and free space; a plan for any release the build server offers; and a prepared upgrade that builds the image, checks its hash, takes a pinned backup, and runs `sysupgrade -T`. Nothing is flashed yet.
 - **Users and audit:** administrator, operator and read-only roles, and an audit trail of key actions.
@@ -27,7 +28,8 @@ OpenManage is a lightweight, self-hosted web app for managing several OpenWrt de
 
 - Changing Wi-Fi settings such as SSID, passphrase and band. This is next on the roadmap.
 - Flashing a prepared firmware image, post-reboot checks, and upgrades that keep installed packages.
-- A per-device settings editor and a Software page for installing and removing packages.
+- Editing device settings, including Wi-Fi SSID/passphrase/band. The per-device settings page is currently read-only.
+- A Software page for installing and removing packages.
 - Alert delivery, SSH key rotation, and encryption-key rotation.
 - Confirmed RADIUS client coverage. The iPhone test is pending, and Android and Windows are untested. MAC authentication is not built.
 - HTTPS as the documented default. Direct HTTP is still supported on a trusted LAN.

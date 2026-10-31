@@ -196,11 +196,11 @@ Started 2026-10-29. Goal: build and flash a firmware image per device that keeps
 - [ ] Phase 3: staged rollout (canary, concurrency limit, stop on failure).
 - [ ] Phase 4 (optional): self-hosted ASU mode. A build-server URL setting plus a single setup script for a separate Linux machine (outside the OpenManage stack), with optional extra feeds. Public ASU stays the default. Decided by Nishant 2026-10-23.
 
-### Later: per-device settings editor (after firmware)
+### Later: per-device settings editor (read-only foundation in progress; writes after firmware)
 
-Not scheduled; starts after the firmware work is done and tested. Agreed in principle by Nishant 2026-10-29. Goal: view and change each device's settings from OpenManage, with a LuCI-like menu (System, Network, Wireless, DHCP/DNS, Firewall, Software) so users find things where they expect them. LuCI's own pages are not reused; OpenManage builds its own pages.
+Agreed in principle by Nishant 2026-10-29. Goal: view and change each device's settings from OpenManage, with a LuCI-like menu (System, Network, Wireless, DHCP/DNS, Firewall, Software) so users find things where they expect them. LuCI's own pages are not reused; OpenManage builds its own pages. The read-only schema and UCI viewer are implemented as a foundation; configuration writes remain gated behind firmware rollout completion and the changeset safety work below.
 
-- [ ] Read-only view of all UCI settings per device, grouped in the LuCI-like menu, secrets redacted.
+- [x] Read-only view of UCI settings per device, grouped in the LuCI-like menu, secret-looking values redacted; package versions are keyed HMACs.
 - [ ] Widen the Section 3 controlled-change workflow from one setting to a batch: pre-change backup, diff, `uci apply` with 60 s rollback, read-back over a fresh connection, confirm. Refuse if the device config changed since the page loaded.
 - [ ] Hand-built pages for common sections, Wireless first (built on the Section 9 Wi-Fi write, which stays scheduled as next and is not deferred), then System, Network interfaces, DHCP/DNS, Firewall.
 - [ ] Admin-only raw UCI editor for everything else, including third-party apps, through the same workflow.

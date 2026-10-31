@@ -28,6 +28,7 @@ import WifiSection from "./WifiSection";
 import Attention from "./Attention";
 import FloorPlan from "./FloorPlan";
 import PasswordModal from "./PasswordModal";
+import DeviceSettings from "./DeviceSettings";
 
 const headings:Record<PageKey,[string,string]>={
  overview:["Your network, at a glance.","Manage your OpenWrt infrastructure from one lightweight control plane."],
@@ -38,6 +39,7 @@ const headings:Record<PageKey,[string,string]>={
  access:["Access & security","Users, roles and the audit trail."],
  backups:["Backups","Device backups, restore, and configuration drift detection."],
  firmware:["Firmware","Releases and packages on each device, ahead of upgrades."],
+ settings:["Device settings","View enrolled-device settings in a LuCI-like, read-only interface."],
 };
 
 export default function Dashboard({username,role,onLogout}:{username:string;role:string;onLogout:()=>void}){
@@ -71,7 +73,8 @@ export default function Dashboard({username,role,onLogout}:{username:string;role
  {page==="monitoring"&&<div className="section-head"><div><h2>Persistent monitoring</h2><p>Server-side checks that continue when the dashboard is closed.</p></div><div className="tools">{role==="admin"?<><select aria-label="Monitoring interval" className="secondary" value={monitorInterval} onChange={e=>{monitorIntervalDirty.current=true;setMonitorInterval(Number(e.target.value))}} disabled={monitorBusy}><option value={60}>Every 1 minute</option><option value={300}>Every 5 minutes</option><option value={600}>Every 10 minutes</option><option value={900}>Every 15 minutes</option><option value={1800}>Every 30 minutes</option><option value={3600}>Every 60 minutes</option></select><button className="secondary" onClick={()=>void saveMonitoringInterval()} disabled={monitorBusy}>Save interval</button><button className={monitoring?"primary":"secondary"} onClick={()=>void toggleMonitoring()} disabled={monitorBusy}>{monitorBusy?"Saving…":monitoring?"Disable monitoring":"Enable monitoring"}</button></>:<span className="muted">Only administrators can change monitoring settings.</span>}</div></div>}
  {page==="monitoring"&&monitorMessage&&<div className="notice">{monitorMessage}<button onClick={()=>setMonitorMessage("")}>Dismiss</button></div>}
  {page==="monitoring"&&<MonitoringHistory monitorHistory={monitorHistory} onRefresh={()=>void loadMonitoring()}/>}
- {page==="devices"&&<DeviceTable devices={devices} filtered={filtered} loading={loading} query={query} role={role} healthBusy={healthBusy} onHealthCheck={d=>void runHealthCheck(d)} onEnroll={d=>{if(d.has_key){openEnrollment(d);return}setNotice("");setWizardDevice(d);setShowWizard(true)}} onRemove={d=>void remove(d)} onAdd={()=>{setWizardDevice(null);setShowWizard(true)}} onConfig={d=>{setNotice("");setConfigDevice(d)}}/>}
+  {page==="devices"&&<DeviceTable devices={devices} filtered={filtered} loading={loading} query={query} role={role} healthBusy={healthBusy} onHealthCheck={d=>void runHealthCheck(d)} onEnroll={d=>{if(d.has_key){openEnrollment(d);return}setNotice("");setWizardDevice(d);setShowWizard(true)}} onRemove={d=>void remove(d)} onAdd={()=>{setWizardDevice(null);setShowWizard(true)}} onConfig={d=>{setNotice("");setConfigDevice(d)}}/>}
+  {page==="settings"&&<DeviceSettings devices={devices}/>}
  {page==="access"&&role==="admin"&&<UsersSection currentUsername={username} onChanged={()=>void loadAudit()}/>}
  {page==="configuration"&&role==="admin"&&<WifiSection devices={devices} onChanged={()=>void loadAudit()}/>}
  {page==="floorplan"&&<FloorPlan devices={devices} role={role as Role} onChanged={()=>void loadAudit()}/>}

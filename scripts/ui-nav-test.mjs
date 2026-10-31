@@ -17,6 +17,7 @@ const { chromium } = createRequire(process.cwd() + "/")("playwright");
 const pages = [
   { label: "Overview", path: "/", h1: "Your network, at a glance.", has: [], absent: ["Device inventory", "Monitoring history", "Configuration snapshots"] },
   { label: "Devices", path: "/devices", h1: "Devices", has: ["Device inventory"], absent: ["Monitoring history"] },
+  { label: "Device settings", path: "/settings", h1: "Device settings", has: ["Device settings"], absent: ["Device inventory", "Monitoring history"] },
   { label: "Floor plan", path: "/floor-plan", h1: "Floor plan", has: [], absent: ["Device inventory", "Monitoring history"] },
   { label: "Configuration", path: "/configuration", h1: "Configuration", has: [], absent: ["Device inventory", "Monitoring history"] },
   { label: "Monitoring", path: "/monitoring", h1: "Monitoring", has: ["Monitoring history"], absent: ["Device inventory"] },
