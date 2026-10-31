@@ -124,7 +124,7 @@ func normalizeFirmwareHardwareQualification(in firmwareHardwareQualificationRequ
 	}
 	for _, release := range []string{in.SourceRelease, in.TargetRelease} {
 		rv, ok := parseReleaseVersion(release)
-		if !ok || rv.snapshot || rv.branchSn || rv.rc > 0 {
+		if !ok || rv.snapshot || rv.branchSn || strings.Contains(release, "-rc") || rv.rc > 0 {
 			return in, errors.New("source and target must be final stable OpenWrt releases")
 		}
 	}
