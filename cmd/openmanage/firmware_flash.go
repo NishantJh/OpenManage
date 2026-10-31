@@ -229,16 +229,24 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "type the device name exactly to confirm the flash")
 		return
 	}
-	var status, upgradeVersion string
+	var status, upgradeVersion, upgradeInventoryDigest string
 	var planJSON []byte
 	var expired bool
-	err = tx.QueryRow(r.Context(), `SELECT status, plan, COALESCE(expires_at < NOW(), TRUE),version FROM firmware_upgrades
-		WHERE id=$1 AND device_id=$2 FOR UPDATE`, id, deviceID).Scan(&status, &planJSON, &expired, &upgradeVersion)
+	err = tx.QueryRow(r.Context(), `SELECT status, plan, COALESCE(expires_at < NOW(), TRUE),version,inventory_digest FROM firmware_upgrades
+		WHERE id=$1 AND device_id=$2 FOR UPDATE`, id, deviceID).Scan(&status, &planJSON, &expired, &upgradeVersion, &upgradeInventoryDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if rolloutID > 0 {
+			_ = tx.Rollback(r.Context())
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "campaign upgrade job disappeared before flash", user.ID)
+		}
 		writeError(w, http.StatusNotFound, "upgrade not found")
 		return
 	}
 	if err != nil {
+		if rolloutID > 0 {
+			_ = tx.Rollback(r.Context())
+			_ = a.setFirmwareRolloutPaused(r.Context(), rolloutID, "campaign upgrade record could not be read before flash", user.ID)
+		}
 		writeError(w, http.StatusInternalServerError, "could not start the flash")
 		return
 	}
@@ -280,7 +288,7 @@ func (a *app) flashFirmwareUpgrade(w http.ResponseWriter, r *http.Request) {
 			&rolloutMember.DesiredPackageSetRevision, &rolloutMember.BatchNumber, &memberStatus,
 			&rolloutMember.Plan, &rolloutMember.PlanDigest)
 		if err != nil || rolloutMember.DeviceID != deviceID || memberStatus != "ready" ||
-			upgradeVersion != rolloutVersion || up.InventoryDigest != rolloutMember.InventoryDigest ||
+			upgradeVersion != rolloutVersion || upgradeInventoryDigest != rolloutMember.InventoryDigest ||
 			rolloutMember.BatchNumber != currentBatch ||
 			(currentBatch == 0 && (rolloutStatus != "canary_running" || deviceID != canaryDeviceID)) ||
 			(currentBatch > 0 && rolloutStatus != "batch_running") {
@@ -730,6 +738,22 @@ func (a *app) acknowledgeFirmwareUpgrade(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var lockedDevice string
+	if err = tx.QueryRow(r.Context(), `SELECT id::text FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&lockedDevice); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "device not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not lock the device")
+		return
+	}
+	var lockedUpgradeStatus string
+	if err = tx.QueryRow(r.Context(), `SELECT status FROM firmware_upgrades WHERE id=$1 AND device_id=$2 FOR UPDATE`, id, deviceID).Scan(&lockedUpgradeStatus); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "upgrade not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not lock the upgrade")
+		return
+	}
 	var rolloutStatus string
 	var currentBatch int
 	if rolloutID > 0 {

@@ -11,7 +11,7 @@ import (
 
 func TestNormalizeFirmwareRolloutRequestFlashConcurrency(t *testing.T) {
 	base := firmwareRolloutRequest{
-		Version: "25.12.2",
+		Version:        "25.12.2",
 		CanaryDeviceID: "550e8400-e29b-41d4-a716-446655440000",
 	}
 	got, err := normalizeFirmwareRolloutRequest(base)
@@ -37,16 +37,16 @@ func TestNormalizeFirmwareRolloutRequestFlashConcurrency(t *testing.T) {
 	}
 }
 
-func TestFirmwareRolloutMemberPlanRequiresExactDigestAndCleanPlan(t *testing.T) {
+func TestFirmwareRolloutMemberPlanRequiresExactDigestAndRejectsBlockers(t *testing.T) {
 	member := firmwareRolloutMember{
-		DeviceID: "550e8400-e29b-41d4-a716-446655440000",
-		DeviceName: "router-1",
-		Model: "OpenWrt x86",
-		CurrentRelease: "24.10.4",
-		BoardName: "generic",
-		Target: "x86/64",
-		InventoryID: 17,
-		InventoryDigest: "inventory-digest",
+		DeviceID:                  "550e8400-e29b-41d4-a716-446655440000",
+		DeviceName:                "router-1",
+		Model:                     "OpenWrt x86",
+		CurrentRelease:            "24.10.4",
+		BoardName:                 "generic",
+		Target:                    "x86/64",
+		InventoryID:               17,
+		InventoryDigest:           "inventory-digest",
 		DesiredPackageSetRevision: 3,
 	}
 	plan := firmwarePlan{Version: "25.12.2"}
@@ -81,17 +81,34 @@ func TestFirmwareRolloutMemberPlanRequiresExactDigestAndCleanPlan(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := firmwareRolloutMemberPlan(warnedMember, warned.Version); err == nil {
-		t.Fatal("plans with warnings must not be executable")
+	if _, err := firmwareRolloutMemberPlan(warnedMember, warned.Version); err != nil {
+		t.Fatalf("warnings should remain visible for per-device acknowledgement at flash time: %v", err)
+	}
+	blocked := firmwarePlan{Version: "25.12.2", Blockers: []string{"unsupported board"}}
+	blockedJSON, err := json.Marshal(blocked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedMember := member
+	blockedMember.Plan = blockedJSON
+	blockedMember.PlanDigest, err = firmwareRolloutPlanDigest(blockedMember, blocked.Version, blocked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := firmwareRolloutMemberPlan(blockedMember, blocked.Version); err == nil {
+		t.Fatal("plans with blockers must not be executable")
 	}
 }
-
 
 func TestAdvanceFirmwareRolloutRequiresAcknowledgedSuccessfulBatch(t *testing.T) {
 	db := newEnrollmentTestDB(t)
 	ctx := context.Background()
 	deviceID, userID := seedDeviceAndUser(t, db)
-	nextDeviceID, _ := seedDeviceAndUser(t, db)
+	var nextDeviceID string
+	if err := db.QueryRow(ctx, `INSERT INTO devices(name,address,model,status)
+		VALUES('batch-router','192.0.2.2','OpenWrt x86','online') RETURNING id::text`).Scan(&nextDeviceID); err != nil {
+		t.Fatal(err)
+	}
 
 	var rolloutID int64
 	if err := db.QueryRow(ctx, `INSERT INTO firmware_rollouts(version,status,canary_device_id,created_by)
