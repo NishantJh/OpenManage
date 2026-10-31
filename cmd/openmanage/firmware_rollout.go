@@ -23,10 +23,10 @@ const (
 )
 
 type firmwareRolloutRequest struct {
-	Version        string     `json:"version"`
-	CanaryDeviceID string     `json:"canary_device_id"`
-	Batches        [][]string `json:"batches"`
-	MaxConcurrentFlashes int `json:"max_concurrent_flashes,omitempty"`
+	Version              string     `json:"version"`
+	CanaryDeviceID       string     `json:"canary_device_id"`
+	Batches              [][]string `json:"batches"`
+	MaxConcurrentFlashes int        `json:"max_concurrent_flashes,omitempty"`
 }
 
 type firmwareRolloutMember struct {
@@ -56,11 +56,11 @@ type firmwareRollout struct {
 	CanaryDeviceID string                  `json:"canary_device_id"`
 	CreatedBy      string                  `json:"created_by"`
 	CreatedAt      time.Time               `json:"created_at"`
-	UpdatedAt      time.Time               `json:"updated_at"`
-	CurrentBatch   int                     `json:"current_batch"`
-	MaxConcurrentFlashes int               `json:"max_concurrent_flashes"`
-	StartedAt      *time.Time              `json:"started_at,omitempty"`
-	CompletedAt    *time.Time              `json:"completed_at,omitempty"`
+	UpdatedAt            time.Time               `json:"updated_at"`
+	CurrentBatch         int                     `json:"current_batch"`
+	MaxConcurrentFlashes int                     `json:"max_concurrent_flashes"`
+	StartedAt            *time.Time              `json:"started_at,omitempty"`
+	CompletedAt          *time.Time              `json:"completed_at,omitempty"`
 	Devices        []firmwareRolloutMember `json:"devices"`
 }
 
