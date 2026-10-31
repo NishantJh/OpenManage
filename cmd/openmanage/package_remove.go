@@ -35,7 +35,7 @@ func protectedPackage(name string) bool {
 	if _, ok := protectedPackageNames[name]; ok {
 		return true
 	}
-	for _, prefix := range []string{"kernel-", "kmod-", "wpad", "hostapd", "firewall", "nftables", "iptables", "openssh", "dropbear", "netifd", "procd", "busybox", "base-files", "libc", "musl", "ubus", "uci", "dnsmasq", "odhcpd", "uhttpd", "rpcd", "luci-base", "openmanage"} {
+	for _, prefix := range []string{"kernel", "kmod-", "wpad", "hostapd", "firewall", "nftables", "iptables", "openssh", "dropbear", "netifd", "procd", "busybox", "base-files", "libc", "musl", "ubus", "uci", "dnsmasq", "odhcpd", "uhttpd", "rpcd", "luci-base", "openmanage"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}

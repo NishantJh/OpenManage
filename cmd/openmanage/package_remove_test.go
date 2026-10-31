@@ -139,6 +139,23 @@ func TestRemoveDevicePackageRequest(t *testing.T) {
 	if got := post("admin", valid).Code; got != http.StatusConflict {
 		t.Fatalf("second removal status=%d, want conflict", got)
 	}
+
+	// A running removal also blocks the existing package-install endpoint.
+	var sourceID int64
+	if err := db.QueryRow(ctx, `INSERT INTO package_sources (name, version, arch, format, sha256, size, file, info, status)
+		VALUES ('luci-theme-install','1','all','ipk',$1,1,'x','{"format":"ipk","name":"luci-theme-install","version":"1","arch":"all","depends":[],"scripts":[]}','confirmed') RETURNING id`,
+		strings.Repeat("a", 64)).Scan(&sourceID); err != nil {
+		t.Fatal(err)
+	}
+	installBody, _ := json.Marshal(packageInstallRequest{SourceID: sourceID, ConfirmName: "test-router", AcknowledgeScripts: true})
+	installReq := httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(installBody))
+	installReq.SetPathValue("id", deviceID)
+	installReq = installReq.WithContext(context.WithValue(installReq.Context(), userContextKey, authUser{ID: userID, Role: "admin"}))
+	installRec := httptest.NewRecorder()
+	a.installPackageSource(installRec, installReq)
+	if installRec.Code != http.StatusConflict {
+		t.Fatalf("install while removal is running status=%d, want conflict", installRec.Code)
+	}
 	if err := a.recoverPackageRemovals(ctx, time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
