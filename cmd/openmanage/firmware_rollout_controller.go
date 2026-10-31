@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func firmwareRolloutMemberPlan(member firmwareRolloutMember, version string) (firmwarePlan, error) {
@@ -20,6 +20,9 @@ func firmwareRolloutMemberPlan(member firmwareRolloutMember, version string) (fi
 	}
 	if err := json.Unmarshal(member.Plan, &plan); err != nil {
 		return plan, errors.New("the stored rollout plan is invalid")
+	}
+	if plan.Version != version {
+		return plan, errors.New("the stored rollout plan target does not match the campaign")
 	}
 	if len(plan.Blockers) > 0 || len(plan.Warnings) > 0 {
 		return plan, errors.New("rollout plans with blockers or warnings cannot be executed")
@@ -274,7 +277,7 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 	}
 	plan, err := firmwareRolloutMemberPlan(member, rollout.Version)
 	if err != nil {
-		a.pauseFirmwareRollout(ctx, rolloutID, "stale or invalid plan: "+err.Error(), "")
+		a.pauseFirmwareRollout(ctx, rolloutID, "stale or invalid plan: "+err.Error(), r.Context().Value(userContextKey).(authUser).ID)
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -284,12 +287,12 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !current {
-		a.pauseFirmwareRollout(ctx, rolloutID, "device, inventory, or desired package-set revision changed", "")
+		a.pauseFirmwareRollout(ctx, rolloutID, "device, inventory, or desired package-set revision changed", r.Context().Value(userContextKey).(authUser).ID)
 		writeError(w, http.StatusConflict, "device, inventory, or desired package-set revision changed; create a new rollout draft")
 		return
 	}
 	if _, err = findMatchingFirmwareHardwareQualification(ctx, a.db, member, rollout.Version); err != nil {
-		a.pauseFirmwareRollout(ctx, rolloutID, "physical hardware qualification expired or no longer matches", "")
+		a.pauseFirmwareRollout(ctx, rolloutID, "physical hardware qualification expired or no longer matches", r.Context().Value(userContextKey).(authUser).ID)
 		writeError(w, http.StatusConflict, "current physical hardware qualification is required before preparing this device")
 		return
 	}
@@ -304,7 +307,7 @@ func (a *app) prepareFirmwareRolloutDevice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if problem := upgradePathProblem(member.CurrentRelease, rollout.Version, branches); problem != "" {
-		a.pauseFirmwareRollout(ctx, rolloutID, "unsupported release path: "+problem, "")
+		a.pauseFirmwareRollout(ctx, rolloutID, "unsupported release path: "+problem, r.Context().Value(userContextKey).(authUser).ID)
 		writeError(w, http.StatusConflict, problem)
 		return
 	}
@@ -616,6 +619,7 @@ func (a *app) pauseFirmwareRollout(ctx context.Context, rolloutID int64, reason,
 	if actorID != "" {
 		if err = insertAuditEvent(ctx, tx, actorID, "firmware.rollout_pause", "firmware_rollout", strconv.FormatInt(rolloutID, 10), map[string]any{"reason": reason}); err != nil {
 			// Fail closed: keep the campaign paused even if its audit event cannot be saved.
+			_ = tx.Rollback(ctx)
 			_, _ = a.db.Exec(ctx, `UPDATE firmware_rollouts SET status='paused',pause_reason=$2,updated_at=NOW()
 				WHERE id=$1 AND status NOT IN ('complete','cancelled')`, rolloutID, "audit failure while pausing: "+reason)
 			return err
@@ -645,6 +649,7 @@ func (a *app) pauseFirmwareRolloutForUpgrade(ctx context.Context, upgradeID int6
 	if err = insertAuditEvent(ctx, tx, "", "firmware.rollout_pause", "firmware_rollout", strconv.FormatInt(rolloutID, 10), map[string]any{
 		"upgrade_id": upgradeID, "member_status": memberStatus, "reason": reason,
 	}); err != nil {
+		_ = tx.Rollback(ctx)
 		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollout_devices SET status=$2,updated_at=NOW() WHERE upgrade_id=$1`, upgradeID, memberStatus)
 		_, _ = a.db.Exec(ctx, `UPDATE firmware_rollouts SET status='paused',pause_reason=$2,updated_at=NOW() WHERE id=$1 AND status NOT IN ('complete','cancelled')`, rolloutID, "audit failure: "+reason)
 		return
