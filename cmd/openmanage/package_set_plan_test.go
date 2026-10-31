@@ -61,6 +61,9 @@ func TestPackageSetRequestRejectsAccessCriticalRemoval(t *testing.T) {
 	if _, err := normalizePackageSetRequest(packageSetRequest{RemovedDefaults: []string{"dropbear"}}); err == nil {
 		t.Fatal("removing dropbear must be rejected")
 	}
+	if _, err := normalizePackageSetRequest(packageSetRequest{RemovedDefaults: []string{"kmod-igb"}}); err == nil {
+		t.Fatal("removing a kernel module must be rejected")
+	}
 	if _, err := normalizePackageSetRequest(packageSetRequest{RemovedDefaults: []string{"dnsmasq", "wpad-basic-mbedtls"}, OfficialPackages: []string{"dnsmasq-full", "wpad-openssl"}}); err != nil {
 		t.Fatalf("swaps of dnsmasq and wpad must stay possible: %v", err)
 	}

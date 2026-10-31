@@ -57,9 +57,11 @@ type packageSetResponse struct {
 
 // accessCriticalPackage reports default packages that a firmware image must keep: without
 // them the device may boot but OpenManage can no longer reach or configure it over SSH and
-// rpcd. Swaps of wpad, dnsmasq and similar packages stay possible; these do not.
+// rpcd. kmod-* is included because a network driver is one of them and the inventory
+// cannot tell which modules the management interface uses. Swaps of wpad, dnsmasq and
+// similar packages stay possible; these do not.
 func accessCriticalPackage(name string) bool {
-	for _, prefix := range []string{"kernel", "base-files", "busybox", "libc", "musl", "procd", "ubus", "uci", "rpcd", "netifd", "dropbear", "openssh", "apk", "opkg"} {
+	for _, prefix := range []string{"kernel", "kmod-", "base-files", "busybox", "libc", "musl", "procd", "ubus", "uci", "rpcd", "netifd", "dropbear", "openssh", "apk", "opkg"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}
