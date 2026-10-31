@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestNormalizeFirmwareRolloutRequest(t *testing.T) {
@@ -96,7 +96,6 @@ func TestFirmwareRolloutDraftSnapshotsInventoryAndPackageRevision(t *testing.T) 
 	var loaded firmwareRollout
 	if err=json.Unmarshal(readRec.Body.Bytes(),&loaded);err!=nil {t.Fatal(err)}
 	if loaded.ID!=got.ID||len(loaded.Devices)!=1||loaded.Devices[0].InventoryID!=inventoryID {t.Fatalf("loaded=%+v",loaded)}
-	_ = time.Second
 }
 
 func TestFirmwareRolloutDraftRequiresStoredInventory(t *testing.T) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -152,7 +154,7 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	var rolloutID int64
 	var out firmwareRollout
 	err = tx.QueryRow(r.Context(), `INSERT INTO firmware_rollouts(version,status,canary_device_id,created_by)
-		VALUES($1,'draft',$2,$3) RETURNING id,version,status,canary_device_id::text,created_by::text,created_at,updated_at`,
+		VALUES($1,'draft',$2,$3) RETURNING id,version,status,canary_device_id::text,COALESCE(created_by::text,''),created_at,updated_at`,
 		in.Version, in.CanaryDeviceID, user.ID).Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID,
 		&out.CreatedBy, &out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
@@ -230,7 +232,7 @@ func (a *app) createFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, out)
 }
 
-func loadFirmwareRollout(ctx interface{ Done() <-chan struct{} }, db pgxQuerier, id int64) (firmwareRollout, error) {
+func loadFirmwareRollout(ctx context.Context, db *pgxpool.Pool, id int64) (firmwareRollout, error) {
 	var out firmwareRollout
 	err := db.QueryRow(ctx, `SELECT `+firmwareRolloutColumns+` FROM firmware_rollouts WHERE id=$1`, id).
 		Scan(&out.ID, &out.Version, &out.Status, &out.CanaryDeviceID, &out.CreatedBy, &out.CreatedAt, &out.UpdatedAt)
@@ -259,10 +261,6 @@ func loadFirmwareRollout(ctx interface{ Done() <-chan struct{} }, db pgxQuerier,
 	return out, rows.Err()
 }
 
-type pgxQuerier interface {
-	QueryRow(ctx interface{ Done() <-chan struct{} }, sql string, args ...any) pgx.Row
-	Query(ctx interface{ Done() <-chan struct{} }, sql string, args ...any) (pgx.Rows, error)
-}
 
 func (a *app) getFirmwareRollout(w http.ResponseWriter, r *http.Request) {
 	if !requireAnyRole(w, r, "admin", "operator") {
